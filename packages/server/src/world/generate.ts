@@ -191,7 +191,7 @@ function generateWorldAttempt(params: WorldGenParams): World {
     const lockDepth = Math.min(depths[lockA] ?? 0, depths[lockB] ?? 0);
 
     // Find locations with depth < lockDepth, preferably off critical path
-    const candidates = nodeIds.filter((id, i) => {
+    const candidates = nodeIds.filter((_, i) => {
       const d = depths[i] ?? 0;
       const onCriticalPath = criticalPath.includes(i);
       return d < lockDepth && !onCriticalPath;
