@@ -9,3 +9,9 @@ export {
   calculateMaxCarryWeight,
   type CreatePlayerOptions,
 } from './player-factory';
+
+export {
+  calculateCombatStats,
+  getEffectiveStats,
+  recalculatePlayerStats,
+} from './stats';
