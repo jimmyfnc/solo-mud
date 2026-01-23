@@ -10,3 +10,12 @@ export {
   type TimeChangeCallback,
   type DayChangeCallback,
 } from './time-ticker';
+
+export {
+  createWeatherSimulator,
+  getWeatherTransitions,
+  getWeatherDescription,
+  type WeatherSimulator,
+  type WeatherType,
+  type WeatherChangeCallback,
+} from './weather';
