@@ -1,10 +1,10 @@
-import { Terminal, CommandInput, StatusBar } from './components';
+import { Terminal, CommandInput, StatusBar, CharacterCreation } from './components';
 import { useGameStore } from './store/gameStore';
 import { useSocket } from './hooks';
 
 function App() {
-  const { lines, connected, connecting } = useGameStore();
-  const { sendCommand } = useSocket();
+  const { lines, connected, connecting, needsCharacterCreation, classOptions } = useGameStore();
+  const { sendCommand, createCharacter } = useSocket();
 
   const handleCommand = (command: string) => {
     sendCommand(command);
@@ -27,18 +27,28 @@ function App() {
         </div>
       </header>
 
-      {/* Terminal output */}
-      <Terminal lines={lines} />
+      {/* Character creation flow */}
+      {needsCharacterCreation && classOptions.length > 0 ? (
+        <CharacterCreation
+          classOptions={classOptions}
+          onCreateCharacter={createCharacter}
+        />
+      ) : (
+        <>
+          {/* Terminal output */}
+          <Terminal lines={lines} />
 
-      {/* Status bar */}
-      <StatusBar />
+          {/* Status bar */}
+          <StatusBar />
 
-      {/* Command input */}
-      <CommandInput
-        onSubmit={handleCommand}
-        disabled={!connected}
-        placeholder={connected ? 'Enter command...' : 'Connecting to server...'}
-      />
+          {/* Command input */}
+          <CommandInput
+            onSubmit={handleCommand}
+            disabled={!connected}
+            placeholder={connected ? 'Enter command...' : 'Connecting to server...'}
+          />
+        </>
+      )}
     </div>
   );
 }

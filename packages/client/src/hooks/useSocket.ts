@@ -9,6 +9,8 @@ import {
   type TimeMessage,
   type ErrorMessage,
   type SyncMessage,
+  type CharacterCreationMessage,
+  type ClassName,
 } from '@solo-mud/shared';
 import { useGameStore } from '../store/gameStore';
 
@@ -17,6 +19,7 @@ const SOCKET_URL = import.meta.env.VITE_SOCKET_URL || 'http://localhost:3001';
 export interface UseSocketReturn {
   sendCommand: (input: string) => void;
   requestSync: () => void;
+  createCharacter: (name: string, className: ClassName) => void;
 }
 
 /**
@@ -27,6 +30,8 @@ export function useSocket(): UseSocketReturn {
   const {
     setConnected,
     setConnecting,
+    setNeedsCharacterCreation,
+    setClassOptions,
     addLines,
     setPlayer,
     updatePlayer,
@@ -96,6 +101,12 @@ export function useSocket(): UseSocketReturn {
       setRoom(message.room);
       setTime(message.time);
       setWeather(message.weather);
+      setNeedsCharacterCreation(false); // Character exists, no creation needed
+    });
+
+    socket.on(SERVER_EVENTS.CHARACTER_CREATION, (message: CharacterCreationMessage) => {
+      setNeedsCharacterCreation(true);
+      setClassOptions(message.classes);
     });
 
     // Cleanup on unmount
@@ -103,7 +114,7 @@ export function useSocket(): UseSocketReturn {
       socket.disconnect();
       socketRef.current = null;
     };
-  }, [setConnected, setConnecting, addLines, setPlayer, updatePlayer, setRoom, setTime, setWeather]);
+  }, [setConnected, setConnecting, setNeedsCharacterCreation, setClassOptions, addLines, setPlayer, updatePlayer, setRoom, setTime, setWeather]);
 
   // Send a command to the server
   const sendCommand = useCallback((input: string) => {
@@ -126,8 +137,24 @@ export function useSocket(): UseSocketReturn {
     socket.emit(CLIENT_EVENTS.SYNC_REQUEST, { type: 'sync_request' });
   }, []);
 
+  // Create a new character
+  const createCharacter = useCallback((name: string, className: ClassName) => {
+    const socket = socketRef.current;
+    if (!socket?.connected) {
+      addLines([{ text: 'Not connected to server.', style: 'error' }]);
+      return;
+    }
+
+    socket.emit(CLIENT_EVENTS.CREATE_CHARACTER, {
+      type: 'create_character',
+      name,
+      className,
+    });
+  }, [addLines]);
+
   return {
     sendCommand,
     requestSync,
+    createCharacter,
   };
 }
