@@ -10,9 +10,11 @@ import {
   type ClientMessage,
   type OutputLine,
 } from '@solo-mud/shared';
+import { sessionManager, type GameSession } from './game/session';
 
 export interface GameSocket extends Socket {
   playerId?: string;
+  session?: GameSession;
 }
 
 /**
@@ -29,27 +31,37 @@ export function createSocketServer(httpServer: HttpServer): SocketServer {
   io.on('connection', (socket: GameSocket) => {
     console.log(`Client connected: ${socket.id}`);
 
+    // Create a game session for this connection
+    const playerName = `Adventurer_${socket.id.slice(0, 6)}`;
+    const session = sessionManager.createSession(socket.id, playerName);
+    socket.session = session;
+    socket.playerId = session.playerId;
+
     // Send welcome message
     sendOutput(socket, [
       { text: 'Welcome to Solo MUD!', style: 'system' },
-      { text: 'Type "help" for a list of commands.', style: 'system' },
+      { text: `You are ${session.player.name}.`, style: 'system' },
+      { text: 'Type "look" to see your surroundings, or "help" for commands.', style: 'system' },
     ]);
 
     // Handle client commands
     socket.on(CLIENT_EVENTS.COMMAND, (message: ClientMessage) => {
       if (message.type === 'command') {
+        sessionManager.touchSession(socket.id);
         handleCommand(socket, message.input);
       }
     });
 
     // Handle sync requests
     socket.on(CLIENT_EVENTS.SYNC_REQUEST, () => {
+      sessionManager.touchSession(socket.id);
       handleSyncRequest(socket);
     });
 
     // Handle disconnection
     socket.on('disconnect', (reason) => {
       console.log(`Client disconnected: ${socket.id} (${reason})`);
+      sessionManager.removeSession(socket.id);
     });
   });
 
