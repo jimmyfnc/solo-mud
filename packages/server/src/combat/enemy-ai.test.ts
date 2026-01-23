@@ -7,7 +7,6 @@ import {
   createEnemyAI,
   type Enemy,
   type EnemyAIState,
-  type AIBehavior,
 } from './enemy-ai';
 import type { CombatEntity } from './auto-attack';
 import type { TickContext } from './tick';
@@ -113,7 +112,7 @@ describe('createEnemyAI', () => {
         resolveTarget: (id) => (id === player.id ? player : null),
       });
 
-      const result = ai.tick(createTickContext());
+      ai.tick(createTickContext());
 
       expect(state.state).toBe('combat');
       expect(state.currentTarget).toBe(player);

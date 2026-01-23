@@ -2,7 +2,7 @@
  * Command handlers - execute player commands.
  */
 
-import type { OutputLine, Location, Exit, Item } from '@solo-mud/shared';
+import type { OutputLine, Location, Exit, Item, EquipSlot } from '@solo-mud/shared';
 import type { GameSession } from '../game/session';
 import { parseCommand, getDirection, type ParsedCommand } from './parser';
 
@@ -29,6 +29,9 @@ const handlers: Record<string, CommandHandler> = {
   inventory: handleInventory,
   take: handleTake,
   drop: handleDrop,
+  equip: handleEquip,
+  unequip: handleUnequip,
+  equipment: handleEquipment,
   // Movement commands
   north: handleMove,
   south: handleMove,
@@ -228,6 +231,9 @@ function handleHelp(_ctx: CommandContext): CommandResult {
       { text: '  take <item> - Pick up an item', style: 'normal' },
       { text: '  drop <item> - Drop an item', style: 'normal' },
       { text: '  inventory (i) - Check your inventory', style: 'normal' },
+      { text: '  equipment (eq) - View equipped items', style: 'normal' },
+      { text: '  equip <item> - Equip an item from inventory', style: 'normal' },
+      { text: '  unequip <slot> - Remove equipped item', style: 'normal' },
       { text: '  help (?) - Show this help message', style: 'normal' },
     ],
   };
@@ -437,6 +443,259 @@ function handleMove(ctx: CommandContext): CommandResult {
       ...lookResult.output,
     ],
     updateRoom: true,
+    updatePlayer: true,
+  };
+}
+
+/** Map item tags to equipment slots */
+const TAG_TO_SLOT: Record<string, EquipSlot> = {
+  weapon: 'weapon',
+  sword: 'weapon',
+  axe: 'weapon',
+  mace: 'weapon',
+  staff: 'weapon',
+  dagger: 'weapon',
+  bow: 'weapon',
+  shield: 'offhand',
+  offhand: 'offhand',
+  helm: 'head',
+  helmet: 'head',
+  head: 'head',
+  chest: 'chest',
+  armor: 'chest',
+  gloves: 'hands',
+  hands: 'hands',
+  gauntlets: 'hands',
+  legs: 'legs',
+  pants: 'legs',
+  leggings: 'legs',
+  boots: 'feet',
+  feet: 'feet',
+  shoes: 'feet',
+  ring: 'ring1',
+  necklace: 'necklace',
+  amulet: 'necklace',
+  cloak: 'cloak',
+  cape: 'cloak',
+};
+
+/** Get equipment slot for an item based on its tags */
+function getEquipSlot(item: Item): EquipSlot | null {
+  for (const tag of item.tags) {
+    const slot = TAG_TO_SLOT[tag.toLowerCase()];
+    if (slot) {
+      return slot;
+    }
+  }
+  return null;
+}
+
+/** Slot display names */
+const SLOT_NAMES: Record<EquipSlot, string> = {
+  weapon: 'Weapon',
+  offhand: 'Off-hand',
+  head: 'Head',
+  chest: 'Chest',
+  hands: 'Hands',
+  legs: 'Legs',
+  feet: 'Feet',
+  ring1: 'Ring 1',
+  ring2: 'Ring 2',
+  necklace: 'Necklace',
+  cloak: 'Cloak',
+};
+
+/**
+ * Handle the "equipment" command - show equipped items.
+ */
+function handleEquipment(ctx: CommandContext): CommandResult {
+  const { session } = ctx;
+  const { player, world } = session;
+  const output: OutputLine[] = [
+    { text: '=== Equipment ===', style: 'system' },
+  ];
+
+  const slots: EquipSlot[] = ['weapon', 'offhand', 'head', 'chest', 'hands', 'legs', 'feet', 'ring1', 'ring2', 'necklace', 'cloak'];
+
+  for (const slot of slots) {
+    const itemId = player.equipment[slot];
+    const item = itemId ? world.items[itemId] : null;
+    const slotName = SLOT_NAMES[slot];
+    const itemName = item ? item.name : '(empty)';
+    output.push({ text: `  ${slotName}: ${itemName}`, style: item ? 'normal' : 'system' });
+  }
+
+  return { output };
+}
+
+/**
+ * Handle the "equip" command - equip an item from inventory.
+ */
+function handleEquip(ctx: CommandContext): CommandResult {
+  const { session, parsed } = ctx;
+  const { world, player } = session;
+
+  if (!parsed.target) {
+    return {
+      output: [{ text: 'Equip what?', style: 'system' }],
+    };
+  }
+
+  // Find item in inventory matching target
+  const targetLower = parsed.target.toLowerCase();
+  const slotIndex = player.inventory.findIndex(slot => {
+    const item = world.items[slot.itemId];
+    return item?.name.toLowerCase().includes(targetLower);
+  });
+
+  if (slotIndex === -1) {
+    return {
+      output: [{ text: `You don't have any "${parsed.target}" in your inventory.`, style: 'error' }],
+    };
+  }
+
+  const inventorySlot = player.inventory[slotIndex]!;
+  const item = world.items[inventorySlot.itemId];
+
+  if (!item) {
+    return {
+      output: [{ text: 'That item seems corrupted.', style: 'error' }],
+    };
+  }
+
+  // Determine equipment slot
+  const equipSlot = getEquipSlot(item);
+  if (!equipSlot) {
+    return {
+      output: [{ text: `You cannot equip the ${item.name}.`, style: 'error' }],
+    };
+  }
+
+  // Handle ring slots specially (use ring2 if ring1 is occupied)
+  let targetSlot = equipSlot;
+  if (equipSlot === 'ring1' && player.equipment.ring1) {
+    if (!player.equipment.ring2) {
+      targetSlot = 'ring2';
+    }
+  }
+
+  // Unequip existing item in that slot
+  const existingItemId = player.equipment[targetSlot];
+  if (existingItemId) {
+    // Add to inventory
+    const existingSlot = player.inventory.find(s => s.itemId === existingItemId);
+    if (existingSlot) {
+      existingSlot.quantity++;
+    } else {
+      player.inventory.push({ itemId: existingItemId, quantity: 1 });
+    }
+  }
+
+  // Remove from inventory
+  if (inventorySlot.quantity > 1) {
+    inventorySlot.quantity--;
+  } else {
+    player.inventory.splice(slotIndex, 1);
+  }
+
+  // Equip the item
+  player.equipment[targetSlot] = inventorySlot.itemId;
+
+  const output: OutputLine[] = [
+    { text: `You equip the ${item.name}.`, style: 'success' },
+  ];
+
+  if (existingItemId) {
+    const existingItem = world.items[existingItemId];
+    if (existingItem) {
+      output.push({ text: `(${existingItem.name} moved to inventory)`, style: 'system' });
+    }
+  }
+
+  return { output, updatePlayer: true };
+}
+
+/**
+ * Handle the "unequip" command - remove an equipped item.
+ */
+function handleUnequip(ctx: CommandContext): CommandResult {
+  const { session, parsed } = ctx;
+  const { world, player } = session;
+
+  if (!parsed.target) {
+    return {
+      output: [{ text: 'Unequip what? Specify a slot (weapon, chest, etc.) or item name.', style: 'system' }],
+    };
+  }
+
+  const targetLower = parsed.target.toLowerCase();
+
+  // Try to find by slot name
+  const slots: EquipSlot[] = ['weapon', 'offhand', 'head', 'chest', 'hands', 'legs', 'feet', 'ring1', 'ring2', 'necklace', 'cloak'];
+  let targetSlot: EquipSlot | null = null;
+
+  // Check if target matches a slot name
+  for (const slot of slots) {
+    if (slot === targetLower || SLOT_NAMES[slot].toLowerCase() === targetLower) {
+      targetSlot = slot;
+      break;
+    }
+  }
+
+  // If not a slot, try to find by item name
+  if (!targetSlot) {
+    for (const slot of slots) {
+      const itemId = player.equipment[slot];
+      if (itemId) {
+        const item = world.items[itemId];
+        if (item?.name.toLowerCase().includes(targetLower)) {
+          targetSlot = slot;
+          break;
+        }
+      }
+    }
+  }
+
+  if (!targetSlot) {
+    return {
+      output: [{ text: `You don't have "${parsed.target}" equipped.`, style: 'error' }],
+    };
+  }
+
+  const itemId = player.equipment[targetSlot];
+  if (!itemId) {
+    return {
+      output: [{ text: `Nothing is equipped in the ${SLOT_NAMES[targetSlot]} slot.`, style: 'error' }],
+    };
+  }
+
+  const item = world.items[itemId];
+  if (!item) {
+    return {
+      output: [{ text: 'That item seems corrupted.', style: 'error' }],
+    };
+  }
+
+  // Check inventory space
+  if (player.inventory.length >= player.inventorySlots) {
+    return {
+      output: [{ text: 'Your inventory is full. Drop something first.', style: 'error' }],
+    };
+  }
+
+  // Remove from equipment
+  delete player.equipment[targetSlot];
+
+  // Add to inventory
+  const existingSlot = player.inventory.find(s => s.itemId === itemId);
+  if (existingSlot) {
+    existingSlot.quantity++;
+  } else {
+    player.inventory.push({ itemId, quantity: 1 });
+  }
+
+  return {
+    output: [{ text: `You unequip the ${item.name}.`, style: 'normal' }],
     updatePlayer: true,
   };
 }

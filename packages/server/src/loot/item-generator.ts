@@ -236,7 +236,7 @@ function rollRarity(
  */
 function selectTemplate(
   entries: LootTableEntry[],
-  rng: RngFunction
+  rng: Rng
 ): LootTableEntry | null {
   if (entries.length === 0) {
     return null;

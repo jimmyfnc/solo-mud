@@ -2,7 +2,7 @@
  * Enemy AI behavior system.
  */
 
-import type { CombatStats, CombatEvent } from '@solo-mud/shared';
+import type { CombatEvent } from '@solo-mud/shared';
 import type { CombatEntity } from './auto-attack';
 import type { TickContext, TickHandlerResult } from './tick';
 import { rollAttack, calculateDamage } from './auto-attack';
@@ -165,7 +165,7 @@ function processCombatState(
   state: EnemyAIState,
   context: AIContext,
   events: CombatEvent[],
-  tickContext: TickContext
+  _tickContext: TickContext
 ): void {
   // Check if we should evade (target gone or too far from home)
   const distanceFromHome = calculateDistance(state.homePosition, state.currentPosition);
@@ -245,7 +245,7 @@ function processCombatState(
  */
 function processEvadingState(
   state: EnemyAIState,
-  context: AIContext,
+  _context: AIContext,
   tickContext: TickContext
 ): void {
   // Decay aggro

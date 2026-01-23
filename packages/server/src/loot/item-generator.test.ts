@@ -105,10 +105,8 @@ describe('generateItem', () => {
   });
 
   it('should add more affixes for higher rarity', () => {
-    const rng = createRng('test-seed');
     const template = sampleTemplates['iron-sword']!;
 
-    const common = generateItem({ template, rarity: 'common', level: 10, rng: createRng('seed1') });
     const rare = generateItem({ template, rarity: 'rare', level: 10, rng: createRng('seed2') });
     const legendary = generateItem({ template, rarity: 'legendary', level: 10, rng: createRng('seed3') });
 
