@@ -34,6 +34,7 @@ const handlers: Record<string, CommandHandler> = {
   equip: handleEquip,
   unequip: handleUnequip,
   equipment: handleEquipment,
+  use: handleUse,
   // Movement commands
   north: handleMove,
   south: handleMove,
@@ -116,15 +117,17 @@ function handleLook(ctx: CommandContext): CommandResult {
     output.push({ text: `Items here: ${itemNames}`, style: 'success' });
   }
 
-  // Exits
+  // Exits - show destination to distinguish duplicates
   const exitIds = world.adjacency[player.locationId] ?? [];
   const exits = exitIds.map(id => world.exits[id]).filter(Boolean) as Exit[];
   if (exits.length > 0) {
-    const exitLabels = exits.map(e => {
-      const lockIndicator = e.type === 'locked' ? ' [locked]' : '';
-      return `${e.label}${lockIndicator}`;
-    });
-    output.push({ text: `Exits: ${exitLabels.join(', ')}`, style: 'system' });
+    output.push({ text: 'Exits:', style: 'system' });
+    for (const exit of exits) {
+      const destLocation = world.locations[exit.to];
+      const destName = destLocation?.name?.replace(/\s*\(loc_\d+\)/, '') ?? 'Unknown';
+      const lockIndicator = exit.type === 'locked' ? ' [LOCKED]' : '';
+      output.push({ text: `  ${exit.label} -> ${destName}${lockIndicator}`, style: 'normal' });
+    }
   } else {
     output.push({ text: 'There are no obvious exits.', style: 'system' });
   }
@@ -182,6 +185,123 @@ function handleExamine(ctx: CommandContext): CommandResult {
 }
 
 /**
+ * Handle the "use" command - use an item or interact with a prop.
+ */
+function handleUse(ctx: CommandContext): CommandResult {
+  const { session, parsed } = ctx;
+  const { world, player } = session;
+
+  if (!parsed.target) {
+    return {
+      output: [{ text: 'Use what? Specify an item or object.', style: 'system' }],
+    };
+  }
+
+  const location = world.locations[player.locationId];
+  if (!location) {
+    return {
+      output: [{ text: 'You cannot use anything here.', style: 'error' }],
+    };
+  }
+
+  const targetLower = parsed.target.toLowerCase();
+
+  // Check inventory first for usable items
+  const inventorySlot = player.inventory.find(slot => {
+    const item = world.items[slot.itemId];
+    return item?.name.toLowerCase().includes(targetLower);
+  });
+
+  if (inventorySlot) {
+    const item = world.items[inventorySlot.itemId];
+    if (!item) {
+      return {
+        output: [{ text: 'That item seems corrupted.', style: 'error' }],
+      };
+    }
+
+    // Handle different item types
+    if (item.tags.includes('key')) {
+      // Check if there's a locked exit that uses this key
+      const exitIds = world.adjacency[player.locationId] ?? [];
+      const exits = exitIds.map(id => world.exits[id]).filter(Boolean) as Exit[];
+      const lockedExit = exits.find(e =>
+        e.type === 'locked' &&
+        e.requirement?.kind === 'item' &&
+        e.requirement.value === inventorySlot.itemId
+      );
+
+      if (lockedExit) {
+        const destLocation = world.locations[lockedExit.to];
+        const destName = destLocation?.name?.replace(/\s*\(loc_\d+\)/, '') ?? 'somewhere';
+        return {
+          output: [
+            { text: `The ${item.name} fits the lock on the ${lockedExit.label} leading to ${destName}.`, style: 'success' },
+            { text: `The way is now open! Use "go ${lockedExit.label}" to proceed.`, style: 'system' },
+          ],
+        };
+      } else {
+        return {
+          output: [{ text: `The ${item.name} doesn't seem to fit any lock here.`, style: 'normal' }],
+        };
+      }
+    }
+
+    if (item.tags.includes('consumable') || item.tags.includes('potion')) {
+      // Consume the item
+      if (inventorySlot.quantity > 1) {
+        inventorySlot.quantity--;
+      } else {
+        const slotIndex = player.inventory.indexOf(inventorySlot);
+        player.inventory.splice(slotIndex, 1);
+      }
+      return {
+        output: [{ text: `You use the ${item.name}. (Effect not yet implemented)`, style: 'success' }],
+        updatePlayer: true,
+      };
+    }
+
+    return {
+      output: [{ text: `You're not sure how to use the ${item.name}.`, style: 'normal' }],
+    };
+  }
+
+  // Check props in the room
+  const prop = location.props.find(p => p.toLowerCase().includes(targetLower));
+  if (prop) {
+    // Different responses for different prop types
+    if (prop.includes('well')) {
+      return {
+        output: [
+          { text: `You peer into the ${prop}. The water below is dark and still.`, style: 'normal' },
+          { text: `You could draw some water, but you have nothing to carry it in.`, style: 'system' },
+        ],
+      };
+    }
+    if (prop.includes('marker') || prop.includes('obelisk') || prop.includes('statue')) {
+      return {
+        output: [
+          { text: `You touch the ${prop}. Ancient runes seem to glow faintly.`, style: 'normal' },
+          { text: `It might be significant, but you cannot decipher its meaning yet.`, style: 'system' },
+        ],
+      };
+    }
+    if (prop.includes('campfire') || prop.includes('fire')) {
+      return {
+        output: [{ text: `You warm your hands by the ${prop}. The flames crackle softly.`, style: 'normal' }],
+      };
+    }
+    return {
+      output: [{ text: `You interact with the ${prop}, but nothing special happens.`, style: 'normal' }],
+    };
+  }
+
+  return {
+    output: [{ text: `You don't see any "${parsed.target}" to use.`, style: 'error' }],
+  };
+}
+
+/**
  * Handle the "help" command.
  */
 function handleHelp(_ctx: CommandContext): CommandResult {
@@ -190,6 +310,7 @@ function handleHelp(_ctx: CommandContext): CommandResult {
       { text: 'Available commands:', style: 'system' },
       { text: '  look (l) - Examine your surroundings', style: 'normal' },
       { text: '  examine <target> - Look at something closely', style: 'normal' },
+      { text: '  use <item/object> - Use an item or interact with something', style: 'normal' },
       { text: '  go <direction> - Move in a direction', style: 'normal' },
       { text: '  north/south/east/west (n/s/e/w) - Move directly', style: 'normal' },
       { text: '  take <item> - Pick up an item', style: 'normal' },
@@ -383,15 +504,20 @@ function handleMove(ctx: CommandContext): CommandResult {
   }
 
   // Check if locked
+  let usedKeyMessage: OutputLine | null = null;
   if (exit.type === 'locked') {
     if (exit.requirement?.kind === 'item') {
-      const hasKey = player.inventory.some(slot => slot.itemId === exit.requirement?.value);
-      if (!hasKey) {
+      const keySlot = player.inventory.find(slot => slot.itemId === exit.requirement?.value);
+      if (!keySlot) {
+        const keyItem = world.items[exit.requirement.value as string];
+        const keyName = keyItem?.name ?? 'a key';
         return {
-          output: [{ text: `The way ${direction} is locked. You need a key.`, style: 'error' }],
+          output: [{ text: `The way ${direction} is locked. You need ${keyName}.`, style: 'error' }],
         };
       }
       // Has key - unlock and proceed
+      const keyItem = world.items[keySlot.itemId];
+      usedKeyMessage = { text: `You use the ${keyItem?.name ?? 'key'} to unlock the way.`, style: 'success' };
     }
   }
 
@@ -401,11 +527,15 @@ function handleMove(ctx: CommandContext): CommandResult {
   // Auto-look at new location
   const lookResult = handleLook(ctx);
 
+  const output: OutputLine[] = [];
+  if (usedKeyMessage) {
+    output.push(usedKeyMessage);
+  }
+  output.push({ text: `You go ${direction}.`, style: 'normal' });
+  output.push(...lookResult.output);
+
   return {
-    output: [
-      { text: `You go ${direction}.`, style: 'normal' },
-      ...lookResult.output,
-    ],
+    output,
     updateRoom: true,
     updatePlayer: true,
   };
