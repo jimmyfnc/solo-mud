@@ -12,3 +12,11 @@ export {
   type Biome,
   type Weather,
 } from './templates';
+
+export {
+  getTimeEffects,
+  getLightLevel,
+  getVisibilityModifier,
+  getAmbientDescription,
+  type TimeEffects,
+} from './time-effects';
