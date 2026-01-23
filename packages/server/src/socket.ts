@@ -182,8 +182,8 @@ function handleCharacterCreation(socket: GameSocket, message: CreateCharacterMes
     return;
   }
 
-  if (!/^[a-zA-Z][a-zA-Z0-9_]*$/.test(trimmedName)) {
-    sendError(socket, 'Name must start with a letter and contain only letters, numbers, and underscores.');
+  if (!/^[a-zA-Z][a-zA-Z0-9_ ]*[a-zA-Z0-9]$|^[a-zA-Z]$/.test(trimmedName)) {
+    sendError(socket, 'Name must start with a letter. Can contain letters, numbers, spaces, and underscores.');
     return;
   }
 
