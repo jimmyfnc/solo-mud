@@ -3,6 +3,7 @@
  */
 
 import Fastify, { type FastifyInstance } from 'fastify';
+import type { Server as HttpServer } from 'http';
 
 export interface AppOptions {
   logger?: boolean;
@@ -38,11 +39,12 @@ export function createApp(options: AppOptions = {}): FastifyInstance {
 
 /**
  * Start the server on the specified port.
+ * Returns the address and the underlying HTTP server for Socket.io integration.
  */
 export async function startServer(
   app: FastifyInstance,
   port: number = 3001
-): Promise<string> {
+): Promise<{ address: string; server: HttpServer }> {
   const address = await app.listen({ port, host: '0.0.0.0' });
-  return address;
+  return { address, server: app.server as HttpServer };
 }
