@@ -1,4 +1,4 @@
-import { Terminal, CommandInput } from './components';
+import { Terminal, CommandInput, StatusBar } from './components';
 import { useGameStore } from './store/gameStore';
 import { useSocket } from './hooks';
 
@@ -29,6 +29,9 @@ function App() {
 
       {/* Terminal output */}
       <Terminal lines={lines} />
+
+      {/* Status bar */}
+      <StatusBar />
 
       {/* Command input */}
       <CommandInput
