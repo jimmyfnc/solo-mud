@@ -18,8 +18,15 @@ export interface SyncRequestMessage {
   type: 'sync_request';
 }
 
+/** Client submits character creation */
+export interface CreateCharacterMessage {
+  type: 'create_character';
+  name: string;
+  className: 'warrior' | 'rogue' | 'mage' | 'cleric' | 'ranger';
+}
+
 /** Client -> Server message union */
-export type ClientMessage = CommandMessage | SyncRequestMessage;
+export type ClientMessage = CommandMessage | SyncRequestMessage | CreateCharacterMessage;
 
 // ============ Server -> Client Messages ============
 
@@ -112,6 +119,20 @@ export interface SyncMessage {
   weather: WeatherState;
 }
 
+/** Server requests character creation from client */
+export interface CharacterCreationMessage {
+  type: 'character_creation';
+  classes: ClassOption[];
+}
+
+/** Class option for character creation */
+export interface ClassOption {
+  id: string;
+  name: string;
+  description: string;
+  primaryStats: [string, string];
+}
+
 /** Server -> Client message union */
 export type ServerMessage =
   | OutputMessage
@@ -120,13 +141,15 @@ export type ServerMessage =
   | CombatMessage
   | TimeMessage
   | ErrorMessage
-  | SyncMessage;
+  | SyncMessage
+  | CharacterCreationMessage;
 
 // ============ Event Names ============
 
 export const CLIENT_EVENTS = {
   COMMAND: 'command',
   SYNC_REQUEST: 'sync_request',
+  CREATE_CHARACTER: 'create_character',
 } as const;
 
 export const SERVER_EVENTS = {
@@ -137,4 +160,5 @@ export const SERVER_EVENTS = {
   TIME: 'time',
   ERROR: 'error',
   SYNC: 'sync',
+  CHARACTER_CREATION: 'character_creation',
 } as const;

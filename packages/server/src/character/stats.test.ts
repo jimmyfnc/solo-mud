@@ -9,7 +9,7 @@ import {
   recalculatePlayerStats,
 } from './stats';
 import { createPlayer } from './player-factory';
-import type { Player, Item, EquipSlot } from '@solo-mud/shared';
+import type { Item } from '@solo-mud/shared';
 
 describe('calculateCombatStats', () => {
   it('should calculate attack power from STR', () => {
