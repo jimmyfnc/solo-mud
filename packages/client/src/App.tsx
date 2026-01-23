@@ -1,15 +1,13 @@
 import { Terminal, CommandInput } from './components';
 import { useGameStore } from './store/gameStore';
+import { useSocket } from './hooks';
 
 function App() {
-  const { lines, connected, connecting, addLines } = useGameStore();
+  const { lines, connected, connecting } = useGameStore();
+  const { sendCommand } = useSocket();
 
   const handleCommand = (command: string) => {
-    // Echo the command
-    addLines([{ text: `> ${command}`, style: 'normal' }]);
-
-    // TODO: Send to server via Socket.io
-    addLines([{ text: '(Not connected to server)', style: 'error' }]);
+    sendCommand(command);
   };
 
   return (
