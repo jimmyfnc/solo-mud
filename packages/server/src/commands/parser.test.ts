@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { parseCommand, type ParsedCommand } from './parser';
+import { parseCommand } from './parser';
 
 describe('parseCommand', () => {
   it('should parse a single word command', () => {

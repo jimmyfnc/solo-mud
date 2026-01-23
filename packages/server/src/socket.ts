@@ -11,6 +11,7 @@ import {
   type OutputLine,
 } from '@solo-mud/shared';
 import { sessionManager, type GameSession } from './game/session';
+import { executeCommand } from './commands/handlers';
 
 export interface GameSocket extends Socket {
   playerId?: string;
@@ -91,27 +92,16 @@ export function sendError(socket: GameSocket, message: string, code?: string): v
 
 /**
  * Handle a command from a client.
- * This is a placeholder - actual command handling will be implemented later.
  */
 function handleCommand(socket: GameSocket, input: string): void {
-  const trimmed = input.trim().toLowerCase();
-
-  if (trimmed === 'help') {
-    sendOutput(socket, [
-      { text: 'Available commands:', style: 'system' },
-      { text: '  look - Examine your surroundings', style: 'normal' },
-      { text: '  go <direction> - Move in a direction', style: 'normal' },
-      { text: '  take <item> - Pick up an item', style: 'normal' },
-      { text: '  drop <item> - Drop an item', style: 'normal' },
-      { text: '  inventory - Check your inventory', style: 'normal' },
-      { text: '  help - Show this help message', style: 'normal' },
-    ]);
-  } else {
-    sendOutput(socket, [
-      { text: `You typed: ${input}`, style: 'normal' },
-      { text: '(Command system not yet implemented)', style: 'system' },
-    ]);
+  const session = socket.session;
+  if (!session) {
+    sendError(socket, 'No active session. Please reconnect.');
+    return;
   }
+
+  const result = executeCommand(session, input);
+  sendOutput(socket, result.output);
 }
 
 /**
