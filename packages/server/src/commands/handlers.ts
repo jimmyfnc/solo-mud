@@ -27,6 +27,8 @@ const handlers: Record<string, CommandHandler> = {
   examine: handleExamine,
   help: handleHelp,
   inventory: handleInventory,
+  take: handleTake,
+  drop: handleDrop,
   // Movement commands
   north: handleMove,
   south: handleMove,
@@ -257,6 +259,132 @@ function handleInventory(ctx: CommandContext): CommandResult {
   output.push({ text: `Weight: ${player.carryWeight}/${player.maxCarryWeight}`, style: 'normal' });
 
   return { output };
+}
+
+/**
+ * Handle the "take" command - pick up an item.
+ */
+function handleTake(ctx: CommandContext): CommandResult {
+  const { session, parsed } = ctx;
+  const { world, player } = session;
+
+  if (!parsed.target) {
+    return {
+      output: [{ text: 'Take what?', style: 'system' }],
+    };
+  }
+
+  const location = world.locations[player.locationId];
+  if (!location) {
+    return {
+      output: [{ text: 'You cannot take anything here.', style: 'error' }],
+    };
+  }
+
+  // Find item in room matching target
+  const targetLower = parsed.target.toLowerCase();
+  const itemIndex = location.items.findIndex(id => {
+    const item = world.items[id];
+    return item?.name.toLowerCase().includes(targetLower);
+  });
+
+  if (itemIndex === -1) {
+    return {
+      output: [{ text: `You don't see any "${parsed.target}" here.`, style: 'error' }],
+    };
+  }
+
+  const itemId = location.items[itemIndex]!;
+  const item = world.items[itemId];
+
+  if (!item) {
+    return {
+      output: [{ text: 'That item seems to have vanished.', style: 'error' }],
+    };
+  }
+
+  // Check inventory capacity
+  if (player.inventory.length >= player.inventorySlots) {
+    return {
+      output: [{ text: 'Your inventory is full.', style: 'error' }],
+    };
+  }
+
+  // Remove from room
+  location.items.splice(itemIndex, 1);
+
+  // Add to inventory (check if stackable)
+  const existingSlot = player.inventory.find(slot => slot.itemId === itemId);
+  if (existingSlot) {
+    existingSlot.quantity++;
+  } else {
+    player.inventory.push({ itemId, quantity: 1 });
+  }
+
+  return {
+    output: [{ text: `You pick up the ${item.name}.`, style: 'success' }],
+    updateRoom: true,
+    updatePlayer: true,
+  };
+}
+
+/**
+ * Handle the "drop" command - drop an item.
+ */
+function handleDrop(ctx: CommandContext): CommandResult {
+  const { session, parsed } = ctx;
+  const { world, player } = session;
+
+  if (!parsed.target) {
+    return {
+      output: [{ text: 'Drop what?', style: 'system' }],
+    };
+  }
+
+  const location = world.locations[player.locationId];
+  if (!location) {
+    return {
+      output: [{ text: 'You cannot drop anything here.', style: 'error' }],
+    };
+  }
+
+  // Find item in inventory matching target
+  const targetLower = parsed.target.toLowerCase();
+  const slotIndex = player.inventory.findIndex(slot => {
+    const item = world.items[slot.itemId];
+    return item?.name.toLowerCase().includes(targetLower);
+  });
+
+  if (slotIndex === -1) {
+    return {
+      output: [{ text: `You don't have any "${parsed.target}".`, style: 'error' }],
+    };
+  }
+
+  const slot = player.inventory[slotIndex]!;
+  const item = world.items[slot.itemId];
+
+  if (!item) {
+    return {
+      output: [{ text: 'That item seems corrupted.', style: 'error' }],
+    };
+  }
+
+  // Remove from inventory (or decrement quantity)
+  if (slot.quantity > 1) {
+    slot.quantity--;
+  } else {
+    player.inventory.splice(slotIndex, 1);
+  }
+
+  // Add to room
+  location.items.push(slot.itemId);
+
+  return {
+    output: [{ text: `You drop the ${item.name}.`, style: 'normal' }],
+    updateRoom: true,
+    updatePlayer: true,
+  };
 }
 
 /**
