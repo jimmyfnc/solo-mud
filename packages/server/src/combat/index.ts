@@ -21,3 +21,10 @@ export {
   type AttackRollResult,
   type TargetResolver,
 } from './auto-attack';
+
+export {
+  createCooldownManager,
+  type CooldownManager,
+  type AbilityDefinition,
+  type UseAbilityResult,
+} from './cooldowns';

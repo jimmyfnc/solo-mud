@@ -2,7 +2,7 @@
  * Tests for auto-attack mechanics.
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import {
   createAutoAttackHandler,
   calculateDamage,
@@ -10,7 +10,6 @@ import {
   type AutoAttackState,
   type CombatEntity,
 } from './auto-attack';
-import type { CombatStats } from '@solo-mud/shared';
 import type { TickContext } from './tick';
 
 // Helper to create a mock combat entity

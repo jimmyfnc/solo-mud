@@ -3,7 +3,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { CombatTicker, type TickContext, type TickResult } from './tick';
+import { CombatTicker, type TickResult } from './tick';
 
 describe('CombatTicker', () => {
   let ticker: CombatTicker;
