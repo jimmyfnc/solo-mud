@@ -46,11 +46,9 @@ describe('generateDescription', () => {
   });
 
   it('should include weather effects in description', () => {
-    const clearCtx = createContext({ weather: 'clear' });
     const rainCtx = createContext({ weather: 'rain' });
     const stormCtx = createContext({ weather: 'storm' });
 
-    const clearDesc = generateDescription(clearCtx);
     const rainDesc = generateDescription(rainCtx);
     const stormDesc = generateDescription(stormCtx);
 
@@ -139,12 +137,8 @@ describe('DescriptionTemplate', () => {
       ],
     };
 
-    const ctx = createContext({
-      biome: 'forest',
-      props: ['mushrooms'],
-    });
-
-    // Custom templates would be used when registered
+    // Custom templates structure is valid
     expect(customTemplate.variants[0]!.text).toContain('{prop}');
+    expect(customTemplate.biome).toBe('forest');
   });
 });

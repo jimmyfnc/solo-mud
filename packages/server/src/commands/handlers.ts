@@ -2,9 +2,11 @@
  * Command handlers - execute player commands.
  */
 
-import type { OutputLine, Location, Exit, Item, EquipSlot } from '@solo-mud/shared';
+import type { OutputLine, Exit, Item, EquipSlot } from '@solo-mud/shared';
+import { createRng } from '@solo-mud/shared';
 import type { GameSession } from '../game/session';
 import { parseCommand, getDirection, type ParsedCommand } from './parser';
+import { generateDescription, type Biome, type Weather } from '../descriptions';
 
 export interface CommandContext {
   session: GameSession;
@@ -90,14 +92,22 @@ function handleLook(ctx: CommandContext): CommandResult {
   // Location name
   output.push({ text: `[ ${location.name} ]`, style: 'system' });
 
-  // Description based on biome and props
-  const description = generateLocationDescription(location);
-  output.push({ text: description, style: 'normal' });
+  // Get dominant biome
+  const biomeEntries = Object.entries(location.biome) as [string, number][];
+  biomeEntries.sort((a, b) => (b[1] ?? 0) - (a[1] ?? 0));
+  const dominantBiome = (biomeEntries[0]?.[0] ?? 'plains') as Biome;
 
-  // Props
-  if (location.props.length > 0) {
-    output.push({ text: `You notice: ${location.props.join(', ')}.`, style: 'normal' });
-  }
+  // Generate dynamic description using new template system
+  const descriptionCtx = {
+    biome: dominantBiome,
+    timeOfDay: world.time.timeOfDay,
+    weather: world.weather.type as Weather,
+    visitCount: location.visitState.visitCount,
+    props: location.props,
+    rng: createRng(`${world.seed}-${location.id}-${location.visitState.visitCount}`),
+  };
+  const description = generateDescription(descriptionCtx);
+  output.push({ text: description, style: 'normal' });
 
   // Items
   const items = location.items.map(id => world.items[id]).filter(Boolean) as Item[];
@@ -120,52 +130,6 @@ function handleLook(ctx: CommandContext): CommandResult {
   }
 
   return { output, updateRoom: true };
-}
-
-/**
- * Generate a description for a location based on its biome.
- */
-function generateLocationDescription(location: Location): string {
-  const biomeEntries = Object.entries(location.biome) as [string, number][];
-  biomeEntries.sort((a, b) => (b[1] ?? 0) - (a[1] ?? 0));
-  const dominantBiome = biomeEntries[0]?.[0] ?? 'plains';
-
-  const descriptions: Record<string, string[]> = {
-    plains: [
-      'Open grasslands stretch before you.',
-      'The wind sweeps across the open plain.',
-      'Tall grass sways gently in the breeze.',
-    ],
-    forest: [
-      'Trees tower around you, their leaves rustling softly.',
-      'Dappled sunlight filters through the canopy.',
-      'The forest is dense with undergrowth.',
-    ],
-    hills: [
-      'Rocky terrain rises and falls around you.',
-      'The hillside offers a commanding view.',
-      'Boulders and scrub dot the landscape.',
-    ],
-    swamp: [
-      'Murky water pools between twisted trees.',
-      'The air is thick with moisture and decay.',
-      'Fog clings to the marshy ground.',
-    ],
-    mountains: [
-      'Jagged peaks rise into the clouds above.',
-      'The rocky path winds through the mountains.',
-      'Cold wind howls through the mountain pass.',
-    ],
-    desert: [
-      'Endless dunes stretch to the horizon.',
-      'The sun beats down mercilessly.',
-      'Sand crunches beneath your feet.',
-    ],
-  };
-
-  const biomeDescriptions = descriptions[dominantBiome] ?? descriptions['plains']!;
-  const index = location.visitState.visitCount % biomeDescriptions.length;
-  return biomeDescriptions[index]!;
 }
 
 /**
