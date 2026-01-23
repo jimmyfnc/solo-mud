@@ -8,7 +8,6 @@ import {
   getLightLevel,
   getVisibilityModifier,
   getAmbientDescription,
-  type TimeEffects,
 } from './time-effects';
 import type { TimeOfDay } from '@solo-mud/shared';
 

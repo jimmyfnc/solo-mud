@@ -7,11 +7,9 @@ import {
   createNpcSchedule,
   createNpcManager,
   getNpcDialogue,
-  type NpcSchedule,
-  type NpcManager,
   type NpcDefinition,
 } from './schedule';
-import type { TimeOfDay, NodeId } from '@solo-mud/shared';
+import type { TimeOfDay } from '@solo-mud/shared';
 
 describe('createNpcSchedule', () => {
   it('should create a schedule with all time periods', () => {

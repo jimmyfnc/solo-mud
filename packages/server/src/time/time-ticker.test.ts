@@ -9,7 +9,7 @@ import {
   formatGameTime,
   type TimeTicker,
 } from './time-ticker';
-import type { GameTime, TimeOfDay } from '@solo-mud/shared';
+import type { GameTime } from '@solo-mud/shared';
 
 describe('getTimeOfDay', () => {
   it('should return dawn for early morning hours', () => {

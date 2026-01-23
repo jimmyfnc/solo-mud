@@ -16,11 +16,11 @@ import { createWeatherSimulator } from '../time/weather';
 import { createNpcManager, createNpcSchedule, getNpcDialogue } from '../npc/schedule';
 import { generateItem, generateLootDrop, type ItemTemplate, type LootTable } from '../loot/item-generator';
 import { CombatTicker } from '../combat/tick';
-import { rollAttack, calculateDamage, type CombatEntity } from '../combat/auto-attack';
+import { rollAttack, type CombatEntity } from '../combat/auto-attack';
 import { createCooldownManager, type AbilityDefinition } from '../combat/cooldowns';
 import { createEnemyAI, type EnemyAIState, type AIContext, type Enemy } from '../combat/enemy-ai';
 import { createRng } from '@solo-mud/shared';
-import type { GameTime, TimeOfDay, CombatStats } from '@solo-mud/shared';
+import type { GameTime, CombatStats } from '@solo-mud/shared';
 
 describe('Game Loop Integration', () => {
   const TEST_SEED = 'integration-test-seed';
@@ -355,24 +355,26 @@ describe('Game Loop Integration', () => {
 
     it('should calculate attack rolls', () => {
       const attackerStats: CombatStats = {
-        attack: 20,
+        attackPower: 20,
+        spellPower: 10,
         defense: 10,
-        maxHp: 100,
+        magicResist: 5,
         hitChance: 0.8,
         dodgeChance: 0.1,
         critChance: 0.1,
-        critMultiplier: 1.5,
+        critDamage: 1.5,
         attackSpeed: 1000,
       };
 
       const defenderStats: CombatStats = {
-        attack: 10,
+        attackPower: 10,
+        spellPower: 5,
         defense: 15,
-        maxHp: 80,
+        magicResist: 8,
         hitChance: 0.7,
         dodgeChance: 0.15,
         critChance: 0.05,
-        critMultiplier: 1.5,
+        critDamage: 1.5,
         attackSpeed: 1000,
       };
 
@@ -380,6 +382,7 @@ describe('Game Loop Integration', () => {
         id: 'attacker-1',
         name: 'Attacker',
         currentHp: 100,
+        maxHp: 100,
         combatStats: attackerStats,
       };
 
@@ -387,6 +390,7 @@ describe('Game Loop Integration', () => {
         id: 'defender-1',
         name: 'Defender',
         currentHp: 80,
+        maxHp: 80,
         combatStats: defenderStats,
       };
 
@@ -423,13 +427,14 @@ describe('Game Loop Integration', () => {
 
     it('should run enemy AI state machine', () => {
       const enemyStats: CombatStats = {
-        attack: 15,
+        attackPower: 15,
+        spellPower: 5,
         defense: 8,
-        maxHp: 50,
+        magicResist: 4,
         hitChance: 0.7,
         dodgeChance: 0.1,
         critChance: 0.05,
-        critMultiplier: 1.5,
+        critDamage: 1.5,
         attackSpeed: 1200,
       };
 
@@ -437,6 +442,7 @@ describe('Game Loop Integration', () => {
         id: 'goblin-1',
         name: 'Goblin',
         currentHp: 50,
+        maxHp: 50,
         combatStats: enemyStats,
         level: 3,
         xpReward: 25,
