@@ -28,3 +28,13 @@ export {
   type AbilityDefinition,
   type UseAbilityResult,
 } from './cooldowns';
+
+export {
+  createEnemyAI,
+  type Enemy,
+  type EnemyAI,
+  type EnemyAIState,
+  type AIBehavior,
+  type AIState,
+  type AIContext,
+} from './enemy-ai';
