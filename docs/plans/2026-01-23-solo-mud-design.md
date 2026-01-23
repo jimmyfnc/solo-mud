@@ -465,11 +465,35 @@ The following are noted for future implementation:
 
 ## Technical Requirements
 
+### Architecture
+
+**Hybrid client-server for multiplayer-ready design:**
+
+```
+[React Web Client] ──WebSocket──→ [Node Game Server] ←── [CLI Client (optional)]
+```
+
+- Game logic lives server-side (validation, combat ticks, world state)
+- Clients render and send commands
+- Same backend serves web and potential CLI clients
+
 ### Stack
 
-- **Language:** TypeScript (Node 20+)
-- **Runtime:** CLI app (terminal)
-- **Tooling:** pnpm or npm, ts-node (or tsx), vitest for tests
+**Backend (Game Server):**
+- **Runtime:** Node 20+
+- **Framework:** Fastify (fast, TypeScript-first, plugin architecture)
+- **Real-time:** Socket.io (WebSocket + rooms for multiplayer zones)
+- **Testing:** Vitest
+
+**Frontend (Web Client):**
+- **Framework:** React 18+ with Vite
+- **Styling:** Tailwind CSS
+- **State:** Zustand (lightweight, good for real-time updates)
+- **Testing:** Vitest
+
+**Shared:**
+- **Monorepo:** pnpm workspaces (shared TypeScript types)
+- **Language:** TypeScript throughout
 - **Seeded generation:** Same seed → same world (deterministic PRNG)
 
 ### Data Model (Core Interfaces)
@@ -528,45 +552,96 @@ interface World {
 
 ### Project Structure
 
+**pnpm monorepo with three packages:**
+
 ```
 solo-mud/
-  package.json
-  tsconfig.json
+  pnpm-workspace.yaml
+  package.json                    # Root workspace config
+  tsconfig.base.json              # Shared TS config
   README.md
-  src/
-    index.ts                 # CLI entry
-    engine/
-      commands.ts            # parse + execute commands
-      render.ts              # render room/combat text
-      state.ts               # player state
-      combat.ts              # combat tick system
-      time.ts                # time + weather simulation
-    world/
-      rng.ts                 # seeded PRNG
-      graph.ts               # graph helpers (BFS, paths)
-      generate.ts            # world generation pipeline
-      validate.ts            # reachability + validation
-      biomes.ts              # biome definitions + blending
-      tables.ts              # data tables (enemies, loot, affixes)
-      serialize.ts           # stable stringify for determinism
-    entities/
-      character.ts           # player character model
-      classes.ts             # class definitions
-      subclasses.ts          # subclass trees
-      enemies.ts             # enemy definitions
-      npcs.ts                # NPC dialogue + schedules
-      items.ts               # item generation
-    data/
-      biomes/                # biome content tables
-      classes/               # class/subclass definitions
-      enemies/               # enemy templates
-      items/                 # item templates, affixes
-      descriptions/          # description templates
-  test/
-    generate.test.ts
-    validate.test.ts
-    combat.test.ts
-    biomes.test.ts
+
+  packages/
+    shared/                       # @solo-mud/shared
+      package.json
+      src/
+        types/                    # Shared TypeScript interfaces
+          world.ts                # World, Location, Exit, Item
+          character.ts            # Player, Stats, Class, Subclass
+          combat.ts               # Combat events, damage, effects
+          messages.ts             # Client↔Server message types
+        constants/                # Shared constants
+          biomes.ts
+          classes.ts
+          rarities.ts
+        utils/
+          rng.ts                  # Seeded PRNG (used by server)
+
+    server/                       # @solo-mud/server
+      package.json
+      src/
+        index.ts                  # Fastify + Socket.io entry
+        server/
+          app.ts                  # Fastify app setup
+          socket.ts               # Socket.io connection handling
+          rooms.ts                # Zone/room management
+        engine/
+          commands.ts             # Parse + execute commands
+          combat.ts               # Combat tick system (GCD, cooldowns)
+          time.ts                 # Time + weather simulation
+          state.ts                # Game state management
+        world/
+          graph.ts                # Graph helpers (BFS, paths)
+          generate.ts             # World generation pipeline
+          validate.ts             # Reachability + validation
+          biomes.ts               # Biome blending logic
+          descriptions.ts         # Dynamic text generation
+        entities/
+          player.ts               # Player state + inventory
+          enemies.ts              # Enemy AI + spawning
+          npcs.ts                 # NPC dialogue + schedules
+          items.ts                # Item generation + affixes
+        data/
+          biomes/                 # Biome content tables (JSON/TS)
+          classes/                # Class/subclass definitions
+          enemies/                # Enemy templates
+          items/                  # Item templates, affix pools
+          descriptions/           # Description templates
+      test/
+        generate.test.ts
+        validate.test.ts
+        combat.test.ts
+
+    client/                       # @solo-mud/client
+      package.json
+      vite.config.ts
+      index.html
+      src/
+        main.tsx                  # React entry
+        App.tsx                   # Root component
+        components/
+          Terminal/               # MUD-style text display
+            Terminal.tsx
+            CommandInput.tsx
+            OutputLine.tsx
+          HUD/                    # Stats, quick slots, map
+            StatusBar.tsx
+            QuickSlots.tsx
+            MiniMap.tsx
+          Panels/                 # Inventory, character sheet
+            Inventory.tsx
+            CharacterSheet.tsx
+            Equipment.tsx
+        hooks/
+          useSocket.ts            # Socket.io connection
+          useGameState.ts         # Zustand store
+          useCommands.ts          # Command parsing/sending
+        stores/
+          gameStore.ts            # Zustand game state
+        styles/
+          terminal.css            # MUD terminal aesthetic
+      test/
+        components.test.tsx
 ```
 
 ---
@@ -574,15 +649,21 @@ solo-mud/
 ## Next Steps
 
 1. **Review and approve** this design document
-2. **Set up project** — Initialize repo, dependencies, tsconfig
-3. **Implement core systems** in order:
-   - Seeded RNG + data tables
+2. **Set up monorepo** — pnpm workspace, shared package, base configs
+3. **Implement server core:**
+   - Seeded RNG + data tables (shared package)
    - World graph generation + validation
-   - Basic CLI loop + commands
+   - Fastify + Socket.io setup
+   - Basic command handling
+4. **Implement client shell:**
+   - Vite + React setup
+   - Terminal component (text display + input)
+   - Socket.io connection
+5. **Build game systems:**
    - Character + stats
-   - Combat system
-   - Equipment + loot
-   - Descriptions
+   - Combat tick system (GCD, cooldowns, auto-attack)
+   - Equipment + loot generation
+   - Dynamic descriptions
    - Time + weather
    - Towns + NPCs
-4. **Iterate** — Playtest, adjust, expand
+6. **Polish and iterate** — Playtest, balance, expand content
