@@ -9,7 +9,8 @@ import {
   type TimeMessage,
   type ErrorMessage,
   type SyncMessage,
-  type CharacterCreationMessage,
+  type WelcomeMessage,
+  type CharacterDeletedMessage,
   type ClassName,
 } from '@solo-mud/shared';
 import { useGameStore } from '../store/gameStore';
@@ -20,6 +21,9 @@ export interface UseSocketReturn {
   sendCommand: (input: string) => void;
   requestSync: () => void;
   createCharacter: (name: string, className: ClassName) => void;
+  loadCharacter: (characterId: string) => void;
+  deleteCharacter: (characterId: string, confirmName: string) => void;
+  linkPlayerCode: (code: string) => void;
 }
 
 /**
@@ -30,14 +34,18 @@ export function useSocket(): UseSocketReturn {
   const {
     setConnected,
     setConnecting,
-    setNeedsCharacterCreation,
+    setPlayerIdentity,
+    setSavedCharacters,
     setClassOptions,
+    setShowCharacterSelect,
     addLines,
     setPlayer,
     updatePlayer,
     setRoom,
     setTime,
     setWeather,
+    getStoredPlayerId,
+    enterGame,
   } = useGameStore();
 
   // Initialize socket connection
@@ -58,6 +66,13 @@ export function useSocket(): UseSocketReturn {
       console.log('Connected to server:', socket.id);
       setConnected(true);
       setConnecting(false);
+
+      // Send player identification with stored ID (if any)
+      const storedPlayerId = getStoredPlayerId();
+      socket.emit(CLIENT_EVENTS.IDENTIFY_PLAYER, {
+        type: 'identify_player',
+        playerId: storedPlayerId,
+      });
     });
 
     socket.on('disconnect', (reason) => {
@@ -70,6 +85,14 @@ export function useSocket(): UseSocketReturn {
       console.error('Connection error:', error);
       setConnecting(false);
       addLines([{ text: `Connection error: ${error.message}`, style: 'error' }]);
+    });
+
+    // Welcome event - received after IDENTIFY_PLAYER
+    socket.on(SERVER_EVENTS.WELCOME, (message: WelcomeMessage) => {
+      setPlayerIdentity(message.playerId, message.playerCode);
+      setSavedCharacters(message.characters, message.maxCharacters);
+      setClassOptions(message.classes);
+      setShowCharacterSelect(true);
     });
 
     // Game events
@@ -101,12 +124,12 @@ export function useSocket(): UseSocketReturn {
       setRoom(message.room);
       setTime(message.time);
       setWeather(message.weather);
-      setNeedsCharacterCreation(false); // Character exists, no creation needed
+      enterGame(); // Hide character select, show game
     });
 
-    socket.on(SERVER_EVENTS.CHARACTER_CREATION, (message: CharacterCreationMessage) => {
-      setNeedsCharacterCreation(true);
-      setClassOptions(message.classes);
+    // Character deleted confirmation
+    socket.on(SERVER_EVENTS.CHARACTER_DELETED, (message: CharacterDeletedMessage) => {
+      setSavedCharacters(message.characters, useGameStore.getState().maxCharacters);
     });
 
     // Cleanup on unmount
@@ -114,7 +137,22 @@ export function useSocket(): UseSocketReturn {
       socket.disconnect();
       socketRef.current = null;
     };
-  }, [setConnected, setConnecting, setNeedsCharacterCreation, setClassOptions, addLines, setPlayer, updatePlayer, setRoom, setTime, setWeather]);
+  }, [
+    setConnected,
+    setConnecting,
+    setPlayerIdentity,
+    setSavedCharacters,
+    setClassOptions,
+    setShowCharacterSelect,
+    addLines,
+    setPlayer,
+    updatePlayer,
+    setRoom,
+    setTime,
+    setWeather,
+    getStoredPlayerId,
+    enterGame,
+  ]);
 
   // Send a command to the server
   const sendCommand = useCallback((input: string) => {
@@ -152,9 +190,55 @@ export function useSocket(): UseSocketReturn {
     });
   }, [addLines]);
 
+  // Load an existing character
+  const loadCharacter = useCallback((characterId: string) => {
+    const socket = socketRef.current;
+    if (!socket?.connected) {
+      addLines([{ text: 'Not connected to server.', style: 'error' }]);
+      return;
+    }
+
+    socket.emit(CLIENT_EVENTS.LOAD_CHARACTER, {
+      type: 'load_character',
+      characterId,
+    });
+  }, [addLines]);
+
+  // Delete a character
+  const deleteCharacter = useCallback((characterId: string, confirmName: string) => {
+    const socket = socketRef.current;
+    if (!socket?.connected) {
+      addLines([{ text: 'Not connected to server.', style: 'error' }]);
+      return;
+    }
+
+    socket.emit(CLIENT_EVENTS.DELETE_CHARACTER, {
+      type: 'delete_character',
+      characterId,
+      confirmName,
+    });
+  }, [addLines]);
+
+  // Link a player code from another device
+  const linkPlayerCode = useCallback((code: string) => {
+    const socket = socketRef.current;
+    if (!socket?.connected) {
+      addLines([{ text: 'Not connected to server.', style: 'error' }]);
+      return;
+    }
+
+    socket.emit(CLIENT_EVENTS.LINK_PLAYER_CODE, {
+      type: 'link_player_code',
+      code,
+    });
+  }, [addLines]);
+
   return {
     sendCommand,
     requestSync,
     createCharacter,
+    loadCharacter,
+    deleteCharacter,
+    linkPlayerCode,
   };
 }

@@ -25,8 +25,40 @@ export interface CreateCharacterMessage {
   className: 'warrior' | 'rogue' | 'mage' | 'cleric' | 'ranger';
 }
 
+/** Client loads an existing character */
+export interface LoadCharacterMessage {
+  type: 'load_character';
+  characterId: string;
+}
+
+/** Client deletes a character */
+export interface DeleteCharacterMessage {
+  type: 'delete_character';
+  characterId: string;
+  confirmName: string;
+}
+
+/** Client links a player code (for cross-device access) */
+export interface LinkPlayerCodeMessage {
+  type: 'link_player_code';
+  code: string;
+}
+
+/** Client sends their stored player ID on connect */
+export interface IdentifyPlayerMessage {
+  type: 'identify_player';
+  playerId: string | null;
+}
+
 /** Client -> Server message union */
-export type ClientMessage = CommandMessage | SyncRequestMessage | CreateCharacterMessage;
+export type ClientMessage =
+  | CommandMessage
+  | SyncRequestMessage
+  | CreateCharacterMessage
+  | LoadCharacterMessage
+  | DeleteCharacterMessage
+  | LinkPlayerCodeMessage
+  | IdentifyPlayerMessage;
 
 // ============ Server -> Client Messages ============
 
@@ -133,6 +165,32 @@ export interface ClassOption {
   primaryStats: [string, string];
 }
 
+/** Character summary for character selection screen */
+export interface CharacterSummary {
+  id: string;
+  name: string;
+  class: string;
+  level: number;
+  lastPlayed: number;
+}
+
+/** Server sends welcome with player info and saved characters */
+export interface WelcomeMessage {
+  type: 'welcome';
+  playerId: string;
+  playerCode: string;
+  characters: CharacterSummary[];
+  maxCharacters: number;
+  classes: ClassOption[];
+}
+
+/** Server confirms character deletion */
+export interface CharacterDeletedMessage {
+  type: 'character_deleted';
+  characterId: string;
+  characters: CharacterSummary[];
+}
+
 /** Server -> Client message union */
 export type ServerMessage =
   | OutputMessage
@@ -142,7 +200,9 @@ export type ServerMessage =
   | TimeMessage
   | ErrorMessage
   | SyncMessage
-  | CharacterCreationMessage;
+  | CharacterCreationMessage
+  | WelcomeMessage
+  | CharacterDeletedMessage;
 
 // ============ Event Names ============
 
@@ -150,6 +210,10 @@ export const CLIENT_EVENTS = {
   COMMAND: 'command',
   SYNC_REQUEST: 'sync_request',
   CREATE_CHARACTER: 'create_character',
+  LOAD_CHARACTER: 'load_character',
+  DELETE_CHARACTER: 'delete_character',
+  LINK_PLAYER_CODE: 'link_player_code',
+  IDENTIFY_PLAYER: 'identify_player',
 } as const;
 
 export const SERVER_EVENTS = {
@@ -161,4 +225,6 @@ export const SERVER_EVENTS = {
   ERROR: 'error',
   SYNC: 'sync',
   CHARACTER_CREATION: 'character_creation',
+  WELCOME: 'welcome',
+  CHARACTER_DELETED: 'character_deleted',
 } as const;

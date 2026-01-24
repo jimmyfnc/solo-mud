@@ -14,6 +14,10 @@ export interface GameSession {
   world: World;
   createdAt: number;
   lastActivity: number;
+  /** Database character ID for persistence */
+  characterId?: string;
+  /** World seed used for this session */
+  worldSeed?: string;
 }
 
 /**
@@ -24,12 +28,13 @@ class SessionManager {
 
   /**
    * Create a new game session for a socket connection.
+   * Returns the session and the world seed for persistence.
    */
-  createSession(socketId: string, playerName: string, className: ClassName = 'warrior'): GameSession {
+  createSession(socketId: string, playerName: string, className: ClassName = 'warrior'): { session: GameSession; worldSeed: string } {
     // Generate a new world for this player
-    const seed = `${socketId}-${Date.now()}`;
+    const worldSeed = `${socketId}-${Date.now()}`;
     const world = generateWorld({
-      seed,
+      seed: worldSeed,
       nodeCount: 18,
       extraEdges: 5,
       lockedEdges: 2,
@@ -52,10 +57,18 @@ class SessionManager {
       world,
       createdAt: Date.now(),
       lastActivity: Date.now(),
+      worldSeed,
     };
 
     this.sessions.set(socketId, session);
-    return session;
+    return { session, worldSeed };
+  }
+
+  /**
+   * Set a session directly (used when restoring from database).
+   */
+  setSession(socketId: string, session: GameSession): void {
+    this.sessions.set(socketId, session);
   }
 
   /**

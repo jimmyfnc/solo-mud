@@ -1,5 +1,5 @@
 /**
- * Socket.io server setup and event handling.
+ * Socket.io server setup and event handling with character persistence.
  */
 
 import { Server as SocketServer, type Socket } from 'socket.io';
@@ -10,16 +10,41 @@ import {
   CLASSES,
   type ClientMessage,
   type CreateCharacterMessage,
+  type LoadCharacterMessage,
+  type DeleteCharacterMessage,
+  type IdentifyPlayerMessage,
+  type LinkPlayerCodeMessage,
   type OutputLine,
   type ClassName,
 } from '@solo-mud/shared';
 import { sessionManager, type GameSession } from './game/session';
+import { restoreSession } from './game/restore';
 import { executeCommand } from './commands/handlers';
+import {
+  getOrCreatePlayer,
+  findPlayerByCode,
+  type PlayerRecord,
+} from './db/repositories/PlayerRepository';
+import {
+  createCharacter,
+  getCharactersByPlayerId,
+  findCharacterById,
+  deleteCharacter,
+  updateCharacter,
+  MAX_CHARACTERS_PER_PLAYER,
+} from './db/repositories/CharacterRepository';
+import {
+  recordVisit,
+  recordUnlock,
+  recordItemRemoved,
+  recordItemDropped,
+} from './db/repositories/WorldStateRepository';
 
 export interface GameSocket extends Socket {
   playerId?: string;
+  playerRecord?: PlayerRecord;
   session?: GameSession;
-  awaitingCharacterCreation?: boolean;
+  awaitingCharacterSelection?: boolean;
 }
 
 /**
@@ -36,33 +61,47 @@ export function createSocketServer(httpServer: HttpServer): SocketServer {
   io.on('connection', (socket: GameSocket) => {
     console.log(`Client connected: ${socket.id}`);
 
-    // Mark as awaiting character creation
-    socket.awaitingCharacterCreation = true;
+    // Mark as awaiting character selection
+    socket.awaitingCharacterSelection = true;
 
-    // Send welcome message and class options
-    sendOutput(socket, [
-      { text: 'Welcome to Solo MUD!', style: 'system' },
-      { text: 'Create your character to begin your adventure.', style: 'system' },
-    ]);
+    // Handle player identification (sent immediately after connect)
+    socket.on(CLIENT_EVENTS.IDENTIFY_PLAYER, (message: IdentifyPlayerMessage) => {
+      handleIdentifyPlayer(socket, message);
+    });
 
-    // Send character creation options
-    sendCharacterCreationOptions(socket);
+    // Handle linking a player code from another device
+    socket.on(CLIENT_EVENTS.LINK_PLAYER_CODE, (message: LinkPlayerCodeMessage) => {
+      handleLinkPlayerCode(socket, message);
+    });
 
     // Handle character creation
     socket.on(CLIENT_EVENTS.CREATE_CHARACTER, (message: CreateCharacterMessage) => {
-      if (!socket.awaitingCharacterCreation) {
-        sendError(socket, 'Character already created.');
+      if (!socket.awaitingCharacterSelection) {
+        sendError(socket, 'Already in game.');
         return;
       }
-
       handleCharacterCreation(socket, message);
+    });
+
+    // Handle loading an existing character
+    socket.on(CLIENT_EVENTS.LOAD_CHARACTER, (message: LoadCharacterMessage) => {
+      if (!socket.awaitingCharacterSelection) {
+        sendError(socket, 'Already in game.');
+        return;
+      }
+      handleLoadCharacter(socket, message);
+    });
+
+    // Handle character deletion
+    socket.on(CLIENT_EVENTS.DELETE_CHARACTER, (message: DeleteCharacterMessage) => {
+      handleDeleteCharacter(socket, message);
     });
 
     // Handle client commands
     socket.on(CLIENT_EVENTS.COMMAND, (message: ClientMessage) => {
       if (message.type === 'command') {
-        if (socket.awaitingCharacterCreation) {
-          sendError(socket, 'Please create your character first.');
+        if (socket.awaitingCharacterSelection) {
+          sendError(socket, 'Please select or create a character first.');
           return;
         }
         sessionManager.touchSession(socket.id);
@@ -72,22 +111,89 @@ export function createSocketServer(httpServer: HttpServer): SocketServer {
 
     // Handle sync requests
     socket.on(CLIENT_EVENTS.SYNC_REQUEST, () => {
-      if (socket.awaitingCharacterCreation) {
-        sendCharacterCreationOptions(socket);
+      if (socket.awaitingCharacterSelection) {
+        // Re-send welcome if they're still on character select
+        if (socket.playerRecord) {
+          sendWelcome(socket, socket.playerRecord);
+        }
         return;
       }
       sessionManager.touchSession(socket.id);
       handleSyncRequest(socket);
     });
 
-    // Handle disconnection
+    // Handle disconnection - save character state
     socket.on('disconnect', (reason) => {
       console.log(`Client disconnected: ${socket.id} (${reason})`);
+      saveSessionState(socket);
       sessionManager.removeSession(socket.id);
     });
+
+    // Send initial prompt to identify
+    sendOutput(socket, [
+      { text: 'Connecting to Solo MUD...', style: 'system' },
+    ]);
   });
 
   return io;
+}
+
+/**
+ * Handle player identification on connect.
+ */
+function handleIdentifyPlayer(socket: GameSocket, message: IdentifyPlayerMessage): void {
+  // Get or create player record
+  const playerRecord = getOrCreatePlayer(message.playerId);
+  socket.playerRecord = playerRecord;
+  socket.playerId = playerRecord.id;
+
+  // Send welcome with character list
+  sendWelcome(socket, playerRecord);
+}
+
+/**
+ * Handle linking a player code from another device.
+ */
+function handleLinkPlayerCode(socket: GameSocket, message: LinkPlayerCodeMessage): void {
+  const existingPlayer = findPlayerByCode(message.code);
+
+  if (!existingPlayer) {
+    sendError(socket, 'Invalid player code. Please check and try again.');
+    return;
+  }
+
+  // Link to existing player
+  socket.playerRecord = existingPlayer;
+  socket.playerId = existingPlayer.id;
+
+  sendOutput(socket, [
+    { text: `Linked to player code: ${existingPlayer.playerCode}`, style: 'success' },
+  ]);
+
+  // Send updated welcome with their characters
+  sendWelcome(socket, existingPlayer);
+}
+
+/**
+ * Send welcome message with player info and character list.
+ */
+function sendWelcome(socket: GameSocket, playerRecord: PlayerRecord): void {
+  const characters = getCharactersByPlayerId(playerRecord.id);
+  const classOptions = Object.values(CLASSES).map((cls) => ({
+    id: cls.id,
+    name: cls.name,
+    description: cls.description,
+    primaryStats: cls.primaryStats,
+  }));
+
+  socket.emit(SERVER_EVENTS.WELCOME, {
+    type: 'welcome',
+    playerId: playerRecord.id,
+    playerCode: playerRecord.playerCode,
+    characters,
+    maxCharacters: MAX_CHARACTERS_PER_PLAYER,
+    classes: classOptions,
+  });
 }
 
 /**
@@ -112,6 +218,166 @@ export function sendError(socket: GameSocket, message: string, code?: string): v
 }
 
 /**
+ * Handle character creation.
+ */
+function handleCharacterCreation(socket: GameSocket, message: CreateCharacterMessage): void {
+  const { name, className } = message;
+
+  if (!socket.playerRecord) {
+    sendError(socket, 'Please wait for connection to complete.');
+    return;
+  }
+
+  // Validate class name
+  if (!CLASSES[className]) {
+    sendError(socket, `Invalid class: ${className}`);
+    return;
+  }
+
+  // Validate player name
+  const trimmedName = name.trim();
+  if (trimmedName.length < 2 || trimmedName.length > 20) {
+    sendError(socket, 'Name must be between 2 and 20 characters.');
+    return;
+  }
+
+  if (!/^[a-zA-Z][a-zA-Z0-9_ ]*[a-zA-Z0-9]$|^[a-zA-Z]$/.test(trimmedName)) {
+    sendError(socket, 'Name must start with a letter. Can contain letters, numbers, spaces, and underscores.');
+    return;
+  }
+
+  try {
+    // Create the session
+    const { session, worldSeed } = sessionManager.createSession(
+      socket.id,
+      trimmedName,
+      className as ClassName
+    );
+
+    // Save to database
+    const characterRecord = createCharacter(
+      socket.playerRecord.id,
+      session.player,
+      worldSeed,
+      session.world.time.totalMinutes
+    );
+
+    // Update session with character ID
+    session.characterId = characterRecord.id;
+    socket.session = session;
+    socket.awaitingCharacterSelection = false;
+
+    // Record initial location visit
+    recordVisit(characterRecord.id, session.player.locationId);
+
+    // Send welcome message
+    sendOutput(socket, [
+      { text: `Welcome, ${session.player.name} the ${CLASSES[className].name}!`, style: 'success' },
+      { text: 'Your adventure begins...', style: 'system' },
+      { text: 'Type "look" to see your surroundings, or "help" for commands.', style: 'system' },
+    ]);
+
+    // Send initial sync
+    handleSyncRequest(socket);
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : 'Failed to create character.';
+    sendError(socket, errorMessage);
+  }
+}
+
+/**
+ * Handle loading an existing character.
+ */
+function handleLoadCharacter(socket: GameSocket, message: LoadCharacterMessage): void {
+  if (!socket.playerRecord) {
+    sendError(socket, 'Please wait for connection to complete.');
+    return;
+  }
+
+  const character = findCharacterById(message.characterId);
+
+  if (!character) {
+    sendError(socket, 'Character not found.');
+    return;
+  }
+
+  // Verify ownership
+  if (character.playerId !== socket.playerRecord.id) {
+    sendError(socket, 'Character not found.');
+    return;
+  }
+
+  try {
+    // Restore the session
+    const session = restoreSession(socket.id, character);
+    sessionManager.setSession(socket.id, session);
+    socket.session = session;
+    socket.awaitingCharacterSelection = false;
+
+    // Send welcome back message
+    sendOutput(socket, [
+      { text: `Welcome back, ${session.player.name}!`, style: 'success' },
+      { text: 'Your adventure continues...', style: 'system' },
+    ]);
+
+    // Send full sync
+    handleSyncRequest(socket);
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : 'Failed to load character.';
+    sendError(socket, errorMessage);
+  }
+}
+
+/**
+ * Handle character deletion.
+ */
+function handleDeleteCharacter(socket: GameSocket, message: DeleteCharacterMessage): void {
+  if (!socket.playerRecord) {
+    sendError(socket, 'Please wait for connection to complete.');
+    return;
+  }
+
+  const character = findCharacterById(message.characterId);
+
+  if (!character) {
+    sendError(socket, 'Character not found.');
+    return;
+  }
+
+  // Verify ownership
+  if (character.playerId !== socket.playerRecord.id) {
+    sendError(socket, 'Character not found.');
+    return;
+  }
+
+  // Verify confirmation name matches
+  if (message.confirmName.toLowerCase() !== character.name.toLowerCase()) {
+    sendError(socket, 'Character name does not match. Deletion cancelled.');
+    return;
+  }
+
+  // Delete the character (CASCADE will clean up world state tables)
+  const deleted = deleteCharacter(message.characterId, socket.playerRecord.id);
+
+  if (!deleted) {
+    sendError(socket, 'Failed to delete character.');
+    return;
+  }
+
+  // Send confirmation with updated character list
+  const characters = getCharactersByPlayerId(socket.playerRecord.id);
+  socket.emit(SERVER_EVENTS.CHARACTER_DELETED, {
+    type: 'character_deleted',
+    characterId: message.characterId,
+    characters,
+  });
+
+  sendOutput(socket, [
+    { text: `Character "${character.name}" has been deleted.`, style: 'system' },
+  ]);
+}
+
+/**
  * Handle a command from a client.
  */
 function handleCommand(socket: GameSocket, input: string): void {
@@ -123,6 +389,11 @@ function handleCommand(socket: GameSocket, input: string): void {
 
   const result = executeCommand(session, input);
   sendOutput(socket, result.output);
+
+  // Auto-save after commands that modify state
+  if (session.characterId) {
+    saveCharacterState(session);
+  }
 }
 
 /**
@@ -147,61 +418,35 @@ function handleSyncRequest(socket: GameSocket): void {
 }
 
 /**
- * Send character creation options to the client.
+ * Save session state to database on disconnect.
  */
-function sendCharacterCreationOptions(socket: GameSocket): void {
-  const classOptions = Object.values(CLASSES).map((cls) => ({
-    id: cls.id,
-    name: cls.name,
-    description: cls.description,
-    primaryStats: cls.primaryStats,
-  }));
+function saveSessionState(socket: GameSocket): void {
+  const session = socket.session;
+  if (!session?.characterId) return;
 
-  socket.emit(SERVER_EVENTS.CHARACTER_CREATION, {
-    type: 'character_creation',
-    classes: classOptions,
-  });
+  saveCharacterState(session);
+  console.log(`Saved character ${session.characterId} for ${socket.id}`);
 }
 
 /**
- * Handle character creation from a client.
+ * Save character state to database.
  */
-function handleCharacterCreation(socket: GameSocket, message: CreateCharacterMessage): void {
-  const { name, className } = message;
+export function saveCharacterState(session: GameSession): void {
+  if (!session.characterId) return;
 
-  // Validate class name
-  if (!CLASSES[className]) {
-    sendError(socket, `Invalid class: ${className}`);
-    return;
-  }
-
-  // Validate player name
-  const trimmedName = name.trim();
-  if (trimmedName.length < 2 || trimmedName.length > 20) {
-    sendError(socket, 'Name must be between 2 and 20 characters.');
-    return;
-  }
-
-  if (!/^[a-zA-Z][a-zA-Z0-9_ ]*[a-zA-Z0-9]$|^[a-zA-Z]$/.test(trimmedName)) {
-    sendError(socket, 'Name must start with a letter. Can contain letters, numbers, spaces, and underscores.');
-    return;
-  }
-
-  // Create the session
-  const session = sessionManager.createSession(socket.id, trimmedName, className as ClassName);
-  socket.session = session;
-  socket.playerId = session.playerId;
-  socket.awaitingCharacterCreation = false;
-
-  // Send welcome message
-  sendOutput(socket, [
-    { text: `Welcome, ${session.player.name} the ${CLASSES[className].name}!`, style: 'success' },
-    { text: 'Your adventure begins...', style: 'system' },
-    { text: 'Type "look" to see your surroundings, or "help" for commands.', style: 'system' },
-  ]);
-
-  // Send initial sync
-  handleSyncRequest(socket);
+  updateCharacter(session.characterId, {
+    level: session.player.level,
+    xp: session.player.xp,
+    gold: session.player.gold,
+    currentHp: session.player.currentHp,
+    maxHp: session.player.maxHp,
+    currentMp: session.player.currentMp,
+    maxMp: session.player.maxMp,
+    locationId: session.player.locationId,
+    gameTime: session.world.time.totalMinutes,
+    equipment: session.player.equipment,
+    inventory: session.player.inventory,
+  });
 }
 
 /**
@@ -229,3 +474,6 @@ function buildRoomMessage(session: GameSession): {
     npcs: [],
   };
 }
+
+// Export persistence functions for use in command handlers
+export { recordVisit, recordUnlock, recordItemRemoved, recordItemDropped };

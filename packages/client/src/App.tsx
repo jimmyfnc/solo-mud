@@ -1,14 +1,35 @@
-import { Terminal, CommandInput, StatusBar, CharacterCreation } from './components';
+import { Terminal, CommandInput, StatusBar, WelcomeScreen } from './components';
 import { useGameStore } from './store/gameStore';
 import { useSocket } from './hooks';
 
 function App() {
-  const { lines, connected, connecting, needsCharacterCreation, classOptions } = useGameStore();
-  const { sendCommand, createCharacter } = useSocket();
+  const {
+    lines,
+    connected,
+    connecting,
+    showCharacterSelect,
+    playerCode,
+    savedCharacters,
+    maxCharacters,
+    classOptions,
+    player,
+  } = useGameStore();
+
+  const {
+    sendCommand,
+    createCharacter,
+    loadCharacter,
+    deleteCharacter,
+    linkPlayerCode,
+  } = useSocket();
 
   const handleCommand = (command: string) => {
     sendCommand(command);
   };
+
+  // Determine what to show
+  const showWelcome = showCharacterSelect && !player;
+  const showGame = player && !showCharacterSelect;
 
   return (
     <div className="h-screen flex flex-col bg-black text-green-400 font-mono">
@@ -27,13 +48,22 @@ function App() {
         </div>
       </header>
 
-      {/* Character creation flow */}
-      {needsCharacterCreation && classOptions.length > 0 ? (
-        <CharacterCreation
+      {/* Welcome/Character Select Screen */}
+      {showWelcome && (
+        <WelcomeScreen
+          playerCode={playerCode}
+          savedCharacters={savedCharacters}
+          maxCharacters={maxCharacters}
           classOptions={classOptions}
+          onLoadCharacter={loadCharacter}
+          onDeleteCharacter={deleteCharacter}
           onCreateCharacter={createCharacter}
+          onLinkPlayerCode={linkPlayerCode}
         />
-      ) : (
+      )}
+
+      {/* Game UI */}
+      {showGame && (
         <>
           {/* Terminal output */}
           <Terminal lines={lines} />
@@ -48,6 +78,20 @@ function App() {
             placeholder={connected ? 'Enter command...' : 'Connecting to server...'}
           />
         </>
+      )}
+
+      {/* Loading state - waiting for server */}
+      {!showWelcome && !showGame && (
+        <div className="flex-1 flex items-center justify-center">
+          <div className="text-center">
+            <div className="animate-pulse text-2xl text-green-400 mb-4">
+              {connecting ? 'Connecting to server...' : 'Loading...'}
+            </div>
+            {!connected && !connecting && (
+              <p className="text-gray-500">Unable to connect. Please refresh to try again.</p>
+            )}
+          </div>
+        </div>
       )}
     </div>
   );
