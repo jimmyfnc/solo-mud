@@ -6,7 +6,7 @@ import type { OutputLine, Exit, Item, EquipSlot } from '@solo-mud/shared';
 import { createRng } from '@solo-mud/shared';
 import type { GameSession } from '../game/session';
 import { parseCommand, getDirection, type ParsedCommand } from './parser';
-import { generateDescription, type Biome, type Weather } from '../descriptions';
+import { generateDescription, generateExitProse, type Biome, type Weather, type ExitInfo } from '../descriptions';
 
 export interface CommandContext {
   session: GameSession;
@@ -35,6 +35,7 @@ const handlers: Record<string, CommandHandler> = {
   unequip: handleUnequip,
   equipment: handleEquipment,
   use: handleUse,
+  debug: handleDebug,
   // Movement commands
   north: handleMove,
   south: handleMove,
@@ -68,29 +69,35 @@ export function executeCommand(session: GameSession, input: string): CommandResu
 }
 
 /**
- * Handle the "look" command - describe the current location.
+ * Generate room description output.
+ * @param session - The game session
+ * @param detailed - If true, show tactical breakdown (Items:, Creatures:, Exits: lines)
+ * @param updateVisit - If true, increment visit count
  */
-function handleLook(ctx: CommandContext): CommandResult {
-  const { session } = ctx;
+function generateRoomOutput(
+  session: GameSession,
+  detailed: boolean,
+  updateVisit: boolean
+): OutputLine[] {
   const { world, player } = session;
   const location = world.locations[player.locationId];
 
   if (!location) {
-    return {
-      output: [{ text: 'You are nowhere. This should not happen.', style: 'error' }],
-    };
+    return [{ text: 'You are nowhere. This should not happen.', style: 'error' }];
   }
 
-  // Update visit count
-  location.visitState.visitCount++;
-  location.visitState.lastVisitTime = Date.now();
-  if (!location.visitState.firstVisitTime) {
-    location.visitState.firstVisitTime = Date.now();
+  // Update visit count if requested
+  if (updateVisit) {
+    location.visitState.visitCount++;
+    location.visitState.lastVisitTime = Date.now();
+    if (!location.visitState.firstVisitTime) {
+      location.visitState.firstVisitTime = Date.now();
+    }
   }
 
   const output: OutputLine[] = [];
 
-  // Location name
+  // Location name (without debug ID)
   output.push({ text: `[ ${location.name} ]`, style: 'system' });
 
   // Get dominant biome
@@ -98,7 +105,7 @@ function handleLook(ctx: CommandContext): CommandResult {
   biomeEntries.sort((a, b) => (b[1] ?? 0) - (a[1] ?? 0));
   const dominantBiome = (biomeEntries[0]?.[0] ?? 'plains') as Biome;
 
-  // Generate dynamic description using new template system
+  // Generate dynamic description using template system
   const descriptionCtx = {
     biome: dominantBiome,
     timeOfDay: world.time.timeOfDay,
@@ -110,28 +117,54 @@ function handleLook(ctx: CommandContext): CommandResult {
   const description = generateDescription(descriptionCtx);
   output.push({ text: description, style: 'normal' });
 
-  // Items
-  const items = location.items.map(id => world.items[id]).filter(Boolean) as Item[];
-  if (items.length > 0) {
-    const itemNames = items.map(i => i.name).join(', ');
-    output.push({ text: `Items here: ${itemNames}`, style: 'success' });
-  }
-
-  // Exits - show destination to distinguish duplicates
+  // Get exits for prose generation
   const exitIds = world.adjacency[player.locationId] ?? [];
   const exits = exitIds.map(id => world.exits[id]).filter(Boolean) as Exit[];
-  if (exits.length > 0) {
-    output.push({ text: 'Exits:', style: 'system' });
-    for (const exit of exits) {
-      const destLocation = world.locations[exit.to];
-      const destName = destLocation?.name?.replace(/\s*\(loc_\d+\)/, '') ?? 'Unknown';
-      const lockIndicator = exit.type === 'locked' ? ' [LOCKED]' : '';
-      output.push({ text: `  ${exit.label} -> ${destName}${lockIndicator}`, style: 'normal' });
+
+  // Generate natural exit prose
+  const exitInfos: ExitInfo[] = exits.map(exit => {
+    const destLocation = world.locations[exit.to];
+    return {
+      label: exit.label,
+      destination: destLocation?.name ?? 'Unknown',
+      isLocked: exit.type === 'locked',
+    };
+  });
+  const exitProse = generateExitProse(exitInfos);
+  output.push({ text: exitProse, style: 'normal' });
+
+  // Detailed mode: show tactical breakdown
+  if (detailed) {
+    // Items
+    const items = location.items.map(id => world.items[id]).filter(Boolean) as Item[];
+    if (items.length > 0) {
+      const itemNames = items.map(i => i.name).join(', ');
+      output.push({ text: '', style: 'normal' }); // blank line
+      output.push({ text: `Items: ${itemNames}`, style: 'success' });
     }
-  } else {
-    output.push({ text: 'There are no obvious exits.', style: 'system' });
+
+    // TODO: Creatures line will go here when creatures are implemented
+
+    // Exits breakdown
+    if (exits.length > 0) {
+      const exitList = exits.map(exit => {
+        const destLocation = world.locations[exit.to];
+        const destName = destLocation?.name ?? 'Unknown';
+        const locked = exit.type === 'locked' ? ' [LOCKED]' : '';
+        return `${exit.label} (${destName})${locked}`;
+      }).join(', ');
+      output.push({ text: `Exits: ${exitList}`, style: 'system' });
+    }
   }
 
+  return output;
+}
+
+/**
+ * Handle the "look" command - describe the current location in detail.
+ */
+function handleLook(ctx: CommandContext): CommandResult {
+  const output = generateRoomOutput(ctx.session, true, true);
   return { output, updateRoom: true };
 }
 
@@ -233,7 +266,7 @@ function handleUse(ctx: CommandContext): CommandResult {
 
       if (lockedExit) {
         const destLocation = world.locations[lockedExit.to];
-        const destName = destLocation?.name?.replace(/\s*\(loc_\d+\)/, '') ?? 'somewhere';
+        const destName = destLocation?.name ?? 'somewhere';
         return {
           output: [
             { text: `The ${item.name} fits the lock on the ${lockedExit.label} leading to ${destName}.`, style: 'success' },
@@ -312,6 +345,7 @@ function handleHelp(_ctx: CommandContext): CommandResult {
       { text: '  examine <target> - Look at something closely', style: 'normal' },
       { text: '  use <item/object> - Use an item or interact with something', style: 'normal' },
       { text: '  go <direction> - Move in a direction', style: 'normal' },
+      { text: '  go <exit> to <destination> - Disambiguate multiple exits', style: 'normal' },
       { text: '  north/south/east/west (n/s/e/w) - Move directly', style: 'normal' },
       { text: '  take <item> - Pick up an item', style: 'normal' },
       { text: '  drop <item> - Drop an item', style: 'normal' },
@@ -319,9 +353,90 @@ function handleHelp(_ctx: CommandContext): CommandResult {
       { text: '  equipment (eq) - View equipped items', style: 'normal' },
       { text: '  equip <item> - Equip an item from inventory', style: 'normal' },
       { text: '  unequip <slot> - Remove equipped item', style: 'normal' },
+      { text: '  debug - Show raw room/item data (dev mode)', style: 'normal' },
       { text: '  help (?) - Show this help message', style: 'normal' },
     ],
   };
+}
+
+/**
+ * Handle the "debug" command - show raw game data for testing.
+ */
+function handleDebug(ctx: CommandContext): CommandResult {
+  const { session } = ctx;
+  const { world, player } = session;
+  const location = world.locations[player.locationId];
+
+  const output: OutputLine[] = [
+    { text: '=== DEBUG INFO ===', style: 'system' },
+    { text: '', style: 'normal' },
+    { text: `World Seed: ${world.seed}`, style: 'normal' },
+    { text: `Player ID: ${session.playerId}`, style: 'normal' },
+    { text: `Location ID: ${player.locationId}`, style: 'normal' },
+    { text: '', style: 'normal' },
+  ];
+
+  if (location) {
+    output.push({ text: '--- LOCATION ---', style: 'system' });
+    output.push({ text: `Name: ${location.name}`, style: 'normal' });
+    output.push({ text: `Biome: ${JSON.stringify(location.biome)}`, style: 'normal' });
+    output.push({ text: `Props: ${JSON.stringify(location.props)}`, style: 'normal' });
+    output.push({ text: `Visit Count: ${location.visitState.visitCount}`, style: 'normal' });
+    output.push({ text: `Item IDs: ${JSON.stringify(location.items)}`, style: 'normal' });
+    output.push({ text: '', style: 'normal' });
+
+    // Show exits with full data
+    const exitIds = world.adjacency[player.locationId] ?? [];
+    const exits = exitIds.map(id => world.exits[id]).filter(Boolean) as Exit[];
+    output.push({ text: '--- EXITS ---', style: 'system' });
+    for (const exit of exits) {
+      const destLocation = world.locations[exit.to];
+      const destName = destLocation?.name ?? 'Unknown';
+      output.push({ text: `  ${exit.id}:`, style: 'normal' });
+      output.push({ text: `    Label: ${exit.label} | To: ${exit.to} (${destName})`, style: 'normal' });
+      output.push({ text: `    Type: ${exit.type} | Req: ${JSON.stringify(exit.requirement ?? null)}`, style: 'normal' });
+    }
+    output.push({ text: '', style: 'normal' });
+
+    // Show items in room
+    if (location.items.length > 0) {
+      output.push({ text: '--- ROOM ITEMS ---', style: 'system' });
+      for (const itemId of location.items) {
+        const item = world.items[itemId];
+        if (item) {
+          output.push({ text: `  ${item.id}: ${item.name}`, style: 'normal' });
+          output.push({ text: `    Rarity: ${item.rarity} | Tags: ${item.tags.join(', ')}`, style: 'normal' });
+        }
+      }
+      output.push({ text: '', style: 'normal' });
+    }
+  }
+
+  // Show inventory items
+  if (player.inventory.length > 0) {
+    output.push({ text: '--- INVENTORY ITEMS ---', style: 'system' });
+    for (const slot of player.inventory) {
+      const item = world.items[slot.itemId];
+      if (item) {
+        output.push({ text: `  ${item.id}: ${item.name} (x${slot.quantity})`, style: 'normal' });
+        output.push({ text: `    Rarity: ${item.rarity} | Tags: ${item.tags.join(', ')}`, style: 'normal' });
+      }
+    }
+    output.push({ text: '', style: 'normal' });
+  }
+
+  // Show adjacent locations summary
+  output.push({ text: '--- ADJACENT LOCATIONS ---', style: 'system' });
+  const exitIds = world.adjacency[player.locationId] ?? [];
+  const adjacentLocIds = new Set(exitIds.map(id => world.exits[id]?.to).filter(Boolean) as string[]);
+  for (const locId of adjacentLocIds) {
+    const loc = world.locations[locId];
+    if (loc) {
+      output.push({ text: `  ${locId}: ${loc.name}`, style: 'normal' });
+    }
+  }
+
+  return { output };
 }
 
 /**
@@ -480,27 +595,73 @@ function handleDrop(ctx: CommandContext): CommandResult {
 
 /**
  * Handle movement commands.
+ * Supports disambiguation with "go <exit> to <destination>" syntax.
  */
 function handleMove(ctx: CommandContext): CommandResult {
   const { session, parsed } = ctx;
   const { world, player } = session;
 
-  const direction = getDirection(parsed);
-  if (!direction) {
+  const dirResult = getDirection(parsed);
+  if (!dirResult) {
     return {
       output: [{ text: 'Go where? Specify a direction.', style: 'error' }],
     };
   }
 
-  // Find exit in that direction
+  const { direction, destination } = dirResult;
+
+  // Find all exits matching that direction/label
   const exitIds = world.adjacency[player.locationId] ?? [];
   const exits = exitIds.map(id => world.exits[id]).filter(Boolean) as Exit[];
-  const exit = exits.find(e => e.label.toLowerCase() === direction);
+  const matchingExits = exits.filter(e => e.label.toLowerCase() === direction);
 
-  if (!exit) {
+  if (matchingExits.length === 0) {
     return {
       output: [{ text: `You cannot go ${direction} from here.`, style: 'error' }],
     };
+  }
+
+  let exit: Exit;
+
+  // Handle disambiguation when multiple exits match
+  if (matchingExits.length > 1) {
+    if (destination) {
+      // User specified a destination - find the matching one
+      const destLower = destination.toLowerCase();
+      const matchedByDest = matchingExits.find(e => {
+        const destLocation = world.locations[e.to];
+        const destName = destLocation?.name ?? '';
+        return destName.toLowerCase().includes(destLower);
+      });
+
+      if (!matchedByDest) {
+        const availableDestinations = matchingExits.map(e => {
+          const destLocation = world.locations[e.to];
+          return destLocation?.name ?? 'Unknown';
+        });
+        return {
+          output: [
+            { text: `No ${direction} leads to "${destination}".`, style: 'error' },
+            { text: `Available destinations: ${availableDestinations.join(', ')}`, style: 'system' },
+          ],
+        };
+      }
+      exit = matchedByDest;
+    } else {
+      // Multiple exits with same label - show disambiguation options
+      const output: OutputLine[] = [
+        { text: `There are multiple ways ${direction}. Specify which one:`, style: 'system' },
+      ];
+      for (const e of matchingExits) {
+        const destLocation = world.locations[e.to];
+        const destName = destLocation?.name ?? 'Unknown';
+        const lockIndicator = e.type === 'locked' ? ' [LOCKED]' : '';
+        output.push({ text: `  go ${direction} to ${destName}${lockIndicator}`, style: 'normal' });
+      }
+      return { output };
+    }
+  } else {
+    exit = matchingExits[0]!;
   }
 
   // Check if locked
@@ -524,15 +685,15 @@ function handleMove(ctx: CommandContext): CommandResult {
   // Move player
   player.locationId = exit.to;
 
-  // Auto-look at new location
-  const lookResult = handleLook(ctx);
+  // Brief description of new location (not detailed)
+  const roomOutput = generateRoomOutput(session, false, true);
 
   const output: OutputLine[] = [];
   if (usedKeyMessage) {
     output.push(usedKeyMessage);
   }
   output.push({ text: `You go ${direction}.`, style: 'normal' });
-  output.push(...lookResult.output);
+  output.push(...roomOutput);
 
   return {
     output,

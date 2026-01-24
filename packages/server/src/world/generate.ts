@@ -232,7 +232,7 @@ function createLocation(id: NodeId, depth: number, rng: Rng): Location {
 
   return {
     id,
-    name: `${name} (${id})`,
+    name,
     biome,
     props,
     items: [],

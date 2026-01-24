@@ -5,12 +5,14 @@
 export {
   generateDescription,
   getShortDescription,
+  generateExitProse,
   type DescriptionContext,
   type DescriptionTemplate,
   type TemplateVariant,
   type TemplateConditions,
   type Biome,
   type Weather,
+  type ExitInfo,
 } from './templates';
 
 export {

@@ -204,3 +204,89 @@ export function getShortDescription(ctx: DescriptionContext): string {
 
   return biomeNames[ctx.biome];
 }
+
+/** Exit info for prose generation */
+export interface ExitInfo {
+  label: string;
+  destination: string;
+  isLocked: boolean;
+}
+
+/**
+ * Generate natural prose for exits.
+ * Returns a sentence like: "From here you can see a camp to the south and ruins to the east. A dark tunnel opens nearby."
+ */
+export function generateExitProse(exits: ExitInfo[]): string {
+  if (exits.length === 0) {
+    return 'There are no obvious ways out.';
+  }
+
+  // Cardinal directions
+  const cardinals = ['north', 'south', 'east', 'west'];
+  // Vertical directions
+  const verticals = ['up', 'down'];
+  // Named passages
+  const passages = ['passage', 'door', 'tunnel', 'path', 'gate', 'stairs'];
+
+  const cardinalExits: string[] = [];
+  const verticalExits: string[] = [];
+  const passageExits: string[] = [];
+
+  for (const exit of exits) {
+    const label = exit.label.toLowerCase();
+    const dest = exit.destination.toLowerCase();
+    const locked = exit.isLocked ? ' (locked)' : '';
+
+    if (cardinals.includes(label)) {
+      // "a camp to the south"
+      cardinalExits.push(`${dest}${locked} to the ${label}`);
+    } else if (verticals.includes(label)) {
+      // "a cliff down below" or "a ledge above"
+      if (label === 'up') {
+        verticalExits.push(`${dest}${locked} above`);
+      } else {
+        verticalExits.push(`${dest}${locked} below`);
+      }
+    } else if (passages.some(p => label.includes(p))) {
+      // "a valley through the old door"
+      passageExits.push(`${dest}${locked} through the ${label}`);
+    } else {
+      // Generic named exit: "the grove via a tunnel"
+      passageExits.push(`${dest}${locked} via the ${label}`);
+    }
+  }
+
+  const parts: string[] = [];
+
+  // Build "From here you can see..." for cardinal/vertical
+  const visibleExits = [...cardinalExits, ...verticalExits];
+  if (visibleExits.length > 0) {
+    const exitList = formatList(visibleExits);
+    parts.push(`From here you can see ${exitList}.`);
+  }
+
+  // Build passage descriptions
+  if (passageExits.length > 0) {
+    if (passageExits.length === 1) {
+      parts.push(`A way leads to ${passageExits[0]}.`);
+    } else {
+      const passageList = formatList(passageExits);
+      parts.push(`Passages lead to ${passageList}.`);
+    }
+  }
+
+  return parts.join(' ');
+}
+
+/**
+ * Format a list with commas and "and".
+ * ["a", "b", "c"] -> "a, b, and c"
+ */
+function formatList(items: string[]): string {
+  if (items.length === 0) return '';
+  if (items.length === 1) return items[0]!;
+  if (items.length === 2) return `${items[0]} and ${items[1]}`;
+  const last = items[items.length - 1];
+  const rest = items.slice(0, -1);
+  return `${rest.join(', ')}, and ${last}`;
+}

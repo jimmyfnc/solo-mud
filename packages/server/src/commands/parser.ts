@@ -151,30 +151,44 @@ export function isMovementCommand(command: string): boolean {
 
 /**
  * Get the direction from a movement command.
+ * Returns { direction, destination } where destination is used for disambiguation.
+ * Supports: "go north", "go passage", "go passage to Hollow"
  */
-export function getDirection(parsed: ParsedCommand): string | undefined {
+export function getDirection(parsed: ParsedCommand): { direction: string; destination?: string } | undefined {
   const { command, args } = parsed;
 
-  // Direct direction command
+  // Direct direction command (compass directions)
   const directions = [
     'north', 'south', 'east', 'west', 'up', 'down',
     'northeast', 'northwest', 'southeast', 'southwest',
   ];
 
   if (directions.includes(command)) {
-    return command;
+    return { direction: command };
   }
 
   // "go <direction>" style
   if (command === 'go' || command === 'move' || command === 'walk') {
-    const dir = args[0]?.toLowerCase();
-    if (dir && directions.includes(dir)) {
-      return dir;
+    let dir = args[0]?.toLowerCase();
+    if (!dir) {
+      return undefined;
     }
+
     // Check shortcuts in args
-    if (dir && DIRECTION_SHORTCUTS[dir]) {
-      return DIRECTION_SHORTCUTS[dir];
+    if (DIRECTION_SHORTCUTS[dir]) {
+      dir = DIRECTION_SHORTCUTS[dir]!;
     }
+
+    // Check for "to <destination>" syntax for disambiguation
+    // e.g., "go passage to Hollow" -> direction: "passage", destination: "Hollow"
+    const toIndex = args.findIndex(a => a.toLowerCase() === 'to');
+    if (toIndex > 0 && toIndex < args.length - 1) {
+      const destination = args.slice(toIndex + 1).join(' ');
+      return { direction: dir, destination };
+    }
+
+    // Return the direction (can be compass or custom exit label like "passage")
+    return { direction: dir };
   }
 
   return undefined;
