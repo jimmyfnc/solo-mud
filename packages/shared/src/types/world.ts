@@ -107,6 +107,7 @@ export interface Creature {
   // Position
   locationId: NodeId;
   homeLocationId: NodeId; // For roaming creatures
+  spawnLocationId: NodeId; // Original spawn point for respawn
 
   // Combat state
   inCombat: boolean;
