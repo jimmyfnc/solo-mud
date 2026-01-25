@@ -136,6 +136,28 @@ export interface CreatureTemplate {
   };
 }
 
+/** A corpse left behind when a creature dies */
+export interface Corpse {
+  id: string;
+  creatureId: CreatureId;
+  templateId: string;
+  name: string;
+  locationId: NodeId;
+  createdAt: number;
+  killedBy: 'creature' | 'player';
+  looted: boolean;
+  lootedAt?: number;
+  loot: ItemId[]; // Items that can be taken from corpse
+}
+
+/** Entry in the respawn queue */
+export interface RespawnEntry {
+  templateId: string;
+  spawnLocationId: NodeId;
+  respawnAt: number;
+  level: number; // Remember the creature's level
+}
+
 /** Time of day for descriptions and NPC schedules */
 export type TimeOfDay = 'dawn' | 'morning' | 'noon' | 'afternoon' | 'evening' | 'night';
 
@@ -167,6 +189,8 @@ export interface World {
   adjacency: Record<NodeId, EdgeId[]>;
   items: Record<ItemId, Item>;
   creatures: Record<CreatureId, Creature>;
+  corpses: Record<string, Corpse>;
+  respawnQueue: RespawnEntry[];
   time: GameTime;
   weather: WeatherState;
 }

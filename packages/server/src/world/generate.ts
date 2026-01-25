@@ -25,6 +25,7 @@ import {
   reconstructPath,
 } from './graph';
 import { validateWorld } from './validate';
+import { spawnAllCreatures } from './creatures';
 
 const MAX_RETRY_ATTEMPTS = 10;
 
@@ -209,6 +210,9 @@ function generateWorldAttempt(params: WorldGenParams): World {
     locations[placement]!.items.push(keyId);
   }
 
+  // 11. Spawn creatures
+  const creatures = spawnAllCreatures(locations, rng);
+
   return {
     seed: params.seed,
     startId,
@@ -217,6 +221,9 @@ function generateWorldAttempt(params: WorldGenParams): World {
     exits,
     adjacency,
     items,
+    creatures,
+    corpses: {},
+    respawnQueue: [],
     time: { totalMinutes: 480, timeOfDay: 'morning', day: 1 }, // 8 AM
     weather: { type: 'clear', intensity: 0 },
   };
@@ -237,6 +244,7 @@ function createLocation(id: NodeId, depth: number, rng: Rng): Location {
     props,
     items: [],
     enemies: [],
+    creatures: [],
     visitState: { visitCount: 0 },
     depth,
   };

@@ -194,6 +194,9 @@ function createTestWorld(
     exits,
     adjacency,
     items,
+    creatures: {},
+    corpses: {},
+    respawnQueue: [],
     time: { totalMinutes: 0, timeOfDay: 'morning', day: 1 },
     weather: { type: 'clear', intensity: 0 },
   };
@@ -207,6 +210,7 @@ function createLocation(id: string): Location {
     props: [],
     items: [],
     enemies: [],
+    creatures: [],
     visitState: { visitCount: 0 },
     depth: 0,
   };
