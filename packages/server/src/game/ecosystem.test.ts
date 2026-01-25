@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
-import { isIntimidated, canHunt, getDistanceFromPlayer } from './ecosystem';
-import type { Creature, World } from '@solo-mud/shared';
+import { isIntimidated, canHunt, getDistanceFromPlayer, createCorpse, shouldCorpseFade, queueRespawn } from './ecosystem';
+import type { Creature, Corpse, World } from '@solo-mud/shared';
+import { CORPSE_DURATION } from '@solo-mud/shared';
 
 describe('ecosystem logic', () => {
   describe('isIntimidated', () => {
@@ -47,6 +48,119 @@ describe('ecosystem logic', () => {
       const creature = { level: 10, behavior: 'passive' } as Creature;
       const prey = { level: 1 } as Creature;
       expect(canHunt(creature, prey, 'ambient')).toBe(false);
+    });
+  });
+});
+
+describe('corpse management', () => {
+  describe('createCorpse', () => {
+    it('creates corpse with correct properties', () => {
+      const creature: Creature = {
+        id: 'creature_1',
+        templateId: 'wolf',
+        name: 'Wolf',
+        level: 3,
+        behavior: 'aggressive',
+        mobility: 'roaming',
+        currentHp: 0,
+        maxHp: 35,
+        locationId: 'loc_1',
+        homeLocationId: 'loc_1',
+        spawnLocationId: 'loc_1',
+        inCombat: false,
+        description: 'A wolf',
+      };
+
+      const corpse = createCorpse(creature, 'player', ['item_1']);
+
+      expect(corpse.creatureId).toBe('creature_1');
+      expect(corpse.templateId).toBe('wolf');
+      expect(corpse.name).toBe('Wolf');
+      expect(corpse.locationId).toBe('loc_1');
+      expect(corpse.killedBy).toBe('player');
+      expect(corpse.looted).toBe(false);
+      expect(corpse.loot).toEqual(['item_1']);
+    });
+  });
+
+  describe('shouldCorpseFade', () => {
+    it('creature-killed corpse fades after 60s', () => {
+      const corpse: Corpse = {
+        id: 'corpse_1',
+        creatureId: 'c1',
+        templateId: 'deer',
+        name: 'Deer',
+        locationId: 'loc_1',
+        createdAt: Date.now() - 70000, // 70 seconds ago
+        killedBy: 'creature',
+        looted: false,
+        loot: [],
+      };
+      expect(shouldCorpseFade(corpse)).toBe(true);
+    });
+
+    it('player-killed corpse lasts 3 minutes', () => {
+      const corpse: Corpse = {
+        id: 'corpse_1',
+        creatureId: 'c1',
+        templateId: 'wolf',
+        name: 'Wolf',
+        locationId: 'loc_1',
+        createdAt: Date.now() - 120000, // 2 minutes ago
+        killedBy: 'player',
+        looted: false,
+        loot: [],
+      };
+      expect(shouldCorpseFade(corpse)).toBe(false);
+
+      const oldCorpse: Corpse = {
+        ...corpse,
+        createdAt: Date.now() - 200000, // 3+ minutes ago
+      };
+      expect(shouldCorpseFade(oldCorpse)).toBe(true);
+    });
+
+    it('looted corpse fades after 30s from loot time', () => {
+      const corpse: Corpse = {
+        id: 'corpse_1',
+        creatureId: 'c1',
+        templateId: 'wolf',
+        name: 'Wolf',
+        locationId: 'loc_1',
+        createdAt: Date.now() - 60000,
+        killedBy: 'player',
+        looted: true,
+        lootedAt: Date.now() - 35000, // looted 35s ago
+        loot: [],
+      };
+      expect(shouldCorpseFade(corpse)).toBe(true);
+    });
+  });
+
+  describe('queueRespawn', () => {
+    it('creates respawn entry with correct properties', () => {
+      const creature: Creature = {
+        id: 'creature_1',
+        templateId: 'wolf',
+        name: 'Wolf',
+        level: 5,
+        behavior: 'aggressive',
+        mobility: 'roaming',
+        currentHp: 0,
+        maxHp: 35,
+        locationId: 'loc_1',
+        homeLocationId: 'loc_1',
+        spawnLocationId: 'loc_2',
+        inCombat: false,
+        description: 'A wolf',
+      };
+
+      const entry = queueRespawn(creature, 'common');
+
+      expect(entry.templateId).toBe('wolf');
+      expect(entry.spawnLocationId).toBe('loc_2');
+      expect(entry.level).toBe(5);
+      expect(entry.respawnAt).toBeGreaterThan(Date.now());
     });
   });
 });

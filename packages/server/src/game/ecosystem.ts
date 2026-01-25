@@ -2,8 +2,8 @@
  * Ecosystem logic - hunting, fleeing, intimidation, and combat resolution.
  */
 
-import type { Creature, CreatureTier, World, NodeId } from '@solo-mud/shared';
-import { TIER_CONFIG, HUNT_LEVEL_THRESHOLD } from '@solo-mud/shared';
+import type { Creature, CreatureTier, World, NodeId, Corpse, ItemId, RespawnEntry } from '@solo-mud/shared';
+import { TIER_CONFIG, HUNT_LEVEL_THRESHOLD, CORPSE_DURATION } from '@solo-mud/shared';
 
 /**
  * Check if a creature is intimidated by a target's level.
@@ -199,4 +199,59 @@ export function resolveInstantCombat(
   } else {
     return { winner: defender, loser: attacker };
   }
+}
+
+/**
+ * Create a corpse from a dead creature.
+ */
+export function createCorpse(
+  creature: Creature,
+  killedBy: 'creature' | 'player',
+  loot: ItemId[]
+): Corpse {
+  return {
+    id: `corpse_${creature.id}_${Date.now()}`,
+    creatureId: creature.id,
+    templateId: creature.templateId,
+    name: creature.name,
+    locationId: creature.locationId,
+    createdAt: Date.now(),
+    killedBy,
+    looted: false,
+    loot,
+  };
+}
+
+/**
+ * Check if a corpse should fade away.
+ */
+export function shouldCorpseFade(corpse: Corpse): boolean {
+  const now = Date.now();
+
+  // If looted, use shorter duration from loot time
+  if (corpse.looted && corpse.lootedAt) {
+    return now - corpse.lootedAt >= CORPSE_DURATION.looted;
+  }
+
+  // Otherwise use duration based on who killed it
+  const duration = corpse.killedBy === 'player'
+    ? CORPSE_DURATION.player_kill
+    : CORPSE_DURATION.creature_kill;
+
+  return now - corpse.createdAt >= duration;
+}
+
+/**
+ * Queue a creature for respawn.
+ */
+export function queueRespawn(
+  creature: Creature,
+  tier: CreatureTier
+): RespawnEntry {
+  return {
+    templateId: creature.templateId,
+    spawnLocationId: creature.spawnLocationId,
+    respawnAt: Date.now() + TIER_CONFIG[tier].respawnMs,
+    level: creature.level,
+  };
 }
