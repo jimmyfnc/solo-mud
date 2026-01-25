@@ -255,3 +255,38 @@ export function queueRespawn(
     level: creature.level,
   };
 }
+
+/**
+ * Handle a creature's death - remove from world, create corpse, queue respawn.
+ */
+export function handleCreatureDeath(
+  world: World,
+  creature: Creature,
+  killedBy: 'creature' | 'player',
+  tier: CreatureTier,
+  loot: ItemId[] = []
+): Corpse {
+  // Remove from location
+  const location = world.locations[creature.locationId];
+  if (location) {
+    const idx = location.creatures.indexOf(creature.id);
+    if (idx !== -1) {
+      location.creatures.splice(idx, 1);
+    }
+  }
+
+  // Remove from world creatures
+  delete world.creatures[creature.id];
+
+  // Create corpse
+  // If killed by creature, reduce loot (predator ate it)
+  const actualLoot = killedBy === 'creature' ? [] : loot;
+  const corpse = createCorpse(creature, killedBy, actualLoot);
+  world.corpses[corpse.id] = corpse;
+
+  // Queue respawn
+  const respawnEntry = queueRespawn(creature, tier);
+  world.respawnQueue.push(respawnEntry);
+
+  return corpse;
+}

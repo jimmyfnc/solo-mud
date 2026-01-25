@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { isIntimidated, canHunt, getDistanceFromPlayer, createCorpse, shouldCorpseFade, queueRespawn } from './ecosystem';
-import type { Creature, Corpse, World } from '@solo-mud/shared';
+import { isIntimidated, canHunt, getDistanceFromPlayer, createCorpse, shouldCorpseFade, queueRespawn, handleCreatureDeath } from './ecosystem';
+import type { Creature, Corpse, World, Location } from '@solo-mud/shared';
 import { CORPSE_DURATION } from '@solo-mud/shared';
 
 describe('ecosystem logic', () => {
@@ -162,5 +162,70 @@ describe('corpse management', () => {
       expect(entry.level).toBe(5);
       expect(entry.respawnAt).toBeGreaterThan(Date.now());
     });
+  });
+});
+
+describe('handleCreatureDeath', () => {
+  it('removes creature from location and world, creates corpse, queues respawn', () => {
+    const creature: Creature = {
+      id: 'wolf_1',
+      templateId: 'wolf',
+      name: 'Wolf',
+      level: 3,
+      behavior: 'aggressive',
+      mobility: 'roaming',
+      currentHp: 0,
+      maxHp: 35,
+      locationId: 'loc_1',
+      homeLocationId: 'loc_1',
+      spawnLocationId: 'loc_1',
+      inCombat: false,
+      description: 'A wolf',
+    };
+
+    const location: Location = {
+      id: 'loc_1',
+      name: 'Forest',
+      biome: { forest: 1 },
+      props: [],
+      items: [],
+      enemies: [],
+      creatures: ['wolf_1'],
+      visitState: { visitCount: 0 },
+      depth: 2,
+    };
+
+    const world: World = {
+      seed: 'test',
+      startId: 'loc_1',
+      goalId: 'loc_2',
+      locations: { loc_1: location },
+      exits: {},
+      adjacency: {},
+      items: {},
+      creatures: { wolf_1: creature },
+      corpses: {},
+      respawnQueue: [],
+      time: { totalMinutes: 0, timeOfDay: 'morning', day: 1 },
+      weather: { type: 'clear', intensity: 0.5 },
+    };
+
+    const result = handleCreatureDeath(world, creature, 'player', 'common');
+
+    // Creature removed from location
+    expect(location.creatures).not.toContain('wolf_1');
+
+    // Creature removed from world
+    expect(world.creatures['wolf_1']).toBeUndefined();
+
+    // Corpse created
+    expect(Object.keys(world.corpses).length).toBe(1);
+    const corpse = Object.values(world.corpses)[0]!;
+    expect(corpse.name).toBe('Wolf');
+    expect(corpse.killedBy).toBe('player');
+
+    // Respawn queued
+    expect(world.respawnQueue.length).toBe(1);
+    expect(world.respawnQueue[0]!.templateId).toBe('wolf');
   });
 });
