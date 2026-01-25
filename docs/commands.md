@@ -17,7 +17,9 @@ Complete reference for all available commands in Solo MUD.
 | `up` | `u` | Move up |
 | `down` | `d` | Move down |
 | `take <item>` | `get`, `grab`, `pickup` | Pick up an item |
+| `take <item> from <source>` | `get ... from` | Take item from corpse/container |
 | `drop <item>` | - | Drop an item |
+| `loot <corpse>` | - | Examine a corpse for loot |
 | `inventory` | `i`, `inv` | Check your inventory |
 | `equipment` | `eq` | View equipped items |
 | `equip <item>` | - | Equip an item from inventory |
@@ -187,6 +189,58 @@ drop <item>
 > drop torch
 You drop the Torch.
 ```
+
+---
+
+## Looting
+
+### Loot Command
+
+Examine a corpse for items:
+
+```
+loot <corpse>
+loot                  - Loot the only corpse in the room
+loot bandit           - Loot a specific corpse
+```
+
+**Example:**
+```
+> loot bandit
+The bandit's corpse contains:
+  1. Rusty Dagger
+  2. 12 Gold Coins
+  3. Leather Scraps
+```
+
+### Taking from Corpses
+
+Take specific items from a corpse:
+
+```
+take <item> from corpse
+take 1 from corpse             - Take by number from loot list
+take dagger from corpse        - Take by item name
+take all from corpse           - Take everything
+```
+
+**Example:**
+```
+> take dagger from corpse
+You take the Rusty Dagger.
+
+> take all from corpse
+You take 12 Gold Coins and Leather Scraps.
+
+> loot bandit
+The bandit's corpse has nothing left of value.
+```
+
+### Corpse Duration
+
+- **Creature kills:** Corpses last ~60 seconds (predator fed)
+- **Player kills:** Corpses last ~3 minutes (time to loot)
+- **After looting:** Corpses fade after ~30 seconds
 
 ---
 

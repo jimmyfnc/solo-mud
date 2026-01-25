@@ -12,6 +12,7 @@ A procedurally generated single-player text adventure (MUD) with roguelike eleme
 - **Character Classes**: Warrior, Rogue, Mage, Cleric, and Ranger with unique stats
 - **Loot Generation**: Procedural items with rarity tiers and affix system
 - **NPC Schedules**: NPCs move between locations based on time of day
+- **Living Ecosystem**: Creatures hunt, flee, and interact with each other independently of the player
 
 ## Project Structure
 
@@ -73,6 +74,7 @@ Game logic and systems:
 - **Time/Weather**: Day/night cycle, weather simulation
 - **NPCs**: Schedule-based location and dialogue
 - **Loot**: Procedural item generation with affixes
+- **Ecosystem**: Creature AI with hunting, fleeing, and territory defense
 
 ### Client Package (`@solo-mud/client`)
 
@@ -119,6 +121,20 @@ Time advances in-game minutes, transitioning through periods:
 - Night (21:00-5:00)
 
 Weather uses Markov chain transitions between: clear, cloudy, rain, storm, fog.
+
+### Living Ecosystem
+
+The world simulates a living ecosystem where creatures act independently of the player:
+
+- **Creature Tiers**: Ambient (sheep, rabbit), Common (wolf, goblin), Dangerous (bear, spider), Apex (troll)
+- **Predator/Prey**: Aggressive creatures hunt those 2+ levels below them
+- **Flee & Chase**: Passive creatures flee from predators, who may give chase (max 3 rooms)
+- **Territory**: Territorial creatures (bears, trolls) defend their spawn location + adjacent areas
+- **Intimidation**: High-level players can walk past lower-tier creatures without being attacked
+- **Distance-Based LOD**: Full combat simulation near player, instant resolution far away
+- **Corpses & Respawn**: Dead creatures leave corpses (lootable), then respawn after tier-based timers
+
+Players can witness, intervene in, or avoid creature-vs-creature encounters. Attack a predator mid-hunt and it turns on you. Let nature take its course and find the aftermath later.
 
 ## Testing
 
