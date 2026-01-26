@@ -63,7 +63,7 @@ describe('Easthollow town integration', () => {
     expect(session.player.tutorial.completedSteps).toHaveLength(0);
 
     executeCommand(session, 'talk mira');
-    executeCommand(session, 'say 2'); // "How do I look around?"
+    executeCommand(session, 'say 3'); // "How do I look around?" (option 3, teaches talk_mira)
 
     expect(session.player.tutorial.completedSteps).toContain('talk_mira');
   });
