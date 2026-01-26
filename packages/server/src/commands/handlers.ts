@@ -42,6 +42,7 @@ const handlers: Record<string, CommandHandler> = {
   flee: handleFlee,
   loot: handleLoot,
   talk: handleTalk,
+  say: handleSay,
   // Movement commands
   north: handleMove,
   south: handleMove,
@@ -62,6 +63,11 @@ export function executeCommand(session: GameSession, input: string): CommandResu
     return {
       output: [{ text: 'What would you like to do?', style: 'system' }],
     };
+  }
+
+  // If in conversation and input is a number, treat as dialogue response
+  if (session.conversationNpc && /^\d+$/.test(parsed.command)) {
+    return handleSay({ session, parsed: { ...parsed, command: 'say', target: parsed.command } });
   }
 
   const handler = handlers[parsed.command];
@@ -1596,4 +1602,85 @@ function handleTalk(ctx: CommandContext): CommandResult {
   session.conversationNpc = npc.id;
 
   return { output };
+}
+
+/**
+ * Handle the "say" command - respond to NPC dialogue.
+ */
+function handleSay(ctx: CommandContext): CommandResult {
+  const { session, parsed } = ctx;
+  const { world, player } = session;
+
+  if (!session.conversationNpc) {
+    return {
+      output: [{ text: "You're not talking to anyone. Use 'talk <npc>' first.", style: 'error' }],
+    };
+  }
+
+  const npc = world.npcs[session.conversationNpc];
+  if (!npc) {
+    session.conversationNpc = undefined;
+    return {
+      output: [{ text: 'That person seems to have left.', style: 'error' }],
+    };
+  }
+
+  // Check if player is still in same location
+  const location = world.locations[player.locationId];
+  if (!location?.npcs?.includes(npc.id)) {
+    session.conversationNpc = undefined;
+    return {
+      output: [{ text: `${npc.name} is no longer here.`, style: 'error' }],
+    };
+  }
+
+  // Find the dialogue option - by number or keyword
+  let topic = npc.dialogue.find((_, i) => parsed.target === String(i + 1));
+
+  if (!topic && parsed.target) {
+    const targetLower = parsed.target.toLowerCase();
+    topic = npc.dialogue.find(t =>
+      t.prompt.toLowerCase().includes(targetLower) ||
+      t.id.toLowerCase().includes(targetLower)
+    );
+  }
+
+  if (!topic) {
+    return {
+      output: [
+        { text: `${npc.name} doesn't understand what you mean.`, style: 'normal' },
+        { text: 'Pick a number from the list, or a keyword from one of the options.', style: 'system' },
+      ],
+    };
+  }
+
+  const output: OutputLine[] = [];
+  const title = npc.title ? `${npc.title} ` : '';
+  output.push({ text: `${title}${npc.name}: "${topic.response}"`, style: 'normal' });
+
+  // Check if this completes a tutorial step
+  if (topic.teachesCommand && !player.tutorial.completedSteps.includes(topic.teachesCommand)) {
+    player.tutorial.completedSteps.push(topic.teachesCommand);
+    output.push({ text: '', style: 'normal' });
+    output.push({ text: `[Tutorial] ${topic.teachesCommand} complete!`, style: 'success' });
+  }
+
+  // Show remaining options or end conversation
+  const remainingTopics = npc.dialogue.filter(t => t.id !== topic!.id && t.id !== 'farewell');
+  if (remainingTopics.length > 0) {
+    output.push({ text: '', style: 'normal' });
+    output.push({ text: 'Anything else?', style: 'system' });
+    npc.dialogue.forEach((t, index) => {
+      output.push({ text: `  ${index + 1}. ${t.prompt}`, style: 'normal' });
+    });
+  } else {
+    session.conversationNpc = undefined;
+  }
+
+  // End conversation on farewell
+  if (topic.id === 'farewell') {
+    session.conversationNpc = undefined;
+  }
+
+  return { output, updatePlayer: true };
 }
