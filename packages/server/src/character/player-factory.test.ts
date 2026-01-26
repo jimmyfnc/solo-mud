@@ -203,3 +203,19 @@ describe('calculateMaxMp', () => {
     expect(mp10).toBe(148);
   });
 });
+
+describe('tutorial progress', () => {
+  it('should initialize tutorial progress for new player', () => {
+    const player = createPlayer({
+      id: 'test-player',
+      name: 'Tester',
+      className: 'warrior',
+      startLocationId: 'town_inn',
+    });
+
+    expect(player.tutorial).toBeDefined();
+    expect(player.tutorial.skipped).toBe(false);
+    expect(player.tutorial.complete).toBe(false);
+    expect(player.tutorial.completedSteps).toEqual([]);
+  });
+});

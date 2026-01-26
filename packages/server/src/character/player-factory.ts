@@ -87,6 +87,13 @@ export function createPlayer(options: CreatePlayerOptions): Player {
 
     gold: 0,
 
+    // Tutorial
+    tutorial: {
+      skipped: false,
+      complete: false,
+      completedSteps: [],
+    },
+
     corpseLocationId: undefined,
     corpseItems: undefined,
   };
