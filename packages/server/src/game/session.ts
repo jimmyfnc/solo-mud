@@ -3,6 +3,7 @@
  */
 
 import type { Player, World, CombatStats, ClassName } from '@solo-mud/shared';
+import { generateStarterGear } from '@solo-mud/shared';
 import { generateWorld } from '../world/generate';
 import { createPlayer, calculateCombatStats } from '../character';
 
@@ -18,6 +19,8 @@ export interface GameSession {
   characterId?: string;
   /** World seed used for this session */
   worldSeed?: string;
+  /** Current NPC the player is talking to */
+  conversationNpc?: string;
 }
 
 /**
@@ -47,6 +50,25 @@ class SessionManager {
       className,
       startLocationId: world.startId,
     });
+
+    // Generate and equip starter gear
+    const starterGear = generateStarterGear(className);
+    for (const item of starterGear.items) {
+      world.items[item.id] = item;
+    }
+    if (starterGear.equipmentIds.weapon) {
+      player.equipment.weapon = starterGear.equipmentIds.weapon;
+    }
+    if (starterGear.equipmentIds.chest) {
+      player.equipment.chest = starterGear.equipmentIds.chest;
+    }
+    if (starterGear.equipmentIds.legs) {
+      player.equipment.legs = starterGear.equipmentIds.legs;
+    }
+    if (starterGear.equipmentIds.feet) {
+      player.equipment.feet = starterGear.equipmentIds.feet;
+    }
+
     const combatStats = calculateCombatStats(player.baseStats);
 
     const session: GameSession = {

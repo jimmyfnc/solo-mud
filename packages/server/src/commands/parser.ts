@@ -96,6 +96,16 @@ export function parseCommand(input: string): ParsedCommand {
     }
   }
 
+  // Handle "talk to X" syntax
+  if (command === 'talk' && args[0]?.toLowerCase() === 'to' && args.length >= 2) {
+    return {
+      command,
+      args: args.slice(1),
+      target: args.slice(1).join(' '),
+      raw,
+    };
+  }
+
   return {
     command,
     args,

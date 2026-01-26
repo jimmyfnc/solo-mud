@@ -2,7 +2,7 @@
  * Command handlers - execute player commands.
  */
 
-import type { OutputLine, Exit, Item, EquipSlot, Creature, Corpse, Location } from '@solo-mud/shared';
+import type { OutputLine, Exit, Item, EquipSlot, Creature, Corpse, Location, NPC } from '@solo-mud/shared';
 import { createRng, getWeaponDamage, CREATURE_TEMPLATES } from '@solo-mud/shared';
 import { handleCreatureDeath } from '../game/ecosystem';
 import type { GameSession } from '../game/session';
@@ -41,6 +41,7 @@ const handlers: Record<string, CommandHandler> = {
   kill: handleAttack,
   flee: handleFlee,
   loot: handleLoot,
+  talk: handleTalk,
   // Movement commands
   north: handleMove,
   south: handleMove,
@@ -1531,6 +1532,68 @@ function handleLoot(ctx: CommandContext): CommandResult {
     const name = item?.name ?? 'Unknown item';
     output.push({ text: `  ${index + 1}. ${name}`, style: 'normal' });
   });
+
+  return { output };
+}
+
+/**
+ * Handle the "talk" command - talk to an NPC.
+ */
+function handleTalk(ctx: CommandContext): CommandResult {
+  const { session, parsed } = ctx;
+  const { world, player } = session;
+
+  if (!parsed.target) {
+    return {
+      output: [{ text: 'Talk to whom? Try "talk <name>".', style: 'error' }],
+    };
+  }
+
+  const location = world.locations[player.locationId];
+  if (!location) {
+    return {
+      output: [{ text: 'You cannot talk to anyone here.', style: 'error' }],
+    };
+  }
+
+  // Find NPCs in this location
+  const npcIds = location.npcs ?? [];
+  if (npcIds.length === 0) {
+    return {
+      output: [{ text: 'There is no one here to talk to.', style: 'error' }],
+    };
+  }
+
+  // Find the NPC by name
+  const targetLower = parsed.target.toLowerCase();
+  const npc = npcIds
+    .map(id => world.npcs[id])
+    .filter((n): n is NPC => n !== undefined)
+    .find(n => n.name.toLowerCase().includes(targetLower));
+
+  if (!npc) {
+    return {
+      output: [{ text: `You don't see "${parsed.target}" here.`, style: 'error' }],
+    };
+  }
+
+  // Show NPC greeting and dialogue options
+  const output: OutputLine[] = [];
+  const title = npc.title ? `${npc.title} ` : '';
+  output.push({ text: `${title}${npc.name} turns to you.`, style: 'normal' });
+
+  if (npc.dialogue.length > 0) {
+    output.push({ text: '', style: 'normal' });
+    output.push({ text: 'What would you like to discuss?', style: 'system' });
+    npc.dialogue.forEach((topic, index) => {
+      output.push({ text: `  ${index + 1}. ${topic.prompt}`, style: 'normal' });
+    });
+    output.push({ text: '', style: 'normal' });
+    output.push({ text: `Type a number or "say <topic>" to respond.`, style: 'system' });
+  }
+
+  // Store current conversation for follow-up
+  session.conversationNpc = npc.id;
 
   return { output };
 }

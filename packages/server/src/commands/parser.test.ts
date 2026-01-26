@@ -87,4 +87,76 @@ describe('parseCommand', () => {
     expect(result.command).toBe('say');
     expect(result.args).toEqual(['hello world']);
   });
+
+  describe('take from syntax', () => {
+    it('should parse "take X from Y" with source field', () => {
+      const result = parseCommand('take dagger from corpse');
+
+      expect(result.command).toBe('take');
+      expect(result.target).toBe('dagger');
+      expect(result.source).toBe('corpse');
+    });
+
+    it('should parse "get X from Y" as take with source', () => {
+      const result = parseCommand('get sword from wolf');
+
+      expect(result.command).toBe('take');
+      expect(result.target).toBe('sword');
+      expect(result.source).toBe('wolf');
+    });
+
+    it('should parse "take all from corpse"', () => {
+      const result = parseCommand('take all from corpse');
+
+      expect(result.command).toBe('take');
+      expect(result.target).toBe('all');
+      expect(result.source).toBe('corpse');
+    });
+
+    it('should parse "take 1 from corpse" (by number)', () => {
+      const result = parseCommand('take 1 from corpse');
+
+      expect(result.command).toBe('take');
+      expect(result.target).toBe('1');
+      expect(result.source).toBe('corpse');
+    });
+
+    it('should handle multi-word source', () => {
+      const result = parseCommand('take gold from dead wolf');
+
+      expect(result.command).toBe('take');
+      expect(result.target).toBe('gold');
+      expect(result.source).toBe('dead wolf');
+    });
+
+    it('should handle multi-word target', () => {
+      const result = parseCommand('take rusty dagger from corpse');
+
+      expect(result.command).toBe('take');
+      expect(result.target).toBe('rusty dagger');
+      expect(result.source).toBe('corpse');
+    });
+
+    it('should not set source for simple take command', () => {
+      const result = parseCommand('take sword');
+
+      expect(result.command).toBe('take');
+      expect(result.target).toBe('sword');
+      expect(result.source).toBeUndefined();
+    });
+  });
+
+  describe('talk command', () => {
+    it('should parse "talk mira"', () => {
+      const result = parseCommand('talk mira');
+      expect(result.command).toBe('talk');
+      expect(result.target).toBe('mira');
+    });
+
+    it('should parse "talk to mira"', () => {
+      const result = parseCommand('talk to mira');
+      expect(result.command).toBe('talk');
+      expect(result.target).toBe('mira');
+    });
+  });
 });
