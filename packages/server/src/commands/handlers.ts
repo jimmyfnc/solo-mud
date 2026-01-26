@@ -2,7 +2,7 @@
  * Command handlers - execute player commands.
  */
 
-import type { OutputLine, Exit, Item, EquipSlot, Creature, Corpse } from '@solo-mud/shared';
+import type { OutputLine, Exit, Item, EquipSlot, Creature, Corpse, Location } from '@solo-mud/shared';
 import { createRng, getWeaponDamage } from '@solo-mud/shared';
 import type { GameSession } from '../game/session';
 import { parseCommand, getDirection, type ParsedCommand } from './parser';
@@ -372,6 +372,7 @@ function handleHelp(_ctx: CommandContext): CommandResult {
       { text: '  go <exit> to <destination> - Disambiguate multiple exits', style: 'normal' },
       { text: '  north/south/east/west (n/s/e/w) - Move directly', style: 'normal' },
       { text: '  take <item> - Pick up an item', style: 'normal' },
+      { text: '  take <item> from <corpse> - Loot an item from a corpse', style: 'normal' },
       { text: '  drop <item> - Drop an item', style: 'normal' },
       { text: '  inventory (i) - Check your inventory', style: 'normal' },
       { text: '  equipment (eq) - View equipped items', style: 'normal' },
@@ -515,6 +516,11 @@ function handleTake(ctx: CommandContext): CommandResult {
     };
   }
 
+  // Check if taking from a corpse
+  if (parsed.source) {
+    return handleTakeFromCorpse(ctx, location);
+  }
+
   // Find item in room matching target
   const targetLower = parsed.target.toLowerCase();
   const itemIndex = location.items.findIndex(id => {
@@ -558,6 +564,136 @@ function handleTake(ctx: CommandContext): CommandResult {
   return {
     output: [{ text: `You pick up the ${item.name}.`, style: 'success' }],
     updateRoom: true,
+    updatePlayer: true,
+  };
+}
+
+/**
+ * Handle taking items from a corpse.
+ */
+function handleTakeFromCorpse(ctx: CommandContext, _location: Location): CommandResult {
+  const { session, parsed } = ctx;
+  const { world, player } = session;
+  const sourceLower = parsed.source!.toLowerCase();
+  const targetLower = parsed.target!.toLowerCase();
+
+  // Find the corpse
+  const corpses = Object.values(world.corpses).filter(
+    (c) => c.locationId === player.locationId
+  );
+
+  const corpse = corpses.find((c) =>
+    c.name.toLowerCase().includes(sourceLower) ||
+    sourceLower === 'corpse'
+  );
+
+  if (!corpse) {
+    return {
+      output: [{ text: `You don't see a "${parsed.source}" to take from.`, style: 'error' }],
+    };
+  }
+
+  if (corpse.loot.length === 0) {
+    return {
+      output: [{ text: `The ${corpse.name}'s corpse has nothing left.`, style: 'normal' }],
+    };
+  }
+
+  // Handle "take all from corpse"
+  if (targetLower === 'all') {
+    const taken: string[] = [];
+    for (const itemId of [...corpse.loot]) {
+      const item = world.items[itemId];
+      if (item && player.inventory.length < player.inventorySlots) {
+        player.inventory.push({ itemId, quantity: 1 });
+        taken.push(item.name);
+        const idx = corpse.loot.indexOf(itemId);
+        if (idx !== -1) corpse.loot.splice(idx, 1);
+      }
+    }
+
+    if (taken.length === 0) {
+      return {
+        output: [{ text: 'Your inventory is full.', style: 'error' }],
+      };
+    }
+
+    // Mark corpse as looted
+    if (corpse.loot.length === 0) {
+      corpse.looted = true;
+      corpse.lootedAt = Date.now();
+    }
+
+    return {
+      output: [{ text: `You take ${taken.join(' and ')}.`, style: 'success' }],
+      updatePlayer: true,
+    };
+  }
+
+  // Handle "take 1 from corpse" (by number)
+  const numMatch = targetLower.match(/^(\d+)$/);
+  if (numMatch) {
+    const index = parseInt(numMatch[1]!, 10) - 1;
+    if (index < 0 || index >= corpse.loot.length) {
+      return {
+        output: [{ text: `Invalid number. Use 1-${corpse.loot.length}.`, style: 'error' }],
+      };
+    }
+
+    const itemId = corpse.loot[index]!;
+    const item = world.items[itemId];
+
+    if (player.inventory.length >= player.inventorySlots) {
+      return {
+        output: [{ text: 'Your inventory is full.', style: 'error' }],
+      };
+    }
+
+    player.inventory.push({ itemId, quantity: 1 });
+    corpse.loot.splice(index, 1);
+
+    if (corpse.loot.length === 0) {
+      corpse.looted = true;
+      corpse.lootedAt = Date.now();
+    }
+
+    return {
+      output: [{ text: `You take the ${item?.name ?? 'item'}.`, style: 'success' }],
+      updatePlayer: true,
+    };
+  }
+
+  // Handle "take dagger from corpse" (by name)
+  const itemIndex = corpse.loot.findIndex((id) => {
+    const item = world.items[id];
+    return item?.name.toLowerCase().includes(targetLower);
+  });
+
+  if (itemIndex === -1) {
+    return {
+      output: [{ text: `The corpse doesn't have a "${parsed.target}".`, style: 'error' }],
+    };
+  }
+
+  if (player.inventory.length >= player.inventorySlots) {
+    return {
+      output: [{ text: 'Your inventory is full.', style: 'error' }],
+    };
+  }
+
+  const itemId = corpse.loot[itemIndex]!;
+  const item = world.items[itemId];
+
+  player.inventory.push({ itemId, quantity: 1 });
+  corpse.loot.splice(itemIndex, 1);
+
+  if (corpse.loot.length === 0) {
+    corpse.looted = true;
+    corpse.lootedAt = Date.now();
+  }
+
+  return {
+    output: [{ text: `You take the ${item?.name ?? 'item'}.`, style: 'success' }],
     updatePlayer: true,
   };
 }

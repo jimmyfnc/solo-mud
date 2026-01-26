@@ -9,6 +9,8 @@ export interface ParsedCommand {
   args: string[];
   /** First argument (common pattern for targets) */
   target?: string;
+  /** Source for "take X from Y" syntax */
+  source?: string;
   /** Original raw input */
   raw: string;
 }
@@ -76,6 +78,22 @@ export function parseCommand(input: string): ParsedCommand {
   // Apply command aliases
   if (COMMAND_ALIASES[command]) {
     command = COMMAND_ALIASES[command]!;
+  }
+
+  // Handle "take X from Y" syntax
+  if ((command === 'take' || command === 'get') && args.length >= 3) {
+    const fromIndex = args.findIndex(a => a.toLowerCase() === 'from');
+    if (fromIndex > 0 && fromIndex < args.length - 1) {
+      const target = args.slice(0, fromIndex).join(' ');
+      const source = args.slice(fromIndex + 1).join(' ');
+      return {
+        command,
+        args,
+        target,
+        source,
+        raw,
+      };
+    }
   }
 
   return {
