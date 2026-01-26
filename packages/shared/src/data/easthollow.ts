@@ -266,11 +266,31 @@ export const EASTHOLLOW_NPCS: Record<string, NPC> = {
     title: 'Innkeeper',
     locationId: TOWN_INN,
     tutorialTopics: ['basics', 'movement', 'items'],
+    shop: {
+      items: [
+        { baseId: 'ale', basePrice: 2 },
+        { baseId: 'wine', basePrice: 8 },
+        { baseId: 'bread', basePrice: 1 },
+        { baseId: 'cheese_wedge', basePrice: 3 },
+        { baseId: 'rations', basePrice: 4 },
+        { baseId: 'waterskin', basePrice: 5 },
+        { baseId: 'torch', basePrice: 3 },
+        { baseId: 'travelers_map', basePrice: 50, stock: 1 },
+      ],
+      buyMultiplier: 1.0,
+      sellMultiplier: 0.4,
+    },
     dialogue: [
       {
         id: 'greeting',
         prompt: 'Tell me about this place',
         response: "Welcome to The Rusty Blade! This is Easthollow, a quiet settlement at the edge of the wilderness. Many adventurers pass through here before heading into the wilds.",
+      },
+      {
+        id: 'shop',
+        prompt: 'What do you have for sale?',
+        response: "I've got ale, wine, fresh bread, cheese, and trail rations for the road. Torches and waterskins too. Type 'list' to see my wares, or 'buy <item>' to purchase something.",
+        teachesCommand: 'visit_shop',
       },
       {
         id: 'basics',
@@ -454,16 +474,26 @@ export const EASTHOLLOW_NPCS: Record<string, NPC> = {
 
 // ============ Shop Items (templates for items NPCs sell) ============
 export const SHOP_ITEM_TEMPLATES: Record<string, { name: string; tags: string[]; description: string }> = {
+  // General supplies
   torch: { name: 'Torch', tags: ['light', 'consumable'], description: 'A wooden torch that provides light.' },
   rations: { name: 'Rations', tags: ['food', 'consumable'], description: 'Dried meat and hardtack.' },
   rope: { name: 'Rope', tags: ['tool'], description: '50 feet of sturdy hemp rope.' },
   empty_flask: { name: 'Empty Flask', tags: ['container'], description: 'A glass flask for holding liquids.' },
   bandage: { name: 'Bandage', tags: ['healing', 'consumable'], description: 'Clean cloth bandages.' },
+  // Inn supplies
+  ale: { name: 'Mug of Ale', tags: ['drink', 'consumable'], description: 'A frothy mug of the house ale.' },
+  wine: { name: 'Bottle of Wine', tags: ['drink', 'consumable'], description: 'A decent vintage from the southern vineyards.' },
+  bread: { name: 'Fresh Bread', tags: ['food', 'consumable'], description: 'A warm loaf, still steaming.' },
+  cheese_wedge: { name: 'Cheese Wedge', tags: ['food', 'consumable'], description: 'Sharp yellow cheese from local farms.' },
+  waterskin: { name: 'Waterskin', tags: ['drink', 'container'], description: 'A leather waterskin, filled with fresh water.' },
+  travelers_map: { name: "Traveler's Map", tags: ['tool', 'rare'], description: 'A hand-drawn map of the local wilderness.' },
+  // Weapons
   iron_sword: { name: 'Iron Sword', tags: ['weapon', 'sword', 'melee'], description: 'A well-forged iron blade.' },
   iron_axe: { name: 'Iron Axe', tags: ['weapon', 'axe', 'melee'], description: 'A heavy iron axe.' },
   wooden_shield: { name: 'Wooden Shield', tags: ['armor', 'shield', 'offhand'], description: 'A sturdy wooden shield.' },
   leather_armor: { name: 'Leather Armor', tags: ['armor', 'chest', 'leather'], description: 'Supple leather armor.' },
   chain_mail: { name: 'Chain Mail', tags: ['armor', 'chest', 'metal'], description: 'Interlocking metal rings.' },
+  // Potions
   health_potion: { name: 'Health Potion', tags: ['potion', 'consumable', 'healing'], description: 'Restores 50 HP.' },
   mana_potion: { name: 'Mana Potion', tags: ['potion', 'consumable', 'mana'], description: 'Restores 50 MP.' },
   antidote: { name: 'Antidote', tags: ['potion', 'consumable'], description: 'Cures poison.' },
