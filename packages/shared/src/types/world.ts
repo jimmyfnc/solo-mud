@@ -2,6 +2,8 @@
  * Core world data structures for procedural generation.
  */
 
+import type { NPC } from './town';
+
 export type NodeId = string;
 export type EdgeId = string;
 export type ItemId = string;
@@ -55,6 +57,10 @@ export interface Location {
   creatures: CreatureId[]; // Creatures currently in this location
   visitState: VisitState;
   depth: number; // Distance from start (for difficulty scaling)
+  /** If true, no combat allowed and no creature spawns */
+  isSafeZone?: boolean;
+  /** NPCs present in this location */
+  npcs?: string[];
 }
 
 /** Item rarity tiers */
@@ -191,6 +197,7 @@ export interface World {
   creatures: Record<CreatureId, Creature>;
   corpses: Record<string, Corpse>;
   respawnQueue: RespawnEntry[];
+  npcs: Record<string, NPC>;
   time: GameTime;
   weather: WeatherState;
 }

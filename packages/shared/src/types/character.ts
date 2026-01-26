@@ -3,6 +3,7 @@
  */
 
 import type { ItemId, NodeId } from './world';
+import type { TutorialProgress } from './town';
 
 /** Base stat names */
 export type StatName = 'str' | 'dex' | 'con' | 'int' | 'wis';
@@ -127,6 +128,9 @@ export interface Player {
   // Combat state
   inCombat: boolean;
   autoAttack: boolean;
+
+  /** Tutorial progress tracking */
+  tutorial: TutorialProgress;
   targetId?: string;
   globalCooldown: number; // ms remaining
   abilityCooldowns: Record<string, number>; // ability ID -> ms remaining
