@@ -32,6 +32,7 @@ function createTestWorld(overrides: Partial<World> = {}): World {
     respawnQueue: [],
     time: { totalMinutes: 0, timeOfDay: 'morning', day: 1 },
     weather: { type: 'clear', intensity: 0.5 },
+    npcs: {},
     ...overrides,
   };
 }

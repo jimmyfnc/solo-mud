@@ -207,6 +207,7 @@ describe('handleCreatureDeath', () => {
       respawnQueue: [],
       time: { totalMinutes: 0, timeOfDay: 'morning', day: 1 },
       weather: { type: 'clear', intensity: 0.5 },
+      npcs: {},
     };
 
     handleCreatureDeath(world, creature, 'player', 'common');

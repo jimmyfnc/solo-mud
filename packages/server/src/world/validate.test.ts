@@ -199,6 +199,7 @@ function createTestWorld(
     respawnQueue: [],
     time: { totalMinutes: 0, timeOfDay: 'morning', day: 1 },
     weather: { type: 'clear', intensity: 0 },
+    npcs: {},
   };
 }
 
