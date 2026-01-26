@@ -248,6 +248,28 @@ function handleExamine(ctx: CommandContext): CommandResult {
     };
   }
 
+  // Check for NPC
+  const npcIds = location.npcs ?? [];
+  const npc = npcIds
+    .map(id => world.npcs[id])
+    .filter((n): n is NPC => n !== undefined)
+    .find(n => n.name.toLowerCase().includes(targetLower));
+
+  if (npc) {
+    const title = npc.title ? `${npc.title} ` : '';
+    const output: OutputLine[] = [
+      { text: `${title}${npc.name}`, style: 'system' },
+    ];
+
+    if (npc.shop) {
+      output.push({ text: 'This merchant has items for sale. Use "list" to see their wares.', style: 'normal' });
+    } else {
+      output.push({ text: `You can "talk to ${npc.name.toLowerCase()}" to start a conversation.`, style: 'normal' });
+    }
+
+    return { output };
+  }
+
   return {
     output: [{ text: `You don't see any "${parsed.target}" here.`, style: 'error' }],
   };
@@ -393,6 +415,12 @@ function handleHelp(_ctx: CommandContext): CommandResult {
       { text: '  attack <target> (k) - Attack a creature', style: 'normal' },
       { text: '  flee - Escape from combat (50% chance)', style: 'normal' },
       { text: '  loot [corpse] - Examine a corpse for loot', style: 'normal' },
+      { text: '  talk <npc> - Talk to someone', style: 'normal' },
+      { text: '  say <number> - Respond in conversation', style: 'normal' },
+      { text: '  list - View shop inventory', style: 'normal' },
+      { text: '  buy <item> - Purchase from shop', style: 'normal' },
+      { text: '  sell <item> - Sell to shop', style: 'normal' },
+      { text: '  tutorial - Check tutorial progress', style: 'normal' },
       { text: '  quit (logout, exit) - Save and return to character select', style: 'normal' },
       { text: '  debug - Show raw room/item data (dev mode)', style: 'normal' },
       { text: '  help (?) - Show this help message', style: 'normal' },
@@ -855,6 +883,21 @@ function handleMove(ctx: CommandContext): CommandResult {
       // Has key - unlock and proceed
       const keyItem = world.items[keySlot.itemId];
       usedKeyMessage = { text: `You use the ${keyItem?.name ?? 'key'} to unlock the way.`, style: 'success' };
+    }
+  }
+
+  // Check for leaving town through gate (before moving)
+  if (player.locationId === 'town_gate' && exit.to === 'loc_0') {
+    if (!player.tutorial.completedSteps.includes('leave_town')) {
+      player.tutorial.completedSteps.push('leave_town');
+
+      // Check if tutorial is now complete
+      const allSteps = ['talk_mira', 'class_training', 'hit_dummy', 'visit_shop', 'leave_town'];
+      const completedAll = allSteps.every(s => player.tutorial.completedSteps.includes(s));
+
+      if (completedAll && !player.tutorial.complete) {
+        player.tutorial.complete = true;
+      }
     }
   }
 
