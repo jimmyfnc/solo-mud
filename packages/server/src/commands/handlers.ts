@@ -3,7 +3,7 @@
  */
 
 import type { OutputLine, Exit, Item, EquipSlot, Creature, Corpse, Location, NPC, StatusEffect } from '@solo-mud/shared';
-import { createRng, getWeaponDamage, CREATURE_TEMPLATES, TUTORIAL_STEPS, SHOP_ITEM_TEMPLATES, CONSUMABLE_EFFECTS, getDrunkLevel, getRandomDrunkFlavor } from '@solo-mud/shared';
+import { createRng, getWeaponDamage, CREATURE_TEMPLATES, TUTORIAL_STEPS, SHOP_ITEM_TEMPLATES, CONSUMABLE_EFFECTS, getDrunkLevel, getRandomDrunkFlavor, checkDrunkStumble, getRandomStumbleText } from '@solo-mud/shared';
 import { handleCreatureDeath } from '../game/ecosystem';
 import type { GameSession } from '../game/session';
 import { parseCommand, getDirection, type ParsedCommand } from './parser';
@@ -1027,6 +1027,28 @@ function handleMove(ctx: CommandContext): CommandResult {
     };
   }
 
+  // Check for drunk stumbling
+  const drunkEffect = player.statusEffects.find(e => e.id === 'drunk');
+  let stumbled = false;
+  let stumbleText: OutputLine | null = null;
+
+  if (drunkEffect && exits.length > 1) {
+    // Only stumble if there are other exits to stumble into
+    if (checkDrunkStumble(drunkEffect.stacks)) {
+      stumbled = true;
+      stumbleText = { text: getRandomStumbleText(), style: 'error' };
+
+      // Pick a random DIFFERENT exit
+      const otherExits = exits.filter(e => e.label.toLowerCase() !== direction);
+      if (otherExits.length > 0) {
+        const randomExit = otherExits[Math.floor(Math.random() * otherExits.length)]!;
+        // Replace matching exits with the stumbled-to exit
+        matchingExits.length = 0;
+        matchingExits.push(randomExit);
+      }
+    }
+  }
+
   let exit: Exit;
 
   // Handle disambiguation when multiple exits match
@@ -1110,10 +1132,19 @@ function handleMove(ctx: CommandContext): CommandResult {
   const roomOutput = generateRoomOutput(session, false, true);
 
   const output: OutputLine[] = [];
+  if (stumbleText) {
+    output.push(stumbleText);
+  }
   if (usedKeyMessage) {
     output.push(usedKeyMessage);
   }
-  output.push({ text: `You go ${direction}.`, style: 'normal' });
+  // Show actual direction traveled (may differ from intended if stumbled)
+  const actualDirection = exit.label;
+  if (stumbled) {
+    output.push({ text: `You stumble ${actualDirection} instead.`, style: 'normal' });
+  } else {
+    output.push({ text: `You go ${actualDirection}.`, style: 'normal' });
+  }
   output.push(...roomOutput);
 
   // Check for aggressive creatures (aggro on sight)

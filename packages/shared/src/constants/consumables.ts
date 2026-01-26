@@ -29,14 +29,25 @@ export interface ConsumableEffect {
   flavorText: string;
 }
 
-/** Drunk status effect levels */
+/** Drunk status effect levels with gameplay effects */
 export const DRUNK_LEVELS = [
-  { stacks: 1, name: 'Tipsy', text: 'You feel a pleasant warmth spreading through you.' },
-  { stacks: 2, name: 'Buzzed', text: 'The world seems a bit more colorful now.' },
-  { stacks: 3, name: 'Drunk', text: 'You stumble slightly. Everything is hilarious!' },
-  { stacks: 4, name: 'Hammered', text: 'Whoa there! The room is spinning a bit...' },
-  { stacks: 5, name: 'Wasted', text: 'You can barely stand. This was a terrible idea.' },
+  { stacks: 1, name: 'Tipsy', text: 'You feel a pleasant warmth spreading through you.', stumbleChance: 0.10 },
+  { stacks: 2, name: 'Buzzed', text: 'The world seems a bit more colorful now.', stumbleChance: 0.20 },
+  { stacks: 3, name: 'Drunk', text: 'You stumble slightly. Everything is hilarious!', stumbleChance: 0.35 },
+  { stacks: 4, name: 'Hammered', text: 'Whoa there! The room is spinning a bit...', stumbleChance: 0.50 },
+  { stacks: 5, name: 'Wasted', text: 'You can barely stand. This was a terrible idea.', stumbleChance: 0.70 },
 ] as const;
+
+/** Flavor text when stumbling while drunk */
+export const DRUNK_STUMBLE_TEXT = [
+  'You stumble and go the wrong way!',
+  'Whoops! That wasn\'t the direction you meant to go...',
+  'Your legs have other plans apparently.',
+  '*hic* Wait, this isn\'t right...',
+  'The floor seems to have moved. Or was it you?',
+  'You confidently stride... in completely the wrong direction.',
+  'Your feet and your brain are having a disagreement.',
+];
 
 /** Get drunk level info for a given stack count */
 export function getDrunkLevel(stacks: number): typeof DRUNK_LEVELS[number] | undefined {
@@ -133,4 +144,19 @@ export const DRUNK_FLAVOR_ACTIONS = [
 /** Get a random drunk flavor action */
 export function getRandomDrunkFlavor(): string {
   return DRUNK_FLAVOR_ACTIONS[Math.floor(Math.random() * DRUNK_FLAVOR_ACTIONS.length)]!;
+}
+
+/** Get a random stumble text when drunk movement fails */
+export function getRandomStumbleText(): string {
+  return DRUNK_STUMBLE_TEXT[Math.floor(Math.random() * DRUNK_STUMBLE_TEXT.length)]!;
+}
+
+/**
+ * Check if a drunk player stumbles when trying to move.
+ * Returns true if they stumble (should pick random direction).
+ */
+export function checkDrunkStumble(drunkStacks: number): boolean {
+  const level = getDrunkLevel(drunkStacks);
+  if (!level) return false;
+  return Math.random() < level.stumbleChance;
 }
