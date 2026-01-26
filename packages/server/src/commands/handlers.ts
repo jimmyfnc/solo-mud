@@ -3,7 +3,7 @@
  */
 
 import type { OutputLine, Exit, Item, EquipSlot, Creature, Corpse, Location, NPC } from '@solo-mud/shared';
-import { createRng, getWeaponDamage, CREATURE_TEMPLATES, TUTORIAL_STEPS } from '@solo-mud/shared';
+import { createRng, getWeaponDamage, CREATURE_TEMPLATES, TUTORIAL_STEPS, SHOP_ITEM_TEMPLATES } from '@solo-mud/shared';
 import { handleCreatureDeath } from '../game/ecosystem';
 import type { GameSession } from '../game/session';
 import { parseCommand, getDirection, type ParsedCommand } from './parser';
@@ -44,6 +44,9 @@ const handlers: Record<string, CommandHandler> = {
   talk: handleTalk,
   say: handleSay,
   tutorial: handleTutorial,
+  list: handleList,
+  buy: handleBuy,
+  sell: handleSell,
   // Movement commands
   north: handleMove,
   south: handleMove,
@@ -1738,4 +1741,198 @@ function handleTutorial(ctx: CommandContext): CommandResult {
   output.push({ text: `${completed}/${TUTORIAL_STEPS.length} steps complete`, style: 'system' });
 
   return { output };
+}
+
+/**
+ * Handle the "list" command - show shop inventory.
+ */
+function handleList(ctx: CommandContext): CommandResult {
+  const { session } = ctx;
+  const { world, player } = session;
+
+  const location = world.locations[player.locationId];
+  if (!location?.npcs?.length) {
+    return {
+      output: [{ text: 'There is no shop here.', style: 'error' }],
+    };
+  }
+
+  // Find merchant NPC
+  const merchant = location.npcs
+    .map(id => world.npcs[id])
+    .find(npc => npc?.shop);
+
+  if (!merchant?.shop) {
+    return {
+      output: [{ text: 'There is no merchant here.', style: 'error' }],
+    };
+  }
+
+  const output: OutputLine[] = [
+    { text: `${merchant.name}'s Wares:`, style: 'system' },
+    { text: '', style: 'normal' },
+  ];
+
+  for (const item of merchant.shop.items) {
+    const template = SHOP_ITEM_TEMPLATES[item.baseId];
+    const name = template?.name ?? item.baseId;
+    const price = Math.ceil(item.basePrice * merchant.shop.buyMultiplier);
+    const stock = item.stock !== undefined ? ` (${item.stock} in stock)` : '';
+    output.push({ text: `  ${name} - ${price}g${stock}`, style: 'normal' });
+  }
+
+  output.push({ text: '', style: 'normal' });
+  output.push({ text: `Your gold: ${player.gold}`, style: 'system' });
+  output.push({ text: "Use 'buy <item>' to purchase.", style: 'system' });
+
+  // Mark tutorial step
+  if (!player.tutorial.completedSteps.includes('visit_shop')) {
+    player.tutorial.completedSteps.push('visit_shop');
+    output.push({ text: '', style: 'normal' });
+    output.push({ text: '[Tutorial] Visited a shop!', style: 'success' });
+  }
+
+  return { output, updatePlayer: true };
+}
+
+/**
+ * Handle the "buy" command - purchase from shop.
+ */
+function handleBuy(ctx: CommandContext): CommandResult {
+  const { session, parsed } = ctx;
+  const { world, player } = session;
+
+  if (!parsed.target) {
+    return {
+      output: [{ text: 'Buy what? Try "buy <item>".', style: 'error' }],
+    };
+  }
+
+  const location = world.locations[player.locationId];
+  const merchant = location?.npcs
+    ?.map(id => world.npcs[id])
+    .find(npc => npc?.shop);
+
+  if (!merchant?.shop) {
+    return {
+      output: [{ text: 'There is no merchant here.', style: 'error' }],
+    };
+  }
+
+  const targetLower = parsed.target.toLowerCase();
+
+  // Find the item in shop
+  const shopItem = merchant.shop.items.find(item => {
+    const template = SHOP_ITEM_TEMPLATES[item.baseId];
+    return template?.name.toLowerCase().includes(targetLower) || item.baseId.includes(targetLower);
+  });
+
+  if (!shopItem) {
+    return {
+      output: [{ text: `${merchant.name} doesn't sell "${parsed.target}".`, style: 'error' }],
+    };
+  }
+
+  const template = SHOP_ITEM_TEMPLATES[shopItem.baseId];
+  const price = Math.ceil(shopItem.basePrice * merchant.shop.buyMultiplier);
+
+  // Check gold
+  if (player.gold < price) {
+    return {
+      output: [{ text: `You need ${price} gold but only have ${player.gold}.`, style: 'error' }],
+    };
+  }
+
+  // Check stock
+  if (shopItem.stock !== undefined && shopItem.stock <= 0) {
+    return {
+      output: [{ text: `${merchant.name} is out of ${template?.name ?? shopItem.baseId}.`, style: 'error' }],
+    };
+  }
+
+  // Check inventory space
+  if (player.inventory.length >= player.inventorySlots) {
+    return {
+      output: [{ text: 'Your inventory is full.', style: 'error' }],
+    };
+  }
+
+  // Create the item - generate a unique ID
+  const itemId = `item_shop_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+  const newItem = {
+    id: itemId,
+    baseId: shopItem.baseId,
+    name: template?.name ?? shopItem.baseId,
+    tags: template?.tags ?? [],
+    rarity: 'common' as const,
+    affixes: [],
+  };
+
+  // Complete purchase
+  player.gold -= price;
+  if (shopItem.stock !== undefined) {
+    shopItem.stock--;
+  }
+  world.items[newItem.id] = newItem;
+  player.inventory.push({ itemId: newItem.id, quantity: 1 });
+
+  return {
+    output: [{ text: `You buy ${newItem.name} for ${price} gold.`, style: 'success' }],
+    updatePlayer: true,
+  };
+}
+
+/**
+ * Handle the "sell" command - sell to shop.
+ */
+function handleSell(ctx: CommandContext): CommandResult {
+  const { session, parsed } = ctx;
+  const { world, player } = session;
+
+  if (!parsed.target) {
+    return {
+      output: [{ text: 'Sell what? Try "sell <item>".', style: 'error' }],
+    };
+  }
+
+  const location = world.locations[player.locationId];
+  const merchant = location?.npcs
+    ?.map(id => world.npcs[id])
+    .find(npc => npc?.shop);
+
+  if (!merchant?.shop) {
+    return {
+      output: [{ text: 'There is no merchant here.', style: 'error' }],
+    };
+  }
+
+  const targetLower = parsed.target.toLowerCase();
+
+  // Find item in inventory
+  const invIndex = player.inventory.findIndex(slot => {
+    const item = world.items[slot.itemId];
+    return item?.name.toLowerCase().includes(targetLower);
+  });
+
+  if (invIndex === -1) {
+    return {
+      output: [{ text: `You don't have "${parsed.target}".`, style: 'error' }],
+    };
+  }
+
+  const slot = player.inventory[invIndex]!;
+  const item = world.items[slot.itemId]!;
+
+  // Calculate sell price (base 10g for common items)
+  const basePrice = 10;
+  const sellPrice = Math.floor(basePrice * merchant.shop.sellMultiplier);
+
+  // Complete sale
+  player.gold += sellPrice;
+  player.inventory.splice(invIndex, 1);
+
+  return {
+    output: [{ text: `You sell ${item.name} for ${sellPrice} gold.`, style: 'success' }],
+    updatePlayer: true,
+  };
 }

@@ -47,6 +47,8 @@ const COMMAND_ALIASES: Record<string, string> = {
   quit: 'exit',
   logout: 'exit',
   reply: 'say',
+  browse: 'list',
+  shop: 'list',
 };
 
 /**
