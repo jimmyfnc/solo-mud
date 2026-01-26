@@ -14,6 +14,12 @@ import {
   type EdgeId,
   type BiomeWeights,
   BIOMES,
+  EASTHOLLOW_LOCATIONS,
+  EASTHOLLOW_EXITS,
+  EASTHOLLOW_ADJACENCY,
+  EASTHOLLOW_NPCS,
+  TOWN_INN,
+  TOWN_GATE,
 } from '@solo-mud/shared';
 
 import {
@@ -213,9 +219,50 @@ function generateWorldAttempt(params: WorldGenParams): World {
   // 11. Spawn creatures
   const creatures = spawnAllCreatures(locations, rng);
 
+  // 12. Integrate Easthollow town
+  // Add town locations
+  for (const [id, location] of Object.entries(EASTHOLLOW_LOCATIONS)) {
+    locations[id] = { ...location };
+  }
+
+  // Add town exits
+  for (const [id, exit] of Object.entries(EASTHOLLOW_EXITS)) {
+    exits[id] = { ...exit };
+  }
+
+  // Add town adjacency
+  for (const [locId, exitIds] of Object.entries(EASTHOLLOW_ADJACENCY)) {
+    adjacency[locId] = [...exitIds];
+  }
+
+  // Connect town gate to wilderness (loc_0)
+  const gateToWildernessId = 'exit_gate_wilderness';
+  const wildernessToGateId = 'exit_wilderness_gate';
+
+  exits[gateToWildernessId] = {
+    id: gateToWildernessId,
+    from: TOWN_GATE,
+    to: 'loc_0',
+    label: 'wilderness',
+    type: 'open',
+  };
+  exits[wildernessToGateId] = {
+    id: wildernessToGateId,
+    from: 'loc_0',
+    to: TOWN_GATE,
+    label: 'town',
+    type: 'open',
+  };
+
+  adjacency[TOWN_GATE]!.push(gateToWildernessId);
+  adjacency['loc_0']!.push(wildernessToGateId);
+
+  // Set start to town inn instead of loc_0
+  const townStartId = TOWN_INN;
+
   return {
     seed: params.seed,
-    startId,
+    startId: townStartId,
     goalId,
     locations,
     exits,
@@ -224,6 +271,7 @@ function generateWorldAttempt(params: WorldGenParams): World {
     creatures,
     corpses: {},
     respawnQueue: [],
+    npcs: { ...EASTHOLLOW_NPCS },
     time: { totalMinutes: 480, timeOfDay: 'morning', day: 1 }, // 8 AM
     weather: { type: 'clear', intensity: 0 },
   };

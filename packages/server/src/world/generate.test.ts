@@ -6,7 +6,8 @@ describe('generateWorld', () => {
   it('should generate a connected world', () => {
     const world = generateWorld({ seed: 'test-connected', nodeCount: 18, extraEdges: 5, lockedEdges: 2 });
 
-    expect(Object.keys(world.locations).length).toBe(18);
+    // 18 wilderness + 8 town locations = 26 total
+    expect(Object.keys(world.locations).length).toBe(26);
     expect(world.startId).toBeDefined();
     expect(world.goalId).toBeDefined();
     expect(world.startId).not.toBe(world.goalId);
@@ -68,5 +69,61 @@ describe('generateWorld', () => {
     expect(startLocation!.depth).toBe(0);
     // Goal should have higher depth
     expect(goalLocation!.depth).toBeGreaterThan(0);
+  });
+});
+
+describe('town integration', () => {
+  it('should include Easthollow town locations', () => {
+    const world = generateWorld({
+      seed: 'test-town',
+      nodeCount: 10,
+      extraEdges: 2,
+      lockedEdges: 1,
+    });
+
+    expect(world.locations['town_inn']).toBeDefined();
+    expect(world.locations['town_square']).toBeDefined();
+    expect(world.locations['town_gate']).toBeDefined();
+    expect(world.locations['town_inn']!.isSafeZone).toBe(true);
+  });
+
+  it('should set startId to town_inn', () => {
+    const world = generateWorld({
+      seed: 'test-town-start',
+      nodeCount: 10,
+      extraEdges: 2,
+      lockedEdges: 1,
+    });
+
+    expect(world.startId).toBe('town_inn');
+  });
+
+  it('should connect town gate to wilderness loc_0', () => {
+    const world = generateWorld({
+      seed: 'test-town-gate',
+      nodeCount: 10,
+      extraEdges: 2,
+      lockedEdges: 1,
+    });
+
+    const gateExits = world.adjacency['town_gate'] ?? [];
+    const exitToWilderness = gateExits.find(exitId => {
+      const exit = world.exits[exitId];
+      return exit?.to === 'loc_0';
+    });
+
+    expect(exitToWilderness).toBeDefined();
+  });
+
+  it('should include town NPCs', () => {
+    const world = generateWorld({
+      seed: 'test-town-npcs',
+      nodeCount: 10,
+      extraEdges: 2,
+      lockedEdges: 1,
+    });
+
+    expect(world.npcs['npc_mira']).toBeDefined();
+    expect(world.npcs['npc_mira']!.name).toBe('Mira');
   });
 });
