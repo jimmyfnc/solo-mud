@@ -3,7 +3,7 @@
  */
 
 import type { OutputLine, Exit, Item, EquipSlot, Creature, Corpse, Location, NPC } from '@solo-mud/shared';
-import { createRng, getWeaponDamage, CREATURE_TEMPLATES } from '@solo-mud/shared';
+import { createRng, getWeaponDamage, CREATURE_TEMPLATES, TUTORIAL_STEPS } from '@solo-mud/shared';
 import { handleCreatureDeath } from '../game/ecosystem';
 import type { GameSession } from '../game/session';
 import { parseCommand, getDirection, type ParsedCommand } from './parser';
@@ -43,6 +43,7 @@ const handlers: Record<string, CommandHandler> = {
   loot: handleLoot,
   talk: handleTalk,
   say: handleSay,
+  tutorial: handleTutorial,
   // Movement commands
   north: handleMove,
   south: handleMove,
@@ -1683,4 +1684,40 @@ function handleSay(ctx: CommandContext): CommandResult {
   }
 
   return { output, updatePlayer: true };
+}
+
+/**
+ * Handle the "tutorial" command - show tutorial progress.
+ */
+function handleTutorial(ctx: CommandContext): CommandResult {
+  const { session } = ctx;
+  const { player } = session;
+
+  if (player.tutorial.complete) {
+    return {
+      output: [{ text: 'Tutorial complete! You know all you need to venture forth.', style: 'success' }],
+    };
+  }
+
+  if (player.tutorial.skipped) {
+    return {
+      output: [{ text: 'Tutorial skipped. Use "help" if you need command reminders.', style: 'system' }],
+    };
+  }
+
+  const output: OutputLine[] = [
+    { text: 'Tutorial Progress:', style: 'system' },
+  ];
+
+  for (const step of TUTORIAL_STEPS) {
+    const done = player.tutorial.completedSteps.includes(step.id);
+    const mark = done ? '[✓]' : '[ ]';
+    output.push({ text: `  ${mark} ${step.description}`, style: done ? 'success' : 'normal' });
+  }
+
+  const completed = player.tutorial.completedSteps.length;
+  output.push({ text: '', style: 'normal' });
+  output.push({ text: `${completed}/${TUTORIAL_STEPS.length} steps complete`, style: 'system' });
+
+  return { output };
 }
