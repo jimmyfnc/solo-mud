@@ -3,7 +3,8 @@
  */
 
 import type { OutputLine, Exit, Item, EquipSlot, Creature, Corpse, Location } from '@solo-mud/shared';
-import { createRng, getWeaponDamage } from '@solo-mud/shared';
+import { createRng, getWeaponDamage, CREATURE_TEMPLATES } from '@solo-mud/shared';
+import { handleCreatureDeath } from '../game/ecosystem';
 import type { GameSession } from '../game/session';
 import { parseCommand, getDirection, type ParsedCommand } from './parser';
 import { generateDescription, generateExitProse, generateCreatureProse, type Biome, type Weather, type ExitInfo } from '../descriptions';
@@ -1313,6 +1314,17 @@ function handleAttack(ctx: CommandContext): CommandResult {
         style: 'success',
       });
 
+      // Get template for tier
+      const template = CREATURE_TEMPLATES[targetCreature.templateId];
+      const tier = template?.tier ?? 'common';
+
+      // Generate loot (placeholder - use existing loot system or empty for now)
+      const loot: string[] = [];
+      // TODO: Generate actual loot based on creature template
+
+      // Use ecosystem death handler
+      handleCreatureDeath(world, targetCreature, 'player', tier, loot);
+
       // Calculate rewards
       const xpReward = targetCreature.level * 10;
       const goldReward = targetCreature.behavior === 'passive' ? 0 : Math.floor(targetCreature.level * (2 + rng.next() * 3));
@@ -1325,11 +1337,11 @@ function handleAttack(ctx: CommandContext): CommandResult {
         style: 'success',
       });
 
-      // Remove creature from location
-      const creatureIndex = location.creatures.indexOf(targetCreature.id);
-      if (creatureIndex !== -1) {
-        location.creatures.splice(creatureIndex, 1);
-      }
+      // Note about looting
+      output.push({
+        text: `Use "loot ${targetCreature.name.toLowerCase()}" to check the corpse.`,
+        style: 'system',
+      });
 
       // Check for level up
       if (player.xp >= player.xpToNextLevel) {
