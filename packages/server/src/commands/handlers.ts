@@ -1921,7 +1921,13 @@ function handleSell(ctx: CommandContext): CommandResult {
   }
 
   const slot = player.inventory[invIndex]!;
-  const item = world.items[slot.itemId]!;
+  const item = world.items[slot.itemId];
+
+  if (!item) {
+    return {
+      output: [{ text: 'That item seems to be corrupted.', style: 'error' }],
+    };
+  }
 
   // Calculate sell price (base 10g for common items)
   const basePrice = 10;
