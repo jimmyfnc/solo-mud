@@ -64,6 +64,11 @@ export function restoreSession(
     gold: character.gold,
     corpseLocationId: undefined,
     corpseItems: undefined,
+    tutorial: {
+      skipped: false,
+      complete: true,
+      completedSteps: ['talk_mira', 'class_training', 'hit_dummy', 'visit_shop', 'leave_town'],
+    },
   };
 
   // Restore game time
