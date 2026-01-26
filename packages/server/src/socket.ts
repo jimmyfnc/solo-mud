@@ -387,12 +387,50 @@ function handleCommand(socket: GameSocket, input: string): void {
     return;
   }
 
+  // Check for quit/logout commands
+  const trimmedInput = input.trim().toLowerCase();
+  if (trimmedInput === 'quit' || trimmedInput === 'logout' || trimmedInput === 'exit') {
+    handleQuit(socket);
+    return;
+  }
+
   const result = executeCommand(session, input);
   sendOutput(socket, result.output);
 
   // Auto-save after commands that modify state
   if (session.characterId) {
     saveCharacterState(session);
+  }
+}
+
+/**
+ * Handle quitting to the character selection screen.
+ */
+function handleQuit(socket: GameSocket): void {
+  const session = socket.session;
+
+  if (session) {
+    // Save character state before quitting
+    if (session.characterId) {
+      saveCharacterState(session);
+    }
+
+    sendOutput(socket, [
+      { text: `Farewell, ${session.player.name}. Your progress has been saved.`, style: 'system' },
+      { text: 'Returning to character selection...', style: 'system' },
+    ]);
+
+    // Clean up session
+    sessionManager.removeSession(socket.id);
+    socket.session = undefined;
+  }
+
+  // Return to character selection
+  socket.awaitingCharacterSelection = true;
+
+  // Send welcome with character list
+  if (socket.playerRecord) {
+    sendWelcome(socket, socket.playerRecord);
   }
 }
 
