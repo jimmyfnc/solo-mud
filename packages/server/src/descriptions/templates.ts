@@ -3,7 +3,7 @@
  * Generates contextual descriptions based on biome, time, weather, and state.
  */
 
-import type { TimeOfDay, Rng } from '@solo-mud/shared';
+import type { TimeOfDay, Rng, Creature } from '@solo-mud/shared';
 
 export type Biome = 'plains' | 'forest' | 'hills' | 'swamp' | 'mountains' | 'desert';
 export type Weather = 'clear' | 'cloudy' | 'rain' | 'storm' | 'fog';
@@ -289,4 +289,43 @@ function formatList(items: string[]): string {
   const last = items[items.length - 1];
   const rest = items.slice(0, -1);
   return `${rest.join(', ')}, and ${last}`;
+}
+
+/**
+ * Generate prose for creatures in a location.
+ * Each creature has a pre-generated description that fits naturally into prose.
+ * Deduplicates identical descriptions and groups multiples.
+ */
+export function generateCreatureProse(creatures: Creature[]): string {
+  if (creatures.length === 0) {
+    return '';
+  }
+
+  // Count duplicates by description text
+  const descriptionCounts = new Map<string, number>();
+  for (const c of creatures) {
+    const count = descriptionCounts.get(c.description) ?? 0;
+    descriptionCounts.set(c.description, count + 1);
+  }
+
+  // Build unique descriptions, noting multiples
+  const uniqueDescriptions: string[] = [];
+  for (const [desc, count] of descriptionCounts) {
+    if (count === 1) {
+      uniqueDescriptions.push(desc);
+    } else {
+      // For multiples, we could note it but often the description already works
+      // e.g., "Rabbits scatter at your approach" already implies multiple
+      // Just include once to avoid redundancy
+      uniqueDescriptions.push(desc);
+    }
+  }
+
+  // For single description, just return it
+  if (uniqueDescriptions.length === 1) {
+    return uniqueDescriptions[0]!;
+  }
+
+  // For multiple unique descriptions, join with spaces
+  return uniqueDescriptions.join(' ');
 }

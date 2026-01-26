@@ -6,6 +6,7 @@ export {
   generateDescription,
   getShortDescription,
   generateExitProse,
+  generateCreatureProse,
   type DescriptionContext,
   type DescriptionTemplate,
   type TemplateVariant,
