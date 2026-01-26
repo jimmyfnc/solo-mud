@@ -3,7 +3,7 @@
  */
 
 import type { OutputLine, Exit, Item, EquipSlot, Creature, Corpse, Location, NPC, StatusEffect } from '@solo-mud/shared';
-import { createRng, getWeaponDamage, CREATURE_TEMPLATES, TUTORIAL_STEPS, SHOP_ITEM_TEMPLATES, CONSUMABLE_EFFECTS, getDrunkLevel, checkDrunkStumble, getRandomStumbleText } from '@solo-mud/shared';
+import { createRng, getWeaponDamage, CREATURE_TEMPLATES, TUTORIAL_STEPS, SHOP_ITEM_TEMPLATES, CONSUMABLE_EFFECTS, getDrunkLevel, checkDrunkStumble, getRandomStumbleText, xpForLevel, CLASSES } from '@solo-mud/shared';
 import { handleCreatureDeath } from '../game/ecosystem';
 import type { GameSession } from '../game/session';
 import { parseCommand, getDirection, type ParsedCommand } from './parser';
@@ -1901,8 +1901,15 @@ function handleAttack(ctx: CommandContext): CommandResult {
       // Use ecosystem death handler
       handleCreatureDeath(world, targetCreature, 'player', tier, loot);
 
-      // Calculate rewards
-      const xpReward = targetCreature.level * 10;
+      // Calculate XP reward based on level, tier, and behavior
+      // Base: level * 10, modified by tier and behavior
+      const tierMultiplier = tier === 'apex' ? 3.0 : tier === 'dangerous' ? 2.0 : tier === 'common' ? 1.5 : 1.0;
+      const behaviorMultiplier = targetCreature.behavior === 'aggressive' ? 1.2 :
+                                  targetCreature.behavior === 'territorial' ? 1.1 : 0.5;
+      const baseXp = targetCreature.level * 10;
+      const xpReward = Math.floor(baseXp * tierMultiplier * behaviorMultiplier);
+
+      // Gold reward (no gold from passive creatures)
       const goldReward = targetCreature.behavior === 'passive' ? 0 : Math.floor(targetCreature.level * (2 + rng.next() * 3));
 
       player.xp += xpReward;
@@ -1919,12 +1926,58 @@ function handleAttack(ctx: CommandContext): CommandResult {
         style: 'system',
       });
 
-      // Check for level up
-      if (player.xp >= player.xpToNextLevel) {
+      // Check for level up (can level multiple times if XP is high)
+      while (player.xp >= player.xpToNextLevel) {
         player.level++;
-        player.xpToNextLevel = player.level * 100 + (player.level - 1) * 50;
+        player.xpToNextLevel = xpForLevel(player.level + 1);
+
+        // Get class definition for stat increases
+        const classDef = CLASSES[player.class];
+        const hpGain = classDef.hpPerLevel;
+        const mpGain = classDef.mpPerLevel;
+
+        // Increase max HP/MP
+        player.maxHp += hpGain;
+        player.maxMp += mpGain;
+
+        // Heal to full on level up (reward!)
+        player.currentHp = player.maxHp;
+        player.currentMp = player.maxMp;
+
+        // Calculate carry weight increase (STR might increase at certain levels)
+        player.maxCarryWeight = 50 + (player.baseStats.str * 5);
+
+        output.push({ text: '', style: 'normal' });
         output.push({
-          text: `LEVEL UP! You are now level ${player.level}!`,
+          text: '╔═══════════════════════════════════════╗',
+          style: 'success',
+        });
+        output.push({
+          text: `║       ⭐ LEVEL UP! Level ${player.level}! ⭐        ║`,
+          style: 'success',
+        });
+        output.push({
+          text: '╠═══════════════════════════════════════╣',
+          style: 'success',
+        });
+        output.push({
+          text: `║  HP: +${hpGain} (now ${player.maxHp})`.padEnd(40) + '║',
+          style: 'normal',
+        });
+        output.push({
+          text: `║  MP: +${mpGain} (now ${player.maxMp})`.padEnd(40) + '║',
+          style: 'normal',
+        });
+        output.push({
+          text: `║  Health & Mana fully restored!`.padEnd(40) + '║',
+          style: 'normal',
+        });
+        output.push({
+          text: `║  Next level: ${player.xpToNextLevel} XP`.padEnd(40) + '║',
+          style: 'normal',
+        });
+        output.push({
+          text: '╚═══════════════════════════════════════╝',
           style: 'success',
         });
       }
