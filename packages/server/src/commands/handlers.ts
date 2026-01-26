@@ -693,7 +693,7 @@ function handleHelp(_ctx: CommandContext): CommandResult {
 }
 
 /**
- * Handle the "map" command - show a mini-map of the local area.
+ * Handle the "map" command - show an expanded map of the local area.
  */
 function handleMap(ctx: CommandContext): CommandResult {
   const { session } = ctx;
@@ -705,98 +705,198 @@ function handleMap(ctx: CommandContext): CommandResult {
     return { output: [{ text: 'You are lost in the void.', style: 'error' }] };
   }
 
+  // Helper functions
+  const getBiomeIcon = (loc: Location): string => {
+    if (loc.isSafeZone) return '🏠';
+    const biome = Object.entries(loc.biome).sort((a, b) => b[1] - a[1])[0]?.[0] ?? 'plains';
+    return biome === 'forest' ? '🌲' : biome === 'hills' ? '⛰️' :
+           biome === 'swamp' ? '🌿' : biome === 'mountains' ? '🏔️' :
+           biome === 'desert' ? '🏜️' : '🌾';
+  };
+
+  const getDangerIcon = (loc: Location): string => {
+    if (loc.isSafeZone) return '🛡️';
+    const depth = loc.depth ?? 0;
+    return depth <= 1 ? '🌿' : depth <= 3 ? '⚔️' : depth <= 5 ? '💀' : '☠️';
+  };
+
+  const formatName = (name: string, len: number): string => {
+    return name.length > len ? name.slice(0, len - 1) + '…' : name.padEnd(len);
+  };
+
+  // Get exits from current location
   const exitIds = world.adjacency[player.locationId] ?? [];
   const exits = exitIds.map(id => world.exits[id]).filter(Boolean) as Exit[];
 
-  // Categorize exits by direction
-  const dirMap: Record<string, { name: string; depth?: number; locked: boolean; isTown: boolean }> = {};
-  for (const exit of exits) {
-    const dest = world.locations[exit.to];
-    dirMap[exit.label.toLowerCase()] = {
-      name: dest?.name ?? 'Unknown',
-      depth: dest?.depth,
-      locked: exit.type === 'locked',
-      isTown: exit.to.startsWith('town_'),
-    };
+  // Build direction map for current location
+  interface LocInfo {
+    id: string;
+    name: string;
+    depth?: number;
+    locked: boolean;
+    isTown: boolean;
+    biomeIcon: string;
+    dangerIcon: string;
+    creatures: string[];
+    beyondExits: { dir: string; name: string; locked: boolean }[];
   }
 
-  // Helper to format a cell
-  const cell = (dir: string, width: number): string => {
-    const info = dirMap[dir];
-    if (!info) return ''.padEnd(width);
-    const lock = info.locked ? '🔒' : '';
-    const icon = info.isTown ? '🏠' : info.depth === undefined ? '?' :
-                 info.depth <= 1 ? '🌿' : info.depth <= 3 ? '⚔️' : '💀';
-    const name = info.name.slice(0, width - 4);
-    return `${icon}${lock}${name}`.slice(0, width).padEnd(width);
+  const getLocInfo = (locId: string, exitLocked: boolean): LocInfo | null => {
+    const loc = world.locations[locId];
+    if (!loc) return null;
+
+    // Get what's beyond this location
+    const beyondExitIds = world.adjacency[locId] ?? [];
+    const beyondExits = beyondExitIds
+      .map(id => world.exits[id])
+      .filter(e => e && e.to !== player.locationId)
+      .map(e => {
+        const dest = world.locations[e!.to];
+        return { dir: e!.label, name: dest?.name ?? '???', locked: e!.type === 'locked' };
+      })
+      .slice(0, 3); // Max 3 "beyond" exits
+
+    // Get creatures
+    const creatures = (loc.creatures ?? [])
+      .map(id => world.creatures[id]?.name)
+      .filter((n): n is string => !!n)
+      .slice(0, 2);
+
+    return {
+      id: locId,
+      name: loc.name,
+      depth: loc.depth,
+      locked: exitLocked,
+      isTown: locId.startsWith('town_'),
+      biomeIcon: getBiomeIcon(loc),
+      dangerIcon: getDangerIcon(loc),
+      creatures,
+      beyondExits,
+    };
   };
 
+  // Categorize exits by direction
+  const dirMap: Record<string, LocInfo> = {};
+  for (const exit of exits) {
+    const info = getLocInfo(exit.to, exit.type === 'locked');
+    if (info) {
+      dirMap[exit.label.toLowerCase()] = info;
+    }
+  }
+
   // Get current location info
-  const biomeEntries = Object.entries(location.biome).sort((a, b) => b[1] - a[1]);
-  const dominantBiome = biomeEntries[0]?.[0] ?? 'plains';
-  const biomeIcon = dominantBiome === 'forest' ? '🌲' : dominantBiome === 'hills' ? '⛰️' :
-                    dominantBiome === 'swamp' ? '🌿' : dominantBiome === 'mountains' ? '🏔️' :
-                    dominantBiome === 'desert' ? '🏜️' : '🌾';
+  const currentBiomeIcon = getBiomeIcon(location);
+  const currentDangerIcon = getDangerIcon(location);
   const depthLabel = location.isSafeZone ? 'Safe Zone' :
                      location.depth === undefined ? '' : `Depth ${location.depth}`;
 
-  // Build ASCII map
-  output.push({ text: '', style: 'normal' });
-  output.push({ text: '┌──────────────────────────────────────────┐', style: 'system' });
-  output.push({ text: '│              LOCAL MAP                   │', style: 'system' });
-  output.push({ text: '├──────────────────────────────────────────┤', style: 'system' });
+  // Current location creatures
+  const currentCreatures = (location.creatures ?? [])
+    .map(id => world.creatures[id]?.name)
+    .filter((n): n is string => !!n);
 
-  // North row
+  // Build the expanded ASCII map
+  output.push({ text: '', style: 'normal' });
+  output.push({ text: '╔══════════════════════════════════════════════════════════════════════════╗', style: 'system' });
+  output.push({ text: '║                            AREA MAP                                      ║', style: 'system' });
+  output.push({ text: '╠══════════════════════════════════════════════════════════════════════════╣', style: 'system' });
+
+  // === NORTH AREA ===
   const north = dirMap['north'];
   if (north) {
-    const nIcon = north.isTown ? '🏠' : north.locked ? '🔒' : '↑';
-    output.push({ text: `│                  ${nIcon}                       │`, style: 'normal' });
-    output.push({ text: `│            [${north.name.slice(0, 12).padEnd(12)}]            │`, style: 'normal' });
-    output.push({ text: '│                  │                       │', style: 'normal' });
+    const lockIcon = north.locked ? '🔒' : ' ';
+    output.push({ text: `║                    ┌─────────────────────────┐                          ║`, style: 'normal' });
+    output.push({ text: `║                    │ ${north.biomeIcon} ${formatName(north.name, 20)} ${lockIcon}│                          ║`, style: 'normal' });
+    if (north.creatures.length > 0) {
+      output.push({ text: `║                    │   ⚠️ ${formatName(north.creatures.join(', '), 17)}│                          ║`, style: 'error' });
+    }
+    if (north.beyondExits.length > 0) {
+      const beyond = north.beyondExits.map(e => `${e.dir[0]}→${e.name.slice(0, 6)}`).join(' ');
+      output.push({ text: `║                    │   ↗ ${formatName(beyond, 18)}│                          ║`, style: 'normal' });
+    }
+    output.push({ text: `║                    └───────────┬─────────────┘                          ║`, style: 'normal' });
+    output.push({ text: `║                                │ N                                      ║`, style: 'normal' });
   } else {
-    output.push({ text: '│                                          │', style: 'normal' });
+    output.push({ text: `║                          ─ ─ ─ ─ ─ ─ ─                                  ║`, style: 'normal' });
+    output.push({ text: `║                                                                          ║`, style: 'normal' });
   }
 
-  // Middle row (west - current - east)
+  // === WEST - CENTER - EAST ROW ===
   const west = dirMap['west'];
   const east = dirMap['east'];
-  const westStr = west ? `[${west.name.slice(0, 8)}]${west.locked ? '🔒' : '─'}` : '           ';
-  const eastStr = east ? `${east.locked ? '🔒' : '─'}[${east.name.slice(0, 8)}]` : '           ';
 
-  output.push({ text: `│  ${westStr.padEnd(11)}──[ YOU ARE HERE ]──${eastStr.padStart(11)}  │`, style: 'highlight' });
-
-  // Current location name
-  output.push({ text: `│            ${biomeIcon} ${location.name.slice(0, 14).padEnd(14)}              │`, style: 'emphasis' });
-  output.push({ text: `│              ${depthLabel.padEnd(12)}                │`, style: 'normal' });
-
-  // South row
-  const south = dirMap['south'];
-  if (south) {
-    output.push({ text: '│                  │                       │', style: 'normal' });
-    output.push({ text: `│            [${south.name.slice(0, 12).padEnd(12)}]            │`, style: 'normal' });
-    const sIcon = south.isTown ? '🏠' : south.locked ? '🔒' : '↓';
-    output.push({ text: `│                  ${sIcon}                       │`, style: 'normal' });
+  // West area
+  if (west) {
+    const lockIcon = west.locked ? '🔒' : ' ';
+    output.push({ text: `║  ┌──────────────────┐         │          ┌──────────────────┐          ║`, style: 'normal' });
+    output.push({ text: `║  │${west.biomeIcon} ${formatName(west.name, 14)} ${lockIcon}├── W ──┼── E ──┤${east ? east.biomeIcon : ' '} ${formatName(east?.name ?? '', 14)} ${east?.locked ? '🔒' : ' '}│          ║`, style: 'normal' });
+    if (west.creatures.length > 0 || (east?.creatures.length ?? 0) > 0) {
+      const wCreatures = west.creatures.length > 0 ? `⚠️${west.creatures[0]?.slice(0, 10) ?? ''}` : '';
+      const eCreatures = east?.creatures.length ? `⚠️${east.creatures[0]?.slice(0, 10) ?? ''}` : '';
+      output.push({ text: `║  │${formatName(wCreatures, 18)}│         │          │${formatName(eCreatures, 18)}│          ║`, style: 'error' });
+    }
+    output.push({ text: `║  └──────────────────┘         │          └──────────────────┘          ║`, style: 'normal' });
+  } else if (east) {
+    const lockIcon = east.locked ? '🔒' : ' ';
+    output.push({ text: `║                               │          ┌──────────────────┐          ║`, style: 'normal' });
+    output.push({ text: `║         ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─┼── E ──┤${east.biomeIcon} ${formatName(east.name, 14)} ${lockIcon}│          ║`, style: 'normal' });
+    if (east.creatures.length > 0) {
+      output.push({ text: `║                               │          │⚠️ ${formatName(east.creatures.join(', '), 15)}│          ║`, style: 'error' });
+    }
+    output.push({ text: `║                               │          └──────────────────┘          ║`, style: 'normal' });
+  } else {
+    output.push({ text: `║                               │                                         ║`, style: 'normal' });
   }
 
-  // Other exits (up, down, passages, etc.)
+  // === CURRENT LOCATION (CENTER) ===
+  output.push({ text: `║              ╔═══════════════════════════════════╗                       ║`, style: 'highlight' });
+  output.push({ text: `║              ║  ${currentBiomeIcon} ${currentDangerIcon} ${formatName(location.name, 24)}  ║                       ║`, style: 'highlight' });
+  output.push({ text: `║              ║     ★ YOU ARE HERE ★               ║                       ║`, style: 'emphasis' });
+  output.push({ text: `║              ║     ${formatName(depthLabel, 28)}  ║                       ║`, style: 'normal' });
+  if (currentCreatures.length > 0) {
+    output.push({ text: `║              ║     ⚠️ ${formatName(currentCreatures.slice(0, 2).join(', '), 24)}  ║                       ║`, style: 'error' });
+  }
+  output.push({ text: `║              ╚═══════════════════════════════════╝                       ║`, style: 'highlight' });
+
+  // === SOUTH AREA ===
+  const south = dirMap['south'];
+  if (south) {
+    const lockIcon = south.locked ? '🔒' : ' ';
+    output.push({ text: `║                                │ S                                      ║`, style: 'normal' });
+    output.push({ text: `║                    ┌───────────┴─────────────┐                          ║`, style: 'normal' });
+    output.push({ text: `║                    │ ${south.biomeIcon} ${formatName(south.name, 20)} ${lockIcon}│                          ║`, style: 'normal' });
+    if (south.creatures.length > 0) {
+      output.push({ text: `║                    │   ⚠️ ${formatName(south.creatures.join(', '), 17)}│                          ║`, style: 'error' });
+    }
+    if (south.beyondExits.length > 0) {
+      const beyond = south.beyondExits.map(e => `${e.dir[0]}→${e.name.slice(0, 6)}`).join(' ');
+      output.push({ text: `║                    │   ↘ ${formatName(beyond, 18)}│                          ║`, style: 'normal' });
+    }
+    output.push({ text: `║                    └─────────────────────────┘                          ║`, style: 'normal' });
+  } else {
+    output.push({ text: `║                          ─ ─ ─ ─ ─ ─ ─                                  ║`, style: 'normal' });
+  }
+
+  // === OTHER EXITS ===
   const otherExits = exits.filter(e => !['north', 'south', 'east', 'west'].includes(e.label.toLowerCase()));
   if (otherExits.length > 0) {
-    output.push({ text: '├──────────────────────────────────────────┤', style: 'system' });
-    output.push({ text: '│ Other paths:                             │', style: 'normal' });
+    output.push({ text: `╠══════════════════════════════════════════════════════════════════════════╣`, style: 'system' });
+    output.push({ text: `║  Other Paths:                                                            ║`, style: 'system' });
     for (const exit of otherExits) {
       const dest = world.locations[exit.to];
       const destName = dest?.name ?? 'Unknown';
       const dir = exit.label.charAt(0).toUpperCase() + exit.label.slice(1);
       const lock = exit.type === 'locked' ? ' 🔒' : '';
-      output.push({ text: `│   ${dir}: ${destName}${lock}`.padEnd(43) + '│', style: 'normal' });
+      const biome = dest ? getBiomeIcon(dest) : '?';
+      const danger = dest ? getDangerIcon(dest) : '?';
+      output.push({ text: `║    ${biome} ${dir.padEnd(10)} → ${destName}${lock}`.padEnd(75) + '║', style: 'normal' });
     }
   }
 
-  output.push({ text: '└──────────────────────────────────────────┘', style: 'system' });
-
-  // Legend
-  output.push({ text: '', style: 'normal' });
-  output.push({ text: 'Legend: 🌿Safe  ⚔️Moderate  💀Dangerous  🔒Locked  🏠Town', style: 'system' });
+  output.push({ text: `╠══════════════════════════════════════════════════════════════════════════╣`, style: 'system' });
+  output.push({ text: `║  Legend: 🛡️ Safe  🌿 Low  ⚔️ Moderate  💀 Dangerous  🔒 Locked  ⚠️ Enemies  ║`, style: 'system' });
+  output.push({ text: `║  Biomes: 🏠 Town  🌾 Plains  🌲 Forest  ⛰️ Hills  🌿 Swamp  🏔️ Mountains    ║`, style: 'system' });
+  output.push({ text: `╚══════════════════════════════════════════════════════════════════════════╝`, style: 'system' });
 
   return { output };
 }
