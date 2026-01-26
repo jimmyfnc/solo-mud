@@ -1,7 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { isIntimidated, canHunt, getDistanceFromPlayer, createCorpse, shouldCorpseFade, queueRespawn, handleCreatureDeath } from './ecosystem';
+import { isIntimidated, canHunt, createCorpse, shouldCorpseFade, queueRespawn, handleCreatureDeath } from './ecosystem';
 import type { Creature, Corpse, World, Location } from '@solo-mud/shared';
-import { CORPSE_DURATION } from '@solo-mud/shared';
 
 describe('ecosystem logic', () => {
   describe('isIntimidated', () => {
@@ -210,7 +209,7 @@ describe('handleCreatureDeath', () => {
       weather: { type: 'clear', intensity: 0.5 },
     };
 
-    const result = handleCreatureDeath(world, creature, 'player', 'common');
+    handleCreatureDeath(world, creature, 'player', 'common');
 
     // Creature removed from location
     expect(location.creatures).not.toContain('wolf_1');
