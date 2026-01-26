@@ -100,7 +100,7 @@ describe('Game Loop Integration', () => {
       expect(cmd.command).toBe('go');
       expect(cmd.args).toContain('north');
       expect(isMovementCommand('go')).toBe(true);
-      expect(getDirection(cmd)).toBe('north');
+      expect(getDirection(cmd)?.direction).toBe('north');
     });
 
     it('should parse combat commands', () => {

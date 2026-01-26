@@ -6,7 +6,6 @@
 import { describe, it, expect } from 'vitest';
 import {
   canHunt,
-  createCorpse,
   shouldCorpseFade,
   queueRespawn,
   handleCreatureDeath,
