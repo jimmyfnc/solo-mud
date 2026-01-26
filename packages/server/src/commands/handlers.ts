@@ -2,11 +2,11 @@
  * Command handlers - execute player commands.
  */
 
-import type { OutputLine, Exit, Item, EquipSlot } from '@solo-mud/shared';
-import { createRng } from '@solo-mud/shared';
+import type { OutputLine, Exit, Item, EquipSlot, Creature, Corpse } from '@solo-mud/shared';
+import { createRng, getWeaponDamage } from '@solo-mud/shared';
 import type { GameSession } from '../game/session';
 import { parseCommand, getDirection, type ParsedCommand } from './parser';
-import { generateDescription, generateExitProse, type Biome, type Weather, type ExitInfo } from '../descriptions';
+import { generateDescription, generateExitProse, generateCreatureProse, type Biome, type Weather, type ExitInfo } from '../descriptions';
 
 export interface CommandContext {
   session: GameSession;
@@ -36,6 +36,10 @@ const handlers: Record<string, CommandHandler> = {
   equipment: handleEquipment,
   use: handleUse,
   debug: handleDebug,
+  attack: handleAttack,
+  kill: handleAttack,
+  flee: handleFlee,
+  loot: handleLoot,
   // Movement commands
   north: handleMove,
   south: handleMove,
@@ -133,6 +137,17 @@ function generateRoomOutput(
   const exitProse = generateExitProse(exitInfos);
   output.push({ text: exitProse, style: 'normal' });
 
+  // Get creatures in this location
+  const creatures = location.creatures
+    .map(id => world.creatures[id])
+    .filter(Boolean) as Creature[];
+
+  // Add creature prose (fits naturally into the description)
+  if (creatures.length > 0) {
+    const creatureProse = generateCreatureProse(creatures);
+    output.push({ text: creatureProse, style: 'normal' });
+  }
+
   // Detailed mode: show tactical breakdown
   if (detailed) {
     // Items
@@ -143,7 +158,16 @@ function generateRoomOutput(
       output.push({ text: `Items: ${itemNames}`, style: 'success' });
     }
 
-    // TODO: Creatures line will go here when creatures are implemented
+    // Creatures tactical breakdown
+    if (creatures.length > 0) {
+      const creatureList = creatures.map(c => {
+        const behavior = c.behavior === 'passive' ? '' : ` [${c.behavior.toUpperCase()}]`;
+        return `${c.name} (Lvl ${c.level})${behavior}`;
+      }).join(', ');
+      // Use 'combat' style for aggressive/territorial, 'normal' for passive
+      const hasHostile = creatures.some(c => c.behavior !== 'passive');
+      output.push({ text: `Creatures: ${creatureList}`, style: hasHostile ? 'combat' : 'normal' });
+    }
 
     // Exits breakdown
     if (exits.length > 0) {
@@ -353,6 +377,10 @@ function handleHelp(_ctx: CommandContext): CommandResult {
       { text: '  equipment (eq) - View equipped items', style: 'normal' },
       { text: '  equip <item> - Equip an item from inventory', style: 'normal' },
       { text: '  unequip <slot> - Remove equipped item', style: 'normal' },
+      { text: '  attack <target> (k) - Attack a creature', style: 'normal' },
+      { text: '  flee - Escape from combat (50% chance)', style: 'normal' },
+      { text: '  loot [corpse] - Examine a corpse for loot', style: 'normal' },
+      { text: '  quit (logout, exit) - Save and return to character select', style: 'normal' },
       { text: '  debug - Show raw room/item data (dev mode)', style: 'normal' },
       { text: '  help (?) - Show this help message', style: 'normal' },
     ],
@@ -695,11 +723,106 @@ function handleMove(ctx: CommandContext): CommandResult {
   output.push({ text: `You go ${direction}.`, style: 'normal' });
   output.push(...roomOutput);
 
+  // Check for aggressive creatures (aggro on sight)
+  const aggroOutput = checkAggro(session);
+  if (aggroOutput.length > 0) {
+    output.push(...aggroOutput);
+  }
+
   return {
     output,
     updateRoom: true,
     updatePlayer: true,
   };
+}
+
+/**
+ * Check for aggressive creatures in the player's location and trigger aggro.
+ * Returns output lines describing the aggro event.
+ */
+function checkAggro(session: GameSession): OutputLine[] {
+  const { world, player, combatStats } = session;
+  const location = world.locations[player.locationId];
+
+  if (!location) return [];
+
+  // Find aggressive creatures that aren't already in combat
+  const aggressiveCreatures = location.creatures
+    .map((id) => world.creatures[id])
+    .filter((c): c is Creature => !!c && c.behavior === 'aggressive' && c.currentHp > 0 && !c.inCombat);
+
+  if (aggressiveCreatures.length === 0) return [];
+
+  const output: OutputLine[] = [];
+  const rng = createRng(`aggro-${Date.now()}`);
+
+  // First aggressive creature initiates combat
+  const aggressor = aggressiveCreatures[0]!;
+
+  output.push({
+    text: `The ${aggressor.name} snarls and attacks you!`,
+    style: 'combat',
+  });
+
+  // Mark both as in combat
+  player.inCombat = true;
+  player.targetId = aggressor.id;
+  aggressor.inCombat = true;
+  aggressor.targetId = player.id;
+
+  // Creature gets a free attack (ambush)
+  const creatureHitChance = 0.8; // Slight advantage on aggro
+  const creatureHits = rng.next() < creatureHitChance;
+
+  if (!creatureHits) {
+    output.push({
+      text: `The ${aggressor.name} lunges at you but misses!`,
+      style: 'combat',
+    });
+  } else {
+    // Creature damage
+    const minDmg = Math.max(1, aggressor.level);
+    const maxDmg = Math.max(2, aggressor.level * 2 + 2);
+    let damage = minDmg + Math.floor(rng.next() * (maxDmg - minDmg + 1));
+
+    // Apply defense reduction
+    const defenseReduction = Math.floor(combatStats.defense / 20);
+    damage = Math.max(1, damage - defenseReduction);
+
+    player.currentHp -= damage;
+
+    output.push({
+      text: `The ${aggressor.name} hits you for ${damage} damage!`,
+      style: 'combat',
+    });
+
+    // Show player HP
+    const hpPercent = Math.floor((player.currentHp / player.maxHp) * 100);
+    output.push({
+      text: `Your HP: ${player.currentHp}/${player.maxHp} (${hpPercent}%)`,
+      style: player.currentHp < player.maxHp * 0.3 ? 'error' : 'system',
+    });
+
+    if (player.currentHp <= 0) {
+      output.push({
+        text: 'You have been slain!',
+        style: 'error',
+      });
+      player.currentHp = 1; // Prevent death for now
+    }
+  }
+
+  // Note other aggressive creatures
+  if (aggressiveCreatures.length > 1) {
+    const others = aggressiveCreatures.slice(1);
+    const names = others.map((c) => c.name).join(', ');
+    output.push({
+      text: `${others.length > 1 ? 'Other hostile creatures' : 'Another hostile creature'} nearby: ${names}`,
+      style: 'combat',
+    });
+  }
+
+  return output;
 }
 
 /** Map item tags to equipment slots */
@@ -953,4 +1076,313 @@ function handleUnequip(ctx: CommandContext): CommandResult {
     output: [{ text: `You unequip the ${item.name}.`, style: 'normal' }],
     updatePlayer: true,
   };
+}
+
+/**
+ * Handle the "attack" command - attack a creature.
+ */
+function handleAttack(ctx: CommandContext): CommandResult {
+  const { session, parsed } = ctx;
+  const { world, player, combatStats } = session;
+
+  if (!parsed.target) {
+    return {
+      output: [{ text: 'Attack what? Specify a target.', style: 'system' }],
+    };
+  }
+
+  const location = world.locations[player.locationId];
+  if (!location) {
+    return {
+      output: [{ text: 'You cannot attack anything here.', style: 'error' }],
+    };
+  }
+
+  // Find creature by name
+  const targetLower = parsed.target.toLowerCase();
+  let targetCreature: Creature | undefined;
+
+  for (const creatureId of location.creatures) {
+    const creature = world.creatures[creatureId];
+    if (creature && creature.name.toLowerCase().includes(targetLower)) {
+      targetCreature = creature;
+      break;
+    }
+  }
+
+  if (!targetCreature) {
+    return {
+      output: [{ text: `You don't see any "${parsed.target}" here to attack.`, style: 'error' }],
+    };
+  }
+
+  // Check if creature is already dead
+  if (targetCreature.currentHp <= 0) {
+    return {
+      output: [{ text: `The ${targetCreature.name} is already dead.`, style: 'error' }],
+    };
+  }
+
+  const output: OutputLine[] = [];
+
+  // Get player's weapon
+  const weaponId = player.equipment.weapon;
+  const weapon = weaponId ? world.items[weaponId] : undefined;
+  const weaponName = weapon?.name ?? 'bare hands';
+
+  // Calculate player damage
+  const weaponDamage = weapon ? getWeaponDamage(weapon) : { min: 1, max: 2 };
+  const rng = createRng(`${world.seed}-combat-${Date.now()}`);
+
+  // Roll to hit (85% base + DEX bonus)
+  const hitChance = 0.85 + (combatStats.hitChance / 100) * 0.15;
+  const playerHits = rng.next() < hitChance;
+
+  if (!playerHits) {
+    output.push({
+      text: `You swing your ${weaponName} at the ${targetCreature.name} but miss!`,
+      style: 'combat',
+    });
+  } else {
+    // Calculate damage
+    const baseDamage = weaponDamage.min + Math.floor(rng.next() * (weaponDamage.max - weaponDamage.min + 1));
+    const attackBonus = Math.floor(combatStats.attackPower / 10);
+
+    // Check for crit
+    const critChance = combatStats.critChance / 100;
+    const isCrit = rng.next() < critChance;
+    const critMultiplier = isCrit ? 2 : 1;
+
+    const damage = Math.max(1, (baseDamage + attackBonus) * critMultiplier);
+
+    // Apply damage
+    targetCreature.currentHp -= damage;
+
+    if (isCrit) {
+      output.push({
+        text: `CRITICAL HIT! You strike the ${targetCreature.name} with your ${weaponName} for ${damage} damage!`,
+        style: 'combat',
+      });
+    } else {
+      output.push({
+        text: `You hit the ${targetCreature.name} with your ${weaponName} for ${damage} damage.`,
+        style: 'combat',
+      });
+    }
+
+    // Check if creature died
+    if (targetCreature.currentHp <= 0) {
+      output.push({
+        text: `The ${targetCreature.name} collapses and dies!`,
+        style: 'success',
+      });
+
+      // Calculate rewards
+      const xpReward = targetCreature.level * 10;
+      const goldReward = targetCreature.behavior === 'passive' ? 0 : Math.floor(targetCreature.level * (2 + rng.next() * 3));
+
+      player.xp += xpReward;
+      player.gold += goldReward;
+
+      output.push({
+        text: `You gain ${xpReward} XP${goldReward > 0 ? ` and ${goldReward} gold` : ''}.`,
+        style: 'success',
+      });
+
+      // Remove creature from location
+      const creatureIndex = location.creatures.indexOf(targetCreature.id);
+      if (creatureIndex !== -1) {
+        location.creatures.splice(creatureIndex, 1);
+      }
+
+      // Check for level up
+      if (player.xp >= player.xpToNextLevel) {
+        player.level++;
+        player.xpToNextLevel = player.level * 100 + (player.level - 1) * 50;
+        output.push({
+          text: `LEVEL UP! You are now level ${player.level}!`,
+          style: 'success',
+        });
+      }
+
+      // Mark player not in combat
+      player.inCombat = false;
+      player.targetId = undefined;
+
+      return { output, updateRoom: true, updatePlayer: true };
+    } else {
+      // Show creature HP
+      const hpPercent = Math.floor((targetCreature.currentHp / targetCreature.maxHp) * 100);
+      output.push({
+        text: `${targetCreature.name}: ${targetCreature.currentHp}/${targetCreature.maxHp} HP (${hpPercent}%)`,
+        style: 'system',
+      });
+    }
+  }
+
+  // Set player in combat
+  player.inCombat = true;
+  player.targetId = targetCreature.id;
+  targetCreature.inCombat = true;
+  targetCreature.targetId = player.id;
+
+  // Creature counter-attacks (if not dead and not passive)
+  // Passive creatures don't fight back - they just bleat sadly
+  if (targetCreature.currentHp > 0 && targetCreature.behavior !== 'passive') {
+    // Creature hit chance
+    const creatureHitChance = 0.75;
+    const creatureHits = rng.next() < creatureHitChance;
+
+    if (!creatureHits) {
+      output.push({
+        text: `The ${targetCreature.name} attacks but misses!`,
+        style: 'combat',
+      });
+    } else {
+      // Creature damage scales with level
+      const minDmg = Math.max(1, targetCreature.level);
+      const maxDmg = Math.max(2, targetCreature.level * 2 + 2);
+      let creatureDamage = minDmg + Math.floor(rng.next() * (maxDmg - minDmg + 1));
+
+      // Apply defense reduction
+      const defenseReduction = Math.floor(combatStats.defense / 20);
+      creatureDamage = Math.max(1, creatureDamage - defenseReduction);
+
+      player.currentHp -= creatureDamage;
+
+      output.push({
+        text: `The ${targetCreature.name} hits you for ${creatureDamage} damage!`,
+        style: 'combat',
+      });
+
+      // Show player HP
+      const hpPercent = Math.floor((player.currentHp / player.maxHp) * 100);
+      output.push({
+        text: `Your HP: ${player.currentHp}/${player.maxHp} (${hpPercent}%)`,
+        style: player.currentHp < player.maxHp * 0.3 ? 'error' : 'system',
+      });
+
+      // Check if player died
+      if (player.currentHp <= 0) {
+        output.push({
+          text: 'You have been slain!',
+          style: 'error',
+        });
+        // TODO: Handle player death properly
+        player.currentHp = 1; // For now, just prevent going below 1
+      }
+    }
+  } else if (targetCreature.currentHp > 0 && targetCreature.behavior === 'passive') {
+    // Passive creature reaction
+    output.push({
+      text: `The ${targetCreature.name} bleats in fear but doesn't fight back.`,
+      style: 'normal',
+    });
+  }
+
+  return { output, updateRoom: true, updatePlayer: true };
+}
+
+/**
+ * Handle the "flee" command - escape from combat.
+ */
+function handleFlee(ctx: CommandContext): CommandResult {
+  const { session } = ctx;
+  const { player } = session;
+
+  if (!player.inCombat) {
+    return {
+      output: [{ text: "You're not in combat.", style: 'system' }],
+    };
+  }
+
+  // 50% chance to flee successfully
+  const rng = createRng(`flee-${Date.now()}`);
+  const fleeSuccess = rng.next() < 0.5;
+
+  if (fleeSuccess) {
+    player.inCombat = false;
+    player.targetId = undefined;
+    return {
+      output: [{ text: 'You flee from combat!', style: 'success' }],
+      updatePlayer: true,
+    };
+  } else {
+    return {
+      output: [{ text: 'You try to flee but fail! The enemy blocks your escape.', style: 'error' }],
+    };
+  }
+}
+
+/**
+ * Handle the "loot" command - examine a corpse for items.
+ */
+function handleLoot(ctx: CommandContext): CommandResult {
+  const { session, parsed } = ctx;
+  const { world, player } = session;
+
+  const location = world.locations[player.locationId];
+  if (!location) {
+    return {
+      output: [{ text: 'You cannot loot anything here.', style: 'error' }],
+    };
+  }
+
+  // Find corpses in this location
+  const corpses = Object.values(world.corpses).filter(
+    (c) => c.locationId === player.locationId
+  );
+
+  if (corpses.length === 0) {
+    return {
+      output: [{ text: 'There are no corpses here to loot.', style: 'error' }],
+    };
+  }
+
+  // If no target specified, use the only corpse or prompt
+  let targetCorpse: Corpse | undefined;
+
+  if (!parsed.target) {
+    if (corpses.length === 1) {
+      targetCorpse = corpses[0];
+    } else {
+      const names = corpses.map((c) => c.name).join(', ');
+      return {
+        output: [
+          { text: 'Multiple corpses here. Specify which one:', style: 'system' },
+          { text: `  ${names}`, style: 'normal' },
+        ],
+      };
+    }
+  } else {
+    const targetLower = parsed.target.toLowerCase();
+    targetCorpse = corpses.find((c) =>
+      c.name.toLowerCase().includes(targetLower)
+    );
+  }
+
+  if (!targetCorpse) {
+    return {
+      output: [{ text: `You don't see a "${parsed.target}" corpse here.`, style: 'error' }],
+    };
+  }
+
+  // Show loot
+  if (targetCorpse.loot.length === 0) {
+    return {
+      output: [{ text: `The ${targetCorpse.name}'s corpse has nothing left of value.`, style: 'normal' }],
+    };
+  }
+
+  const output: OutputLine[] = [
+    { text: `The ${targetCorpse.name}'s corpse contains:`, style: 'system' },
+  ];
+
+  targetCorpse.loot.forEach((itemId, index) => {
+    const item = world.items[itemId];
+    const name = item?.name ?? 'Unknown item';
+    output.push({ text: `  ${index + 1}. ${name}`, style: 'normal' });
+  });
+
+  return { output };
 }
