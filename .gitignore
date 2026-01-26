@@ -6,3 +6,12 @@ dist/
 .DS_Store
 coverage/
 .turbo/
+
+# Database files
+packages/server/data/
+
+# Build caches
+.pnpm-buildscripts.json
+
+# Claude Code local settings (project settings can be shared)
+.claude/settings.local.json
