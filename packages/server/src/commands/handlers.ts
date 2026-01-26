@@ -3,7 +3,7 @@
  */
 
 import type { OutputLine, Exit, Item, EquipSlot, Creature, Corpse, Location, NPC, StatusEffect } from '@solo-mud/shared';
-import { createRng, getWeaponDamage, CREATURE_TEMPLATES, TUTORIAL_STEPS, SHOP_ITEM_TEMPLATES, CONSUMABLE_EFFECTS, getDrunkLevel, getRandomDrunkFlavor, checkDrunkStumble, getRandomStumbleText } from '@solo-mud/shared';
+import { createRng, getWeaponDamage, CREATURE_TEMPLATES, TUTORIAL_STEPS, SHOP_ITEM_TEMPLATES, CONSUMABLE_EFFECTS, getDrunkLevel, checkDrunkStumble, getRandomStumbleText } from '@solo-mud/shared';
 import { handleCreatureDeath } from '../game/ecosystem';
 import type { GameSession } from '../game/session';
 import { parseCommand, getDirection, type ParsedCommand } from './parser';
@@ -27,14 +27,18 @@ type CommandHandler = (ctx: CommandContext) => CommandResult;
  */
 const handlers: Record<string, CommandHandler> = {
   look: handleLook,
+  l: handleLook,
   examine: handleExamine,
   help: handleHelp,
   inventory: handleInventory,
+  i: handleInventory,
   take: handleTake,
+  get: handleTake,
   drop: handleDrop,
   equip: handleEquip,
   unequip: handleUnequip,
   equipment: handleEquipment,
+  eq: handleEquipment,
   use: handleUse,
   debug: handleDebug,
   attack: handleAttack,
@@ -47,6 +51,7 @@ const handlers: Record<string, CommandHandler> = {
   list: handleList,
   buy: handleBuy,
   sell: handleSell,
+  map: handleMap,
   // Movement commands
   north: handleMove,
   south: handleMove,
@@ -54,6 +59,10 @@ const handlers: Record<string, CommandHandler> = {
   west: handleMove,
   up: handleMove,
   down: handleMove,
+  n: handleMove,
+  s: handleMove,
+  e: handleMove,
+  w: handleMove,
   go: handleMove,
 };
 
@@ -567,26 +576,78 @@ function handleSpecialItem(ctx: CommandContext, item: Item, flavorText: string):
   }
 
   if (item.baseId === 'travelers_map') {
-    // Show a rough map of connected areas
+    // Show a regional map with visited locations
     const location = world.locations[player.locationId];
-    const exitIds = world.adjacency[player.locationId] ?? [];
-    const exits = exitIds.map(id => world.exits[id]).filter(Boolean) as Exit[];
 
     output.push({ text: '', style: 'normal' });
-    output.push({ text: '┌─────────────────────────────────┐', style: 'system' });
-    output.push({ text: `│ You are at: ${location?.name ?? 'Unknown'}`, style: 'system' });
-    output.push({ text: '├─────────────────────────────────┤', style: 'system' });
+    output.push({ text: "You unfold the traveler's map and study it carefully...", style: 'emphasis' });
+    output.push({ text: '', style: 'normal' });
+    output.push({ text: '╔════════════════════════════════════════════════╗', style: 'system' });
+    output.push({ text: '║          EASTHOLLOW REGIONAL MAP               ║', style: 'system' });
+    output.push({ text: '╠════════════════════════════════════════════════╣', style: 'system' });
 
-    if (exits.length > 0) {
-      output.push({ text: '│ Nearby areas:', style: 'system' });
-      for (const exit of exits) {
-        const dest = world.locations[exit.to];
-        const destName = dest?.name ?? 'Unknown';
-        const direction = exit.label.charAt(0).toUpperCase() + exit.label.slice(1);
-        output.push({ text: `│  ${direction}: ${destName}`, style: 'normal' });
+    // Collect all visited locations grouped by depth
+    const visitedByDepth = new Map<number, Location[]>();
+    let totalVisited = 0;
+
+    for (const loc of Object.values(world.locations)) {
+      if (loc.visitState.visitCount > 0) {
+        totalVisited++;
+        const depth = loc.isSafeZone ? -1 : (loc.depth ?? 0);
+        if (!visitedByDepth.has(depth)) visitedByDepth.set(depth, []);
+        visitedByDepth.get(depth)!.push(loc);
       }
     }
-    output.push({ text: '└─────────────────────────────────┘', style: 'system' });
+
+    // Town locations (depth -1 / safe zone)
+    const townLocs = visitedByDepth.get(-1) ?? [];
+    if (townLocs.length > 0) {
+      output.push({ text: '║ 🏠 EASTHOLLOW (Safe Zone)                      ║', style: 'highlight' });
+      for (const loc of townLocs) {
+        const marker = loc.id === player.locationId ? '★' : '•';
+        const name = loc.name.slice(0, 35);
+        output.push({ text: `║   ${marker} ${name}`.padEnd(49) + '║', style: 'normal' });
+      }
+      output.push({ text: '╠────────────────────────────────────────────────╣', style: 'system' });
+    }
+
+    // Wilderness by depth
+    const depths = Array.from(visitedByDepth.keys()).filter(d => d >= 0).sort((a, b) => a - b);
+    for (const depth of depths) {
+      const locs = visitedByDepth.get(depth) ?? [];
+      const danger = depth <= 1 ? '🌿 Safe' : depth <= 3 ? '⚔️ Moderate' : depth <= 5 ? '💀 Dangerous' : '☠️ Deadly';
+      output.push({ text: `║ Depth ${depth} - ${danger}`.padEnd(49) + '║', style: 'system' });
+
+      for (const loc of locs) {
+        const marker = loc.id === player.locationId ? '★' : '•';
+        const biome = Object.entries(loc.biome).sort((a, b) => b[1] - a[1])[0]?.[0] ?? 'plains';
+        const biomeIcon = biome === 'forest' ? '🌲' : biome === 'hills' ? '⛰️' :
+                          biome === 'swamp' ? '🌿' : '🌾';
+        const name = loc.name.slice(0, 28);
+        output.push({ text: `║   ${marker} ${biomeIcon} ${name}`.padEnd(49) + '║', style: 'normal' });
+      }
+
+      if (depth < Math.max(...depths)) {
+        output.push({ text: '║        │                                       ║', style: 'normal' });
+        output.push({ text: '║        ▼                                       ║', style: 'normal' });
+      }
+    }
+
+    output.push({ text: '╠════════════════════════════════════════════════╣', style: 'system' });
+
+    // Current position
+    const currentDepth = location?.isSafeZone ? 'Town' : `Depth ${location?.depth ?? '?'}`;
+    output.push({ text: `║ ★ You are at: ${location?.name ?? 'Unknown'}`.padEnd(49) + '║', style: 'highlight' });
+    output.push({ text: `║   Location: ${currentDepth}`.padEnd(49) + '║', style: 'normal' });
+
+    // Stats
+    const totalLocations = Object.keys(world.locations).length;
+    const pct = Math.floor((totalVisited / totalLocations) * 100);
+    output.push({ text: `║   Explored: ${totalVisited}/${totalLocations} locations (${pct}%)`.padEnd(49) + '║', style: 'normal' });
+
+    output.push({ text: '╚════════════════════════════════════════════════╝', style: 'system' });
+    output.push({ text: '', style: 'normal' });
+    output.push({ text: 'Legend: ★ Current  • Visited  🌿Safe ⚔️Moderate 💀Danger', style: 'system' });
 
     return { output };
   }
@@ -623,11 +684,121 @@ function handleHelp(_ctx: CommandContext): CommandResult {
       { text: '  buy <item> - Purchase from shop', style: 'normal' },
       { text: '  sell <item> - Sell to shop', style: 'normal' },
       { text: '  tutorial - Check tutorial progress', style: 'normal' },
+      { text: '  map - Show a mini-map of nearby areas', style: 'normal' },
       { text: '  quit (logout, exit) - Save and return to character select', style: 'normal' },
       { text: '  debug - Show raw room/item data (dev mode)', style: 'normal' },
       { text: '  help (?) - Show this help message', style: 'normal' },
     ],
   };
+}
+
+/**
+ * Handle the "map" command - show a mini-map of the local area.
+ */
+function handleMap(ctx: CommandContext): CommandResult {
+  const { session } = ctx;
+  const { world, player } = session;
+  const location = world.locations[player.locationId];
+  const output: OutputLine[] = [];
+
+  if (!location) {
+    return { output: [{ text: 'You are lost in the void.', style: 'error' }] };
+  }
+
+  const exitIds = world.adjacency[player.locationId] ?? [];
+  const exits = exitIds.map(id => world.exits[id]).filter(Boolean) as Exit[];
+
+  // Categorize exits by direction
+  const dirMap: Record<string, { name: string; depth?: number; locked: boolean; isTown: boolean }> = {};
+  for (const exit of exits) {
+    const dest = world.locations[exit.to];
+    dirMap[exit.label.toLowerCase()] = {
+      name: dest?.name ?? 'Unknown',
+      depth: dest?.depth,
+      locked: exit.type === 'locked',
+      isTown: exit.to.startsWith('town_'),
+    };
+  }
+
+  // Helper to format a cell
+  const cell = (dir: string, width: number): string => {
+    const info = dirMap[dir];
+    if (!info) return ''.padEnd(width);
+    const lock = info.locked ? '🔒' : '';
+    const icon = info.isTown ? '🏠' : info.depth === undefined ? '?' :
+                 info.depth <= 1 ? '🌿' : info.depth <= 3 ? '⚔️' : '💀';
+    const name = info.name.slice(0, width - 4);
+    return `${icon}${lock}${name}`.slice(0, width).padEnd(width);
+  };
+
+  // Get current location info
+  const biomeEntries = Object.entries(location.biome).sort((a, b) => b[1] - a[1]);
+  const dominantBiome = biomeEntries[0]?.[0] ?? 'plains';
+  const biomeIcon = dominantBiome === 'forest' ? '🌲' : dominantBiome === 'hills' ? '⛰️' :
+                    dominantBiome === 'swamp' ? '🌿' : dominantBiome === 'mountains' ? '🏔️' :
+                    dominantBiome === 'desert' ? '🏜️' : '🌾';
+  const depthLabel = location.isSafeZone ? 'Safe Zone' :
+                     location.depth === undefined ? '' : `Depth ${location.depth}`;
+
+  // Build ASCII map
+  output.push({ text: '', style: 'normal' });
+  output.push({ text: '┌──────────────────────────────────────────┐', style: 'system' });
+  output.push({ text: '│              LOCAL MAP                   │', style: 'system' });
+  output.push({ text: '├──────────────────────────────────────────┤', style: 'system' });
+
+  // North row
+  const north = dirMap['north'];
+  if (north) {
+    const nIcon = north.isTown ? '🏠' : north.locked ? '🔒' : '↑';
+    output.push({ text: `│                  ${nIcon}                       │`, style: 'normal' });
+    output.push({ text: `│            [${north.name.slice(0, 12).padEnd(12)}]            │`, style: 'normal' });
+    output.push({ text: '│                  │                       │', style: 'normal' });
+  } else {
+    output.push({ text: '│                                          │', style: 'normal' });
+  }
+
+  // Middle row (west - current - east)
+  const west = dirMap['west'];
+  const east = dirMap['east'];
+  const westStr = west ? `[${west.name.slice(0, 8)}]${west.locked ? '🔒' : '─'}` : '           ';
+  const eastStr = east ? `${east.locked ? '🔒' : '─'}[${east.name.slice(0, 8)}]` : '           ';
+
+  output.push({ text: `│  ${westStr.padEnd(11)}──[ YOU ARE HERE ]──${eastStr.padStart(11)}  │`, style: 'highlight' });
+
+  // Current location name
+  output.push({ text: `│            ${biomeIcon} ${location.name.slice(0, 14).padEnd(14)}              │`, style: 'emphasis' });
+  output.push({ text: `│              ${depthLabel.padEnd(12)}                │`, style: 'normal' });
+
+  // South row
+  const south = dirMap['south'];
+  if (south) {
+    output.push({ text: '│                  │                       │', style: 'normal' });
+    output.push({ text: `│            [${south.name.slice(0, 12).padEnd(12)}]            │`, style: 'normal' });
+    const sIcon = south.isTown ? '🏠' : south.locked ? '🔒' : '↓';
+    output.push({ text: `│                  ${sIcon}                       │`, style: 'normal' });
+  }
+
+  // Other exits (up, down, passages, etc.)
+  const otherExits = exits.filter(e => !['north', 'south', 'east', 'west'].includes(e.label.toLowerCase()));
+  if (otherExits.length > 0) {
+    output.push({ text: '├──────────────────────────────────────────┤', style: 'system' });
+    output.push({ text: '│ Other paths:                             │', style: 'normal' });
+    for (const exit of otherExits) {
+      const dest = world.locations[exit.to];
+      const destName = dest?.name ?? 'Unknown';
+      const dir = exit.label.charAt(0).toUpperCase() + exit.label.slice(1);
+      const lock = exit.type === 'locked' ? ' 🔒' : '';
+      output.push({ text: `│   ${dir}: ${destName}${lock}`.padEnd(43) + '│', style: 'normal' });
+    }
+  }
+
+  output.push({ text: '└──────────────────────────────────────────┘', style: 'system' });
+
+  // Legend
+  output.push({ text: '', style: 'normal' });
+  output.push({ text: 'Legend: 🌿Safe  ⚔️Moderate  💀Dangerous  🔒Locked  🏠Town', style: 'system' });
+
+  return { output };
 }
 
 /**
