@@ -170,6 +170,17 @@ function generateRoomOutput(
       output.push({ text: `Items: ${itemNames}`, style: 'success' });
     }
 
+    // NPCs
+    const npcIds = location.npcs ?? [];
+    const npcs = npcIds.map(id => world.npcs[id]).filter((n): n is NPC => n !== undefined);
+    if (npcs.length > 0) {
+      const npcList = npcs.map(n => {
+        const title = n.title ? `${n.title} ` : '';
+        return `${title}${n.name}`;
+      }).join(', ');
+      output.push({ text: `People: ${npcList}`, style: 'normal' });
+    }
+
     // Creatures tactical breakdown
     if (creatures.length > 0) {
       const creatureList = creatures.map(c => {
