@@ -129,9 +129,22 @@ export function createSocketServer(httpServer: HttpServer): SocketServer {
       sessionManager.removeSession(socket.id);
     });
 
-    // Send initial prompt to identify
+    // Send ASCII art banner on connect
     sendOutput(socket, [
-      { text: 'Connecting to Solo MUD...', style: 'system' },
+      { text: '╔═══════════════════════════════════════════════════════════╗', style: 'system' },
+      { text: '║                                                           ║', style: 'system' },
+      { text: '║   ███████╗ ██████╗ ██╗      ██████╗     ███╗   ███╗██╗   ██╗██████╗   ║', style: 'system' },
+      { text: '║   ██╔════╝██╔═══██╗██║     ██╔═══██╗    ████╗ ████║██║   ██║██╔══██╗  ║', style: 'system' },
+      { text: '║   ███████╗██║   ██║██║     ██║   ██║    ██╔████╔██║██║   ██║██║  ██║  ║', style: 'system' },
+      { text: '║   ╚════██║██║   ██║██║     ██║   ██║    ██║╚██╔╝██║██║   ██║██║  ██║  ║', style: 'system' },
+      { text: '║   ███████║╚██████╔╝███████╗╚██████╔╝    ██║ ╚═╝ ██║╚██████╔╝██████╔╝  ║', style: 'system' },
+      { text: '║   ╚══════╝ ╚═════╝ ╚══════╝ ╚═════╝     ╚═╝     ╚═╝ ╚═════╝ ╚═════╝   ║', style: 'system' },
+      { text: '║                                                           ║', style: 'system' },
+      { text: '║         A Solo Adventure in a Living World                ║', style: 'system' },
+      { text: '║                                                           ║', style: 'system' },
+      { text: '╚═══════════════════════════════════════════════════════════╝', style: 'system' },
+      { text: '', style: 'normal' },
+      { text: 'Connecting...', style: 'system' },
     ]);
   });
 
@@ -270,12 +283,25 @@ function handleCharacterCreation(socket: GameSocket, message: CreateCharacterMes
     // Record initial location visit
     recordVisit(characterRecord.id, session.player.locationId);
 
-    // Send welcome message
+    // Send rich intro for new characters
     sendOutput(socket, [
-      { text: `Welcome, ${session.player.name} the ${CLASSES[className].name}!`, style: 'success' },
+      { text: '', style: 'normal' },
+      { text: '═══════════════════════════════════════════════════════════', style: 'system' },
+      { text: `  Welcome, ${session.player.name} the ${CLASSES[className].name}!`, style: 'success' },
+      { text: '═══════════════════════════════════════════════════════════', style: 'system' },
+      { text: '', style: 'normal' },
+      { text: 'You awaken in the warmth of The Rusty Blade Inn, the smell of', style: 'normal' },
+      { text: 'wood smoke and fresh bread filling the air. Outside, the town', style: 'normal' },
+      { text: 'of Easthollow stirs to life. Beyond its walls, the wilderness', style: 'normal' },
+      { text: 'awaits those brave enough to explore its mysteries.', style: 'normal' },
+      { text: '', style: 'normal' },
       { text: 'Your adventure begins...', style: 'system' },
-      { text: 'Type "look" to see your surroundings, or "help" for commands.', style: 'system' },
+      { text: '', style: 'normal' },
     ]);
+
+    // Auto-look to show surroundings
+    const lookResult = executeCommand(session, 'look');
+    sendOutput(socket, lookResult.output);
 
     // Send initial sync
     handleSyncRequest(socket);
@@ -316,9 +342,15 @@ function handleLoadCharacter(socket: GameSocket, message: LoadCharacterMessage):
 
     // Send welcome back message
     sendOutput(socket, [
+      { text: '', style: 'normal' },
       { text: `Welcome back, ${session.player.name}!`, style: 'success' },
       { text: 'Your adventure continues...', style: 'system' },
+      { text: '', style: 'normal' },
     ]);
+
+    // Auto-look to show surroundings
+    const lookResult = executeCommand(session, 'look');
+    sendOutput(socket, lookResult.output);
 
     // Send full sync
     handleSyncRequest(socket);

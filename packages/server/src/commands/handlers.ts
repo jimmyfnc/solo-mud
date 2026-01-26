@@ -1741,6 +1741,12 @@ function handleSay(ctx: CommandContext): CommandResult {
     output.push({ text: `[Tutorial] ${topic.teachesCommand} complete!`, style: 'success' });
   }
 
+  // End conversation on farewell - check BEFORE showing menu
+  if (topic.id === 'farewell') {
+    session.conversationNpc = undefined;
+    return { output, updatePlayer: true };
+  }
+
   // Show remaining options or end conversation
   const remainingTopics = npc.dialogue.filter(t => t.id !== topic!.id && t.id !== 'farewell');
   if (remainingTopics.length > 0) {
@@ -1750,11 +1756,6 @@ function handleSay(ctx: CommandContext): CommandResult {
       output.push({ text: `  ${index + 1}. ${t.prompt}`, style: 'normal' });
     });
   } else {
-    session.conversationNpc = undefined;
-  }
-
-  // End conversation on farewell
-  if (topic.id === 'farewell') {
     session.conversationNpc = undefined;
   }
 
