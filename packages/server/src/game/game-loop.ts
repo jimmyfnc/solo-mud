@@ -4,14 +4,18 @@
  */
 
 import type { Server as SocketServer, Socket } from 'socket.io';
-import type { Creature, OutputLine } from '@solo-mud/shared';
-import { createRng, CREATURE_TEMPLATES } from '@solo-mud/shared';
+import type { Creature, OutputLine, World } from '@solo-mud/shared';
+import { createRng, CREATURE_TEMPLATES, CHASE_CHANCE, EVENLY_MATCHED_THRESHOLD } from '@solo-mud/shared';
 import { sessionManager, type GameSession } from './session';
 import {
   getDistanceFromPlayer,
   findPreyInAdjacentLocations,
   shouldCorpseFade,
   handleCreatureDeath,
+  canHunt,
+  getAdjacentLocations,
+  isInTerritory,
+  resolveInstantCombat,
 } from './ecosystem';
 
 /** How often the world ticks (creature movement, etc.) in ms */
@@ -85,15 +89,16 @@ function combatTick(): void {
   const sessions = sessionManager.getAllSessions();
 
   for (const session of sessions) {
-    processCombat(session);
+    processPlayerCombat(session);
+    processCreatureVsCreatureCombat(session);
   }
 }
 
 /**
- * Process ongoing combat for a session.
+ * Process player combat for a session.
  * Creatures in combat with the player will attack automatically.
  */
-function processCombat(session: GameSession): void {
+function processPlayerCombat(session: GameSession): void {
   const { world, player, combatStats } = session;
 
   // Skip if player not in combat
@@ -166,6 +171,84 @@ function processCombat(session: GameSession): void {
   }
 
   sendNotifications(socket, output);
+}
+
+/**
+ * Process creature-vs-creature combat for tick-based fights.
+ */
+function processCreatureVsCreatureCombat(session: GameSession): void {
+  const { world, player } = session;
+  const socket = getSocketForSession(session);
+
+  // Find creatures in combat with other creatures (not player)
+  const creaturesInCombat = Object.values(world.creatures).filter(
+    (c) => c.inCombat && c.targetId && !c.targetId.startsWith('player')
+  );
+
+  const processed = new Set<string>();
+
+  for (const attacker of creaturesInCombat) {
+    if (processed.has(attacker.id)) continue;
+
+    const defender = world.creatures[attacker.targetId!];
+    if (!defender || defender.currentHp <= 0) {
+      attacker.inCombat = false;
+      attacker.targetId = undefined;
+      continue;
+    }
+
+    processed.add(attacker.id);
+    processed.add(defender.id);
+
+    const rng = createRng(`cvc-tick-${Date.now()}-${attacker.id}`);
+
+    // Both creatures attack each other
+    const attackerDmg = Math.max(1, attacker.level + Math.floor(rng.next() * attacker.level));
+    const defenderDmg = Math.max(1, defender.level + Math.floor(rng.next() * defender.level));
+
+    defender.currentHp -= attackerDmg;
+    attacker.currentHp -= defenderDmg;
+
+    // Notify if player is watching
+    const distance = getDistanceFromPlayer(world, player.locationId, attacker.locationId);
+    if (socket && distance === 0) {
+      sendNotification(socket, {
+        text: `The ${attacker.name} and ${defender.name} exchange blows!`,
+        style: 'combat',
+      });
+    }
+
+    // Check for deaths
+    if (defender.currentHp <= 0) {
+      const defenderTemplate = CREATURE_TEMPLATES[defender.templateId];
+      handleCreatureDeath(world, defender, 'creature', defenderTemplate?.tier ?? 'common');
+      attacker.inCombat = false;
+      attacker.targetId = undefined;
+
+      if (socket && distance === 0) {
+        sendNotification(socket, {
+          text: `The ${attacker.name} kills the ${defender.name}!`,
+          style: 'combat',
+        });
+      }
+    }
+
+    if (attacker.currentHp <= 0) {
+      const attackerTemplate = CREATURE_TEMPLATES[attacker.templateId];
+      handleCreatureDeath(world, attacker, 'creature', attackerTemplate?.tier ?? 'common');
+      if (defender.currentHp > 0) {
+        defender.inCombat = false;
+        defender.targetId = undefined;
+      }
+
+      if (socket && distance === 0) {
+        sendNotification(socket, {
+          text: `The ${defender.name} kills the ${attacker.name}!`,
+          style: 'combat',
+        });
+      }
+    }
+  }
 }
 
 /**
@@ -429,6 +512,11 @@ function moveCreature(
       initiateCreatureAggro(session, creature, socket);
     }
   }
+
+  // After creature arrives, check for flee response
+  if (creature.behavior !== 'passive') {
+    triggerFleeResponse(session, creature, toLocationId);
+  }
 }
 
 /**
@@ -537,6 +625,164 @@ function sendNotifications(socket: Socket, lines: OutputLine[]): void {
     type: 'output',
     lines,
   });
+}
+
+/**
+ * When a predator arrives at a location, prey may flee.
+ */
+function triggerFleeResponse(
+  session: GameSession,
+  predator: Creature,
+  locationId: string
+): void {
+  const { world, player } = session;
+  const socket = getSocketForSession(session);
+  const location = world.locations[locationId];
+  if (!location) return;
+
+  const template = CREATURE_TEMPLATES[predator.templateId];
+  if (!template) return;
+
+  // Find prey that should flee
+  const preyToFlee = location.creatures
+    .map((id) => world.creatures[id])
+    .filter((c): c is Creature => {
+      if (!c || c.id === predator.id || c.currentHp <= 0 || c.inCombat) return false;
+      return c.behavior === 'passive' && canHunt(predator, c, template.tier);
+    });
+
+  for (const prey of preyToFlee) {
+    // Prey flees to random adjacent room
+    const fleeOptions = getAdjacentLocations(world, locationId);
+    if (fleeOptions.length === 0) {
+      // Trapped - combat begins
+      initiateCreatureCombat(session, predator, prey);
+      continue;
+    }
+
+    const rng = createRng(`flee-${prey.id}-${Date.now()}`);
+    const fleeToId = fleeOptions[Math.floor(rng.next() * fleeOptions.length)]!;
+
+    // Notify player
+    if (socket && player.locationId === locationId) {
+      sendNotification(socket, {
+        text: `The ${prey.name} bolts away in fear!`,
+        style: 'normal',
+      });
+    }
+
+    // Move prey
+    moveCreatureInternal(world, prey, locationId, fleeToId);
+
+    // 50% chance predator gives chase
+    if (rng.next() < CHASE_CHANCE) {
+      moveCreatureInternal(world, predator, locationId, fleeToId);
+
+      if (socket && player.locationId === locationId) {
+        sendNotification(socket, {
+          text: `The ${predator.name} gives chase!`,
+          style: 'combat',
+        });
+      }
+    }
+  }
+}
+
+/**
+ * Internal creature movement without notifications (for chase sequences).
+ */
+function moveCreatureInternal(
+  world: World,
+  creature: Creature,
+  fromId: string,
+  toId: string
+): void {
+  const fromLocation = world.locations[fromId];
+  const toLocation = world.locations[toId];
+
+  if (!fromLocation || !toLocation) return;
+
+  const idx = fromLocation.creatures.indexOf(creature.id);
+  if (idx !== -1) fromLocation.creatures.splice(idx, 1);
+
+  toLocation.creatures.push(creature.id);
+  creature.locationId = toId;
+}
+
+/**
+ * Initiate combat between two creatures.
+ */
+function initiateCreatureCombat(
+  session: GameSession,
+  attacker: Creature,
+  defender: Creature
+): void {
+  const { world, player } = session;
+  const socket = getSocketForSession(session);
+
+  const distance = getDistanceFromPlayer(world, player.locationId, attacker.locationId);
+  const attackerTemplate = CREATURE_TEMPLATES[attacker.templateId];
+  const defenderTemplate = CREATURE_TEMPLATES[defender.templateId];
+
+  if (!attackerTemplate || !defenderTemplate) return;
+
+  const levelDiff = Math.abs(attacker.level - defender.level);
+  const isEvenlyMatched = levelDiff < EVENLY_MATCHED_THRESHOLD;
+
+  // Determine if defender is in territory
+  const defenderInTerritory =
+    defender.behavior === 'territorial' &&
+    isInTerritory(world, defender, defender.locationId);
+
+  if (distance === 0 && isEvenlyMatched) {
+    // Same room, evenly matched - tick-based combat
+    attacker.inCombat = true;
+    attacker.targetId = defender.id;
+    defender.inCombat = true;
+    defender.targetId = attacker.id;
+
+    if (socket) {
+      sendNotification(socket, {
+        text: `The ${attacker.name} attacks the ${defender.name}!`,
+        style: 'combat',
+      });
+    }
+    // Combat will resolve in combatTick
+  } else {
+    // Instant resolution
+    const rng = createRng(`combat-${attacker.id}-${defender.id}-${Date.now()}`);
+    const { winner, loser } = resolveInstantCombat(
+      attacker,
+      defender,
+      defenderInTerritory,
+      rng
+    );
+
+    // Kill the loser
+    loser.currentHp = 0;
+    const loserTemplate = CREATURE_TEMPLATES[loser.templateId];
+    handleCreatureDeath(world, loser, 'creature', loserTemplate?.tier ?? 'common');
+
+    // Notify based on distance
+    if (socket) {
+      if (distance === 0) {
+        sendNotification(socket, {
+          text: `The ${winner.name} kills the ${loser.name}!`,
+          style: 'combat',
+        });
+      } else if (distance === 1) {
+        sendNotification(socket, {
+          text: `You hear sounds of a brief struggle nearby.`,
+          style: 'normal',
+        });
+      } else if (distance <= 3) {
+        sendNotification(socket, {
+          text: `A distant cry echoes through the area.`,
+          style: 'normal',
+        });
+      }
+    }
+  }
 }
 
 /**
