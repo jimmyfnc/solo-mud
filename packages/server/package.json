@@ -13,12 +13,12 @@
   },
   "dependencies": {
     "@solo-mud/shared": "workspace:*",
-    "better-sqlite3": "^11.7.0",
+    "better-sqlite3": "^11.10.0",
     "fastify": "^4.25.2",
     "socket.io": "^4.7.4"
   },
   "devDependencies": {
-    "@types/better-sqlite3": "^7.6.11",
+    "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^20.11.0",
     "tsx": "^4.7.0",
     "vitest": "^1.2.0"
