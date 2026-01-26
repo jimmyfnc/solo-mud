@@ -18,6 +18,7 @@ import {
   EASTHOLLOW_EXITS,
   EASTHOLLOW_ADJACENCY,
   EASTHOLLOW_NPCS,
+  EASTHOLLOW_CREATURES,
   TOWN_INN,
   TOWN_GATE,
 } from '@solo-mud/shared';
@@ -233,6 +234,11 @@ function generateWorldAttempt(params: WorldGenParams): World {
   // Add town adjacency
   for (const [locId, exitIds] of Object.entries(EASTHOLLOW_ADJACENCY)) {
     adjacency[locId] = [...exitIds];
+  }
+
+  // Add town creatures (training dummy)
+  for (const [id, creature] of Object.entries(EASTHOLLOW_CREATURES)) {
+    creatures[id] = { ...creature };
   }
 
   // Connect town gate to wilderness (loc_0)

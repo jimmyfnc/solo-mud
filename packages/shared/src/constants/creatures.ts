@@ -330,6 +330,23 @@ const SNAKE: CreatureTemplate = {
   },
 };
 
+const TRAINING_DUMMY: CreatureTemplate = {
+  id: 'training_dummy',
+  name: 'Training Dummy',
+  behavior: 'passive',
+  mobility: 'static',
+  tier: 'ambient',
+  biomes: ['plains'],
+  minDepth: 0,
+  maxDepth: 0,
+  baseHp: 9999,
+  baseLevel: 1,
+  spawnWeight: 0, // Never spawns naturally
+  descriptions: {
+    idle: ['A straw-stuffed training dummy stands ready for practice.'],
+  },
+};
+
 // ============ Export All Templates ============
 
 export const CREATURE_TEMPLATES: Record<string, CreatureTemplate> = {
@@ -341,6 +358,7 @@ export const CREATURE_TEMPLATES: Record<string, CreatureTemplate> = {
   goat: GOAT,
   frog: FROG,
   raven: RAVEN,
+  training_dummy: TRAINING_DUMMY,
   // Roaming/Threats
   wolf: WOLF,
   bear: BEAR,

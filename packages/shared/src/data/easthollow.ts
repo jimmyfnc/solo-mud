@@ -2,7 +2,7 @@
  * Easthollow starter town - static location and NPC definitions.
  */
 
-import type { Location, Exit, NPC } from '../types';
+import type { Location, Exit, NPC, Creature } from '../types';
 
 // ============ Town Location IDs ============
 export const TOWN_INN = 'town_inn';
@@ -49,7 +49,7 @@ export const EASTHOLLOW_LOCATIONS: Record<string, Location> = {
     props: ['training dummies', 'weapon racks', 'archery targets'],
     items: [],
     enemies: [],
-    creatures: [],
+    creatures: ['creature_training_dummy'],
     visitState: { visitCount: 0 },
     depth: 0,
     isSafeZone: true,
@@ -484,5 +484,24 @@ export const TUTORIAL_SKIP_REWARD = {
     warrior: { baseId: 'whetstone', name: 'Steel Whetstone', tags: ['consumable', 'buff'], description: '+5% damage for 10 fights' },
     mage: { baseId: 'mana_crystal', name: 'Mana Crystal', tags: ['consumable', 'mana'], description: 'Restores 50 mana' },
     rogue: { baseId: 'smoke_bomb', name: 'Smoke Bomb', tags: ['consumable', 'escape'], description: 'Guaranteed flee' },
+  },
+};
+
+// ============ Town Creatures ============
+export const EASTHOLLOW_CREATURES: Record<string, Creature> = {
+  creature_training_dummy: {
+    id: 'creature_training_dummy',
+    templateId: 'training_dummy',
+    name: 'Training Dummy',
+    level: 1,
+    behavior: 'passive',
+    mobility: 'static',
+    currentHp: 9999,
+    maxHp: 9999,
+    locationId: TOWN_TRAINING,
+    homeLocationId: TOWN_TRAINING,
+    spawnLocationId: TOWN_TRAINING,
+    inCombat: false,
+    description: 'A straw-stuffed training dummy stands ready for practice.',
   },
 };

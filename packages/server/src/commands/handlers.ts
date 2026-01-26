@@ -1315,6 +1315,24 @@ function handleAttack(ctx: CommandContext): CommandResult {
       });
     }
 
+    // Special handling for training dummy - reset HP and complete tutorial
+    if (targetCreature.templateId === 'training_dummy') {
+      targetCreature.currentHp = targetCreature.maxHp; // Reset HP
+
+      if (!player.tutorial.completedSteps.includes('hit_dummy')) {
+        player.tutorial.completedSteps.push('hit_dummy');
+        output.push({ text: '', style: 'normal' });
+        output.push({ text: '[Tutorial] Combat practice complete!', style: 'success' });
+      }
+
+      output.push({ text: 'The training dummy wobbles but stays upright, ready for more.', style: 'normal' });
+
+      return {
+        output,
+        updatePlayer: true,
+      };
+    }
+
     // Check if creature died
     if (targetCreature.currentHp <= 0) {
       output.push({
