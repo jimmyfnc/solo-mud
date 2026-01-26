@@ -96,5 +96,8 @@ export function createPlayer(options: CreatePlayerOptions): Player {
 
     corpseLocationId: undefined,
     corpseItems: undefined,
+
+    // Status effects
+    statusEffects: [],
   };
 }

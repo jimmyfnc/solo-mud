@@ -141,6 +141,21 @@ export interface Player {
   // Death state
   corpseLocationId?: NodeId;
   corpseItems?: InventorySlot[];
+
+  // Status effects (buffs, debuffs, drunk, etc.)
+  statusEffects: StatusEffect[];
+}
+
+/** Status effect on a player */
+export interface StatusEffect {
+  id: string;
+  name: string;
+  /** Duration in game ticks (0 = permanent until removed) */
+  duration: number;
+  /** Stacks of this effect (for things like drunk) */
+  stacks: number;
+  /** When the effect was applied (game time in minutes) */
+  appliedAt: number;
 }
 
 /** Calculated combat stats (from base + gear + buffs) */

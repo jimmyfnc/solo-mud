@@ -2,8 +2,8 @@
  * Command handlers - execute player commands.
  */
 
-import type { OutputLine, Exit, Item, EquipSlot, Creature, Corpse, Location, NPC } from '@solo-mud/shared';
-import { createRng, getWeaponDamage, CREATURE_TEMPLATES, TUTORIAL_STEPS, SHOP_ITEM_TEMPLATES } from '@solo-mud/shared';
+import type { OutputLine, Exit, Item, EquipSlot, Creature, Corpse, Location, NPC, StatusEffect } from '@solo-mud/shared';
+import { createRng, getWeaponDamage, CREATURE_TEMPLATES, TUTORIAL_STEPS, SHOP_ITEM_TEMPLATES, CONSUMABLE_EFFECTS, getDrunkLevel, getRandomDrunkFlavor } from '@solo-mud/shared';
 import { handleCreatureDeath } from '../game/ecosystem';
 import type { GameSession } from '../game/session';
 import { parseCommand, getDirection, type ParsedCommand } from './parser';
@@ -349,7 +349,30 @@ function handleUse(ctx: CommandContext): CommandResult {
       }
     }
 
-    if (item.tags.includes('consumable') || item.tags.includes('potion')) {
+    if (item.tags.includes('consumable') || item.tags.includes('potion') || item.tags.includes('food') || item.tags.includes('drink')) {
+      // Look up the effect for this item
+      const effect = CONSUMABLE_EFFECTS[item.baseId];
+      const output: OutputLine[] = [];
+
+      if (!effect) {
+        // Generic consumable without specific effect
+        if (inventorySlot.quantity > 1) {
+          inventorySlot.quantity--;
+        } else {
+          const slotIndex = player.inventory.indexOf(inventorySlot);
+          player.inventory.splice(slotIndex, 1);
+        }
+        return {
+          output: [{ text: `You use the ${item.name}. It has no special effect.`, style: 'normal' }],
+          updatePlayer: true,
+        };
+      }
+
+      // Handle special items that aren't consumed normally
+      if (effect.type === 'special') {
+        return handleSpecialItem(ctx, item, effect.flavorText);
+      }
+
       // Consume the item
       if (inventorySlot.quantity > 1) {
         inventorySlot.quantity--;
@@ -357,10 +380,70 @@ function handleUse(ctx: CommandContext): CommandResult {
         const slotIndex = player.inventory.indexOf(inventorySlot);
         player.inventory.splice(slotIndex, 1);
       }
-      return {
-        output: [{ text: `You use the ${item.name}. (Effect not yet implemented)`, style: 'success' }],
-        updatePlayer: true,
-      };
+
+      // Add flavor text
+      output.push({ text: effect.flavorText, style: 'normal' });
+
+      // Apply the effect
+      switch (effect.type) {
+        case 'heal_hp': {
+          const healAmount = effect.amount ?? 0;
+          const oldHp = player.currentHp;
+          player.currentHp = Math.min(player.maxHp, player.currentHp + healAmount);
+          const actualHeal = player.currentHp - oldHp;
+          if (actualHeal > 0) {
+            output.push({ text: `You restore ${actualHeal} HP. (${player.currentHp}/${player.maxHp})`, style: 'success' });
+          }
+          break;
+        }
+        case 'heal_mp': {
+          const restoreAmount = effect.amount ?? 0;
+          const oldMp = player.currentMp;
+          player.currentMp = Math.min(player.maxMp, player.currentMp + restoreAmount);
+          const actualRestore = player.currentMp - oldMp;
+          if (actualRestore > 0) {
+            output.push({ text: `You restore ${actualRestore} MP. (${player.currentMp}/${player.maxMp})`, style: 'success' });
+          }
+          break;
+        }
+        case 'heal_both': {
+          const amount = effect.amount ?? 0;
+          const oldHp = player.currentHp;
+          const oldMp = player.currentMp;
+          player.currentHp = Math.min(player.maxHp, player.currentHp + amount);
+          player.currentMp = Math.min(player.maxMp, player.currentMp + amount);
+          const hpHealed = player.currentHp - oldHp;
+          const mpRestored = player.currentMp - oldMp;
+          if (hpHealed > 0 || mpRestored > 0) {
+            const parts: string[] = [];
+            if (hpHealed > 0) parts.push(`${hpHealed} HP`);
+            if (mpRestored > 0) parts.push(`${mpRestored} MP`);
+            output.push({ text: `You restore ${parts.join(' and ')}.`, style: 'success' });
+          }
+          break;
+        }
+        case 'apply_status': {
+          if (effect.statusId) {
+            const result = applyStatusEffect(player, effect.statusId, effect.stacks ?? 1, effect.duration ?? 0, world.time.totalMinutes);
+            output.push(...result);
+          }
+          break;
+        }
+        case 'remove_status': {
+          if (effect.statusId) {
+            const existing = player.statusEffects.findIndex(e => e.id === effect.statusId);
+            if (existing >= 0) {
+              const removed = player.statusEffects.splice(existing, 1)[0];
+              output.push({ text: `The ${removed?.name ?? effect.statusId} effect fades away.`, style: 'success' });
+            } else {
+              output.push({ text: `You weren't affected by that anyway.`, style: 'normal' });
+            }
+          }
+          break;
+        }
+      }
+
+      return { output, updatePlayer: true };
     }
 
     return {
@@ -401,6 +484,114 @@ function handleUse(ctx: CommandContext): CommandResult {
   return {
     output: [{ text: `You don't see any "${parsed.target}" to use.`, style: 'error' }],
   };
+}
+
+/**
+ * Apply a status effect to the player, stacking if already present.
+ */
+function applyStatusEffect(
+  player: { statusEffects: StatusEffect[]; currentHp: number; maxHp: number },
+  statusId: string,
+  stacks: number,
+  duration: number,
+  gameTime: number
+): OutputLine[] {
+  const output: OutputLine[] = [];
+
+  // Check for existing effect
+  const existing = player.statusEffects.find(e => e.id === statusId);
+
+  if (existing) {
+    // Stack the effect
+    existing.stacks += stacks;
+    existing.duration = Math.max(existing.duration, duration); // Refresh duration
+    existing.appliedAt = gameTime;
+  } else {
+    // Create new effect
+    const effectNames: Record<string, string> = {
+      drunk: 'Drunk',
+      poisoned: 'Poisoned',
+      blessed: 'Blessed',
+      haste: 'Haste',
+    };
+    player.statusEffects.push({
+      id: statusId,
+      name: effectNames[statusId] ?? statusId,
+      duration,
+      stacks,
+      appliedAt: gameTime,
+    });
+  }
+
+  // Special handling for drunk status
+  if (statusId === 'drunk') {
+    const totalStacks = existing ? existing.stacks : stacks;
+    const drunkLevel = getDrunkLevel(totalStacks);
+    if (drunkLevel) {
+      output.push({ text: drunkLevel.text, style: 'normal' });
+      output.push({ text: `[Status: ${drunkLevel.name}]`, style: 'system' });
+    }
+  }
+
+  return output;
+}
+
+/**
+ * Handle special items that have unique behaviors.
+ */
+function handleSpecialItem(ctx: CommandContext, item: Item, flavorText: string): CommandResult {
+  const { session } = ctx;
+  const { world, player } = session;
+  const output: OutputLine[] = [];
+
+  output.push({ text: flavorText, style: 'normal' });
+
+  if (item.baseId === 'torch') {
+    // Check if already have light status
+    const hasLight = player.statusEffects.some(e => e.id === 'light');
+    if (hasLight) {
+      output.push({ text: 'You already have a light source active.', style: 'system' });
+    } else {
+      // Apply light status (doesn't consume torch, just activates it)
+      player.statusEffects.push({
+        id: 'light',
+        name: 'Torchlight',
+        duration: 600, // 10 minutes game time
+        stacks: 1,
+        appliedAt: world.time.totalMinutes,
+      });
+      output.push({ text: 'The torch illuminates your surroundings.', style: 'success' });
+      output.push({ text: '[Status: Torchlight - dark areas now visible]', style: 'system' });
+    }
+    return { output, updatePlayer: true };
+  }
+
+  if (item.baseId === 'travelers_map') {
+    // Show a rough map of connected areas
+    const location = world.locations[player.locationId];
+    const exitIds = world.adjacency[player.locationId] ?? [];
+    const exits = exitIds.map(id => world.exits[id]).filter(Boolean) as Exit[];
+
+    output.push({ text: '', style: 'normal' });
+    output.push({ text: '┌─────────────────────────────────┐', style: 'system' });
+    output.push({ text: `│ You are at: ${location?.name ?? 'Unknown'}`, style: 'system' });
+    output.push({ text: '├─────────────────────────────────┤', style: 'system' });
+
+    if (exits.length > 0) {
+      output.push({ text: '│ Nearby areas:', style: 'system' });
+      for (const exit of exits) {
+        const dest = world.locations[exit.to];
+        const destName = dest?.name ?? 'Unknown';
+        const direction = exit.label.charAt(0).toUpperCase() + exit.label.slice(1);
+        output.push({ text: `│  ${direction}: ${destName}`, style: 'normal' });
+      }
+    }
+    output.push({ text: '└─────────────────────────────────┘', style: 'system' });
+
+    return { output };
+  }
+
+  return { output };
 }
 
 /**

@@ -69,6 +69,7 @@ export function restoreSession(
       complete: true,
       completedSteps: ['talk_mira', 'class_training', 'hit_dummy', 'visit_shop', 'leave_town'],
     },
+    statusEffects: [],
   };
 
   // Restore game time
