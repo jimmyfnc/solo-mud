@@ -40,7 +40,7 @@ export const EASTHOLLOW_LOCATIONS: Record<string, Location> = {
     visitState: { visitCount: 0 },
     depth: 0,
     isSafeZone: true,
-    npcs: [],
+    npcs: ['npc_giles', 'npc_pete'],
   },
   [TOWN_TRAINING]: {
     id: TOWN_TRAINING,
@@ -118,7 +118,7 @@ export const EASTHOLLOW_LOCATIONS: Record<string, Location> = {
     visitState: { visitCount: 0 },
     depth: 0,
     isSafeZone: true,
-    npcs: [],
+    npcs: ['npc_marcus'],
   },
 };
 
@@ -314,6 +314,27 @@ export const EASTHOLLOW_NPCS: Record<string, NPC> = {
         response: 'Safe travels, adventurer! Come back anytime.',
       },
     ],
+    simulation: {
+      personality: 'cheerful',
+      topics: ['weather', 'adventurers', 'gossip', 'trade'],
+      topicInterest: { weather: 5, adventurers: 8, gossip: 9, trade: 6 },
+      ambientActions: [
+        { text: 'wipes down the bar with a worn cloth', weight: 5 },
+        { text: 'pours a drink for a patron', weight: 4 },
+        { text: 'laughs at something someone said', weight: 3 },
+        { text: 'stacks clean mugs behind the counter', weight: 2 },
+        { text: 'hums a cheerful tune', weight: 2 },
+      ],
+      reactions: {
+        player_enter: [
+          { weight: 5, says: 'Welcome, traveler! Sit anywhere you like.' },
+          { weight: 3, says: 'Back again? The usual?', condition: 'player.visits > 3' },
+        ],
+        time_change: [
+          { weight: 5, action: 'lights the lanterns', says: "Evening crowd'll be here soon." },
+        ],
+      },
+    },
   },
   npc_holt: {
     id: 'npc_holt',
@@ -410,6 +431,27 @@ export const EASTHOLLOW_NPCS: Record<string, NPC> = {
         response: "Always carry torches - the wilderness gets dark. And rations! Nothing worse than starving in the middle of nowhere.",
       },
     ],
+    simulation: {
+      personality: 'friendly',
+      topics: ['trade', 'weather', 'supplies', 'travelers'],
+      topicInterest: { trade: 9, weather: 6, supplies: 8, travelers: 7 },
+      ambientActions: [
+        { text: 'rearranges items on the shelves', weight: 5 },
+        { text: 'counts coins from a recent sale', weight: 4 },
+        { text: 'checks inventory on a worn ledger', weight: 3 },
+        { text: 'dusts off a display of goods', weight: 3 },
+        { text: 'whistles while working', weight: 2 },
+      ],
+      reactions: {
+        player_enter: [
+          { weight: 5, says: 'Welcome! Looking for supplies?' },
+          { weight: 3, says: 'Ah, a familiar face! What can I get you today?', condition: 'player.visits > 3' },
+        ],
+        player_levelup: [
+          { weight: 5, says: 'Congratulations! Growing stronger every day.' },
+        ],
+      },
+    },
   },
   npc_kira: {
     id: 'npc_kira',
@@ -440,6 +482,27 @@ export const EASTHOLLOW_NPCS: Record<string, NPC> = {
         response: "Type 'equip <item>' to wear gear from your inventory. 'unequip <slot>' to remove it. Check 'equipment' to see what you're wearing.",
       },
     ],
+    simulation: {
+      personality: 'gruff',
+      topics: ['weapons', 'armor', 'craftsmanship', 'monsters'],
+      topicInterest: { weapons: 9, armor: 8, craftsmanship: 10, monsters: 5 },
+      ambientActions: [
+        { text: 'hammers a glowing piece of metal on the anvil', weight: 5 },
+        { text: 'wipes sweat from her brow', weight: 4 },
+        { text: 'inspects a blade for imperfections', weight: 3 },
+        { text: 'stokes the forge fire', weight: 3 },
+        { text: 'grunts as she lifts a heavy piece of armor', weight: 2 },
+      ],
+      reactions: {
+        player_enter: [
+          { weight: 5, says: 'Need something forged?' },
+          { weight: 3, says: "You again. Here for repairs or something new?" },
+        ],
+        player_combat: [
+          { weight: 5, says: 'Take the fight outside! This is a forge, not a battlefield.' },
+        ],
+      },
+    },
   },
   npc_elwin: {
     id: 'npc_elwin',
@@ -469,6 +532,124 @@ export const EASTHOLLOW_NPCS: Record<string, NPC> = {
         response: "Type 'use <potion>' to drink one. Health potions restore hit points, mana potions restore magical energy.",
       },
     ],
+  },
+  npc_marcus: {
+    id: 'npc_marcus',
+    name: 'Marcus',
+    title: 'Town Guard',
+    locationId: TOWN_GATE,
+    dialogue: [
+      {
+        id: 'greeting',
+        prompt: 'What lies beyond the gate?',
+        response: 'The wilderness stretches far beyond these walls. Dangerous creatures roam out there. Stay sharp if you venture out.',
+        teachesCommand: 'leave_town',
+      },
+      {
+        id: 'safety',
+        prompt: 'Is the town safe?',
+        response: "Aye, within these walls you're protected. The guard patrol keeps troublemakers at bay.",
+      },
+    ],
+    simulation: {
+      personality: 'stern',
+      topics: ['safety', 'threats', 'duty', 'wilderness'],
+      topicInterest: { safety: 9, threats: 8, duty: 7, wilderness: 6 },
+      ambientActions: [
+        { text: 'stands at attention, watching the gate', weight: 5 },
+        { text: 'adjusts his sword belt', weight: 4 },
+        { text: 'scans the horizon for threats', weight: 4 },
+        { text: 'nods curtly to a passing citizen', weight: 3 },
+        { text: 'polishes a scuff mark from his armor', weight: 2 },
+      ],
+      reactions: {
+        player_enter: [
+          { weight: 5, says: 'Halt. State your business.' },
+          { weight: 3, says: 'Back from the wilds? Any trouble out there?' },
+        ],
+        creature_enter: [
+          { weight: 5, action: 'draws his sword', says: 'Stand back, citizen!' },
+        ],
+      },
+    },
+  },
+  npc_giles: {
+    id: 'npc_giles',
+    name: 'Giles',
+    title: 'Farmer',
+    locationId: TOWN_SQUARE,
+    dialogue: [
+      {
+        id: 'greeting',
+        prompt: 'How are the crops?',
+        response: "Fair enough this season, though we could use more rain. The fields east of town keep us fed, they do.",
+      },
+      {
+        id: 'town',
+        prompt: 'Tell me about Easthollow',
+        response: "Been here all my life. Quiet place, mostly. Good folk. The adventurers passing through bring coin, so we don't complain.",
+      },
+    ],
+    simulation: {
+      personality: 'friendly',
+      topics: ['weather', 'crops', 'town_life', 'gossip'],
+      topicInterest: { weather: 10, crops: 9, town_life: 7, gossip: 6 },
+      ambientActions: [
+        { text: 'wipes dirt from his hands on his apron', weight: 5 },
+        { text: 'squints up at the sky, checking the weather', weight: 4 },
+        { text: 'chats amiably with a passerby', weight: 3 },
+        { text: 'adjusts his worn straw hat', weight: 3 },
+        { text: 'stretches his back with a groan', weight: 2 },
+      ],
+      reactions: {
+        player_enter: [
+          { weight: 5, says: "Mornin'! Fine day, isn't it?" },
+          { weight: 3, says: "Ah, the adventurer! How goes the monster hunting?" },
+        ],
+        time_change: [
+          { weight: 5, action: 'stretches', says: "Sun's settin'. Best get home to the missus." },
+        ],
+      },
+    },
+  },
+  npc_pete: {
+    id: 'npc_pete',
+    name: 'Pete',
+    title: 'Layabout',
+    locationId: TOWN_SQUARE,
+    dialogue: [
+      {
+        id: 'greeting',
+        prompt: "What's your story?",
+        response: "Me? Oh, I'm just... between opportunities, you might say. Keep my ear to the ground, learn things. Information's valuable, friend.",
+      },
+      {
+        id: 'rumors',
+        prompt: 'Heard any rumors?',
+        response: "Always whispers floatin' around. Some say there's treasure in the old sewers, if you can stomach the rats. But you didn't hear that from me.",
+      },
+    ],
+    simulation: {
+      personality: 'nervous',
+      topics: ['rumors', 'schemes', 'money', 'secrets'],
+      topicInterest: { rumors: 9, schemes: 8, money: 10, secrets: 9 },
+      ambientActions: [
+        { text: 'glances around furtively', weight: 5 },
+        { text: 'fidgets with a coin, rolling it across his knuckles', weight: 4 },
+        { text: 'leans against the well, trying to look casual', weight: 4 },
+        { text: 'scratches behind his ear nervously', weight: 3 },
+        { text: 'whistles tunelessly, avoiding eye contact', weight: 2 },
+      ],
+      reactions: {
+        player_enter: [
+          { weight: 5, says: "Oh! Didn't see you there. Just... enjoying the square." },
+          { weight: 3, says: 'Psst. Hey. You look like someone who appreciates a good deal.' },
+        ],
+        player_levelup: [
+          { weight: 5, says: "Gettin' stronger, eh? Might have some work for someone with your... talents." },
+        ],
+      },
+    },
   },
 };
 

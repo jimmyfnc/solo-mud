@@ -3,6 +3,7 @@
  */
 
 import type { NodeId } from './world';
+import type { NPCSimulation } from './simulation';
 
 /** A dialogue topic an NPC can discuss */
 export interface DialogueTopic {
@@ -38,6 +39,8 @@ export interface NPC {
   shop?: ShopInventory;
   /** Tutorial topics this NPC can teach */
   tutorialTopics?: string[];
+  /** Simulation data for ambient behaviors and reactions */
+  simulation?: NPCSimulation;
 }
 
 /** Tutorial progress tracker */
