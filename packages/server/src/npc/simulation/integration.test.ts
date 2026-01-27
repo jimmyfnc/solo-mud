@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect } from 'vitest';
 import { SimulationEngine } from './index';
 import { EASTHOLLOW_NPCS } from '@solo-mud/shared';
 

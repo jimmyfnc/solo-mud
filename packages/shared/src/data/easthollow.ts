@@ -13,6 +13,8 @@ export const TOWN_BLACKSMITH = 'town_blacksmith';
 export const TOWN_ALCHEMIST = 'town_alchemist';
 export const TOWN_GENERAL = 'town_general';
 export const TOWN_GATE = 'town_gate';
+export const TOWN_TEMPLE = 'town_temple';
+export const TOWN_EAST_ROAD = 'town_east_road'; // Street connecting Inn and Temple
 
 // ============ Town Locations ============
 export const EASTHOLLOW_LOCATIONS: Record<string, Location> = {
@@ -120,23 +122,105 @@ export const EASTHOLLOW_LOCATIONS: Record<string, Location> = {
     isSafeZone: true,
     npcs: ['npc_marcus'],
   },
+  [TOWN_TEMPLE]: {
+    id: TOWN_TEMPLE,
+    name: 'Temple of the Light',
+    biome: { plains: 1 },
+    props: [
+      'stone altar with candles',
+      'stained glass windows',
+      'wooden prayer benches',
+      'holy water font',
+      'peaceful candlelight',
+    ],
+    items: [],
+    enemies: [],
+    creatures: [],
+    visitState: { visitCount: 0 },
+    depth: 0,
+    isSafeZone: true,
+    isRespawnPoint: true,
+    npcs: ['npc_priestess_anna'],
+  },
+  [TOWN_EAST_ROAD]: {
+    id: TOWN_EAST_ROAD,
+    name: 'Eastern Road',
+    biome: { plains: 1 },
+    props: [
+      'worn cobblestone path',
+      'wooden signpost',
+      'iron street lamp',
+      'overhanging inn sign',
+    ],
+    items: [],
+    enemies: [],
+    creatures: [],
+    visitState: { visitCount: 0 },
+    depth: 0,
+    isSafeZone: true,
+    npcs: [],
+  },
 };
 
 // ============ Town Exits ============
 export const EASTHOLLOW_EXITS: Record<string, Exit> = {
-  // Inn <-> Square
-  exit_inn_square: {
-    id: 'exit_inn_square',
-    from: TOWN_INN,
+  // Square <-> East Road
+  exit_square_eastroad: {
+    id: 'exit_square_eastroad',
+    from: TOWN_SQUARE,
+    to: TOWN_EAST_ROAD,
+    label: 'east',
+    type: 'open',
+  },
+  exit_eastroad_square: {
+    id: 'exit_eastroad_square',
+    from: TOWN_EAST_ROAD,
     to: TOWN_SQUARE,
     label: 'west',
     type: 'open',
   },
-  exit_square_inn: {
-    id: 'exit_square_inn',
-    from: TOWN_SQUARE,
+  // East Road <-> Inn (Inn is north of East Road)
+  exit_eastroad_inn: {
+    id: 'exit_eastroad_inn',
+    from: TOWN_EAST_ROAD,
     to: TOWN_INN,
-    label: 'east',
+    label: 'north',
+    type: 'open',
+  },
+  exit_eastroad_inn_named: {
+    id: 'exit_eastroad_inn_named',
+    from: TOWN_EAST_ROAD,
+    to: TOWN_INN,
+    label: 'inn',
+    type: 'open',
+  },
+  exit_inn_out: {
+    id: 'exit_inn_out',
+    from: TOWN_INN,
+    to: TOWN_EAST_ROAD,
+    label: 'out',
+    type: 'open',
+  },
+  // East Road <-> Temple (Temple is south of East Road)
+  exit_eastroad_temple: {
+    id: 'exit_eastroad_temple',
+    from: TOWN_EAST_ROAD,
+    to: TOWN_TEMPLE,
+    label: 'south',
+    type: 'open',
+  },
+  exit_eastroad_temple_named: {
+    id: 'exit_eastroad_temple_named',
+    from: TOWN_EAST_ROAD,
+    to: TOWN_TEMPLE,
+    label: 'temple',
+    type: 'open',
+  },
+  exit_temple_out: {
+    id: 'exit_temple_out',
+    from: TOWN_TEMPLE,
+    to: TOWN_EAST_ROAD,
+    label: 'out',
     type: 'open',
   },
   // Square <-> Training
@@ -248,8 +332,14 @@ export const EASTHOLLOW_EXITS: Record<string, Exit> = {
 
 // ============ Town Adjacency ============
 export const EASTHOLLOW_ADJACENCY: Record<string, string[]> = {
-  [TOWN_INN]: ['exit_inn_square'],
-  [TOWN_SQUARE]: ['exit_square_inn', 'exit_square_training', 'exit_square_market', 'exit_square_gate'],
+  [TOWN_SQUARE]: ['exit_square_eastroad', 'exit_square_training', 'exit_square_market', 'exit_square_gate'],
+  [TOWN_EAST_ROAD]: [
+    'exit_eastroad_square',
+    'exit_eastroad_inn', 'exit_eastroad_inn_named',
+    'exit_eastroad_temple', 'exit_eastroad_temple_named',
+  ],
+  [TOWN_INN]: ['exit_inn_out'],
+  [TOWN_TEMPLE]: ['exit_temple_out'],
   [TOWN_TRAINING]: ['exit_training_square'],
   [TOWN_MARKET]: ['exit_market_square', 'exit_market_blacksmith', 'exit_market_alchemist'],
   [TOWN_BLACKSMITH]: ['exit_blacksmith_market', 'exit_blacksmith_general'],
@@ -804,6 +894,59 @@ export const EASTHOLLOW_NPCS: Record<string, NPC> = {
         ],
         time_change: [
           { weight: 3, action: 'yawns dramatically', says: "Well, time to check on my 'investments'. Don't follow me." },
+        ],
+      },
+    },
+  },
+  npc_priestess_anna: {
+    id: 'npc_priestess_anna',
+    name: 'Anna',
+    title: 'Priestess',
+    locationId: TOWN_TEMPLE,
+    dialogue: [
+      {
+        id: 'greeting',
+        prompt: 'Tell me about the temple',
+        response: "This is the Temple of the Light, a sanctuary for weary travelers and those seeking solace. The Light guides all who enter with an open heart.",
+      },
+      {
+        id: 'healing',
+        prompt: 'Can you heal me?',
+        response: "The Light's blessing flows through this sacred place. Rest here and you shall be restored. Those who fall in battle are returned here to begin anew.",
+      },
+      {
+        id: 'blessing',
+        prompt: 'May I receive a blessing?',
+        response: "May the Light guide your path and shield you from darkness. Go forth with courage, adventurer.",
+      },
+    ],
+    simulation: {
+      personality: 'wise',
+      topics: ['faith', 'healing', 'guidance', 'hope'],
+      topicInterest: { faith: 10, healing: 9, guidance: 8, hope: 9 },
+      ambientActions: [
+        { text: 'lights a candle on the altar with quiet reverence', weight: 5 },
+        { text: 'kneels in silent prayer before the altar', weight: 4 },
+        { text: 'tends to the holy water font', weight: 3 },
+        { text: 'reads from a worn prayer book', weight: 3 },
+        { text: 'adjusts the stained glass window to catch the light', weight: 2 },
+        { text: 'hums a gentle hymn', weight: 2 },
+      ],
+      reactions: {
+        player_enter: [
+          { weight: 5, says: 'Welcome, traveler. The Light embraces all who seek peace.' },
+          { weight: 3, says: 'You carry a heavy burden. Rest here awhile.' },
+          { weight: 2, says: 'The temple is always open to those in need.', condition: 'player.hp < player.maxHp * 0.5' },
+        ],
+        player_death: [
+          { weight: 5, action: 'places a gentle hand on your shoulder', says: 'Rest now. The Light has returned you to us.' },
+        ],
+        player_levelup: [
+          { weight: 5, says: 'Your spirit grows stronger. The Light shines within you.' },
+          { weight: 2, action: 'smiles warmly', says: 'May your newfound strength serve the greater good.' },
+        ],
+        time_change: [
+          { weight: 4, action: 'lights the evening candles', says: 'Another day ends. May the night bring peace.' },
         ],
       },
     },

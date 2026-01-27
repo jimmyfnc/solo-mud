@@ -1,4 +1,4 @@
-import type { NPC, SimulationMessage, AmbientAction } from '@solo-mud/shared';
+import type { NPC, SimulationMessage } from '@solo-mud/shared';
 
 export function selectWeightedAction<T extends { weight: number }>(
   actions: T[]
@@ -13,7 +13,7 @@ export function selectWeightedAction<T extends { weight: number }>(
     if (random <= 0) return action;
   }
 
-  return actions[actions.length - 1];
+  return actions[actions.length - 1] ?? null;
 }
 
 export function generateAmbientAction(npc: NPC): SimulationMessage | null {
@@ -39,6 +39,7 @@ export function generateAmbientSpeech(
 
   // Pick a random topic the NPC cares about
   const topicId = npc.simulation.topics[Math.floor(Math.random() * npc.simulation.topics.length)];
+  if (!topicId) return null;
   const topic = topics[topicId];
   if (!topic?.opinions?.length) return null;
 

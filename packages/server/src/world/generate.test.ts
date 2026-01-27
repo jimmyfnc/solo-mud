@@ -6,8 +6,8 @@ describe('generateWorld', () => {
   it('should generate a connected world', () => {
     const world = generateWorld({ seed: 'test-connected', nodeCount: 18, extraEdges: 5, lockedEdges: 2 });
 
-    // 18 wilderness + 8 town locations = 26 total
-    expect(Object.keys(world.locations).length).toBe(26);
+    // 18 wilderness + 10 town locations = 28 total
+    expect(Object.keys(world.locations).length).toBe(28);
     expect(world.startId).toBeDefined();
     expect(world.goalId).toBeDefined();
     expect(world.startId).not.toBe(world.goalId);

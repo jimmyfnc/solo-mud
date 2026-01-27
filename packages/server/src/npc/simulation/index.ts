@@ -88,7 +88,7 @@ export class SimulationEngine {
     const zoneType = getZoneType(locationId);
     const config = ZONE_ACTIVITY[zoneType];
 
-    if (!config.enabled || npcsAtLocation.length === 0) {
+    if (!config?.enabled || npcsAtLocation.length === 0) {
       return [];
     }
 
@@ -116,13 +116,15 @@ export class SimulationEngine {
     if (Math.random() < 0.5 && npcsWithSim.length > 0) {
       const npc = npcsWithSim[Math.floor(Math.random() * npcsWithSim.length)];
 
-      // 70% action, 30% speech
-      const message = Math.random() < 0.7
-        ? generateAmbientAction(npc)
-        : generateAmbientSpeech(npc, TOPICS);
+      if (npc) {
+        // 70% action, 30% speech
+        const message = Math.random() < 0.7
+          ? generateAmbientAction(npc)
+          : generateAmbientSpeech(npc, TOPICS);
 
-      if (message) {
-        messages.push(message);
+        if (message) {
+          messages.push(message);
+        }
       }
     }
 
@@ -141,7 +143,7 @@ export class SimulationEngine {
   }
 
   handlePlayerEnter(
-    locationId: string,
+    _locationId: string,
     player: PlayerInfo,
     npcsAtLocation: NPC[]
   ): void {

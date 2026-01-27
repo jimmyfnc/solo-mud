@@ -52,6 +52,7 @@ export function tryGenerateConversation(
       const npc1 = npcs[i];
       const npc2 = npcs[j];
 
+      if (!npc1 || !npc2) continue;
       if (!canConverse(npc1.id, npc2.id)) continue;
 
       const sharedTopics = findSharedTopics(npc1, npc2);

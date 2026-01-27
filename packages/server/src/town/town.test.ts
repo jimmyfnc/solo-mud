@@ -69,6 +69,10 @@ describe('Easthollow town integration', () => {
   });
 
   it('should navigate to training yard', () => {
+    // Inn -> go out -> Eastern Road -> west -> Town Square -> north -> Training Yard
+    executeCommand(session, 'go out');
+    expect(session.player.locationId).toBe('town_east_road');
+
     executeCommand(session, 'west');
     expect(session.player.locationId).toBe('town_square');
 

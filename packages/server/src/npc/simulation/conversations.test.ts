@@ -7,7 +7,6 @@ const mira: NPC = {
   name: 'Mira',
   title: 'the Innkeeper',
   locationId: 'town_inn',
-  role: 'innkeeper',
   dialogue: [],
   simulation: {
     personality: 'cheerful',
@@ -23,7 +22,6 @@ const giles: NPC = {
   name: 'Giles',
   title: 'the Farmer',
   locationId: 'town_square',
-  role: 'citizen',
   dialogue: [],
   simulation: {
     personality: 'friendly',

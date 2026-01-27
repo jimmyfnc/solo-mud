@@ -59,6 +59,8 @@ export interface Location {
   depth: number; // Distance from start (for difficulty scaling)
   /** If true, no combat allowed and no creature spawns */
   isSafeZone?: boolean;
+  /** If true, players respawn here after death */
+  isRespawnPoint?: boolean;
   /** NPCs present in this location */
   npcs?: string[];
 }

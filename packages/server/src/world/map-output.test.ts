@@ -5,7 +5,7 @@
 
 import { describe, it, expect } from 'vitest';
 import { generateWorld } from './generate';
-import type { World, Location } from '@solo-mud/shared';
+import type { World } from '@solo-mud/shared';
 
 // Build adjacency graph for wilderness visualization
 interface GraphNode {
@@ -71,13 +71,6 @@ function generateAsciiWorldMap(world: World): string[] {
   lines.push('│          ↑↓←→ = Direction hints   (D#) = Depth level                  │');
   lines.push('└─────────────────────────────────────────────────────────────────────────┘');
   lines.push('');
-
-  // Find town connection
-  const townEntry = world.adjacency['town_gate']?.find(exitId => {
-    const exit = world.exits[exitId];
-    return exit && !exit.to.startsWith('town_');
-  });
-  const townExitTarget = townEntry ? world.exits[townEntry]?.to : 'loc_0';
 
   lines.push('                              ┌──────────────┐');
   lines.push('                              │  EASTHOLLOW  │');

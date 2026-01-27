@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect } from 'vitest';
 import { generateAmbientAction, selectWeightedAction } from './ambient';
 import type { NPC } from '@solo-mud/shared';
 
@@ -7,7 +7,6 @@ const mockNPC: NPC = {
   name: 'Mira',
   title: 'the Innkeeper',
   locationId: 'town_inn',
-  role: 'innkeeper',
   dialogue: [],
   simulation: {
     personality: 'cheerful',

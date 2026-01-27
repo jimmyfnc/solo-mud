@@ -888,7 +888,6 @@ function handleMap(ctx: CommandContext): CommandResult {
       const dir = exit.label.charAt(0).toUpperCase() + exit.label.slice(1);
       const lock = exit.type === 'locked' ? ' 🔒' : '';
       const biome = dest ? getBiomeIcon(dest) : '?';
-      const danger = dest ? getDangerIcon(dest) : '?';
       output.push({ text: `║    ${biome} ${dir.padEnd(10)} → ${destName}${lock}`.padEnd(75) + '║', style: 'normal' });
     }
   }
