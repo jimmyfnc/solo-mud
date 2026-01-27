@@ -4,6 +4,7 @@
 
 import type { ItemId, NodeId } from './world';
 import type { TutorialProgress } from './town';
+import type { PlayerSpells } from './spells';
 
 /** Base stat names */
 export type StatName = 'str' | 'dex' | 'con' | 'int' | 'wis';
@@ -84,6 +85,13 @@ export interface InventorySlot {
   quantity: number;
 }
 
+/** Player currency (10c = 1s, 10s = 1g) */
+export interface Currency {
+  copper: number;
+  silver: number;
+  gold: number;
+}
+
 /** Quick slot assignment */
 export interface QuickSlot {
   type: 'item' | 'ability';
@@ -135,8 +143,8 @@ export interface Player {
   globalCooldown: number; // ms remaining
   abilityCooldowns: Record<string, number>; // ability ID -> ms remaining
 
-  // Currency
-  gold: number;
+  // Currency (10c = 1s, 10s = 1g)
+  currency: Currency;
 
   // Death state
   corpseLocationId?: NodeId;
@@ -144,6 +152,22 @@ export interface Player {
 
   // Status effects (buffs, debuffs, drunk, etc.)
   statusEffects: StatusEffect[];
+
+  /** Active light source (torch, lantern, etc.) */
+  lightSource?: {
+    itemBaseId: string; // e.g., 'torch'
+    name: string; // e.g., 'Torch'
+    expiresAt: number; // Game time (totalMinutes) when it burns out
+  };
+
+  /** Quest/progress flags (e.g., "sewer_puzzle_solved", "tutorial_complete") */
+  questFlags: string[];
+
+  /** Known spells and spell slots */
+  spells: PlayerSpells;
+
+  /** Trap placed by ranger (only one at a time) */
+  placedTrap?: PlacedTrap;
 }
 
 /** Status effect on a player */
@@ -156,6 +180,24 @@ export interface StatusEffect {
   stacks: number;
   /** When the effect was applied (game time in minutes) */
   appliedAt: number;
+}
+
+/** A trap placed by a ranger in a location */
+export interface PlacedTrap {
+  /** Location where the trap is set */
+  locationId: NodeId;
+  /** Ranger's level when trap was placed (affects effectiveness) */
+  rangerLevel: number;
+  /** Initial damage when triggered */
+  damage: number;
+  /** Damage over time per tick while trapped */
+  dotDamage: number;
+  /** Base duration of root in seconds (modified by creature level) */
+  rootDuration: number;
+  /** When the trap was placed (real timestamp) */
+  placedAt: number;
+  /** When the trap expires if not triggered (real timestamp) */
+  expiresAt: number;
 }
 
 /** Calculated combat stats (from base + gear + buffs) */

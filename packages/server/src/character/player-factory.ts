@@ -3,7 +3,7 @@
  */
 
 import type { Player, ClassName, ClassDef } from '@solo-mud/shared';
-import { CLASSES, xpForLevel } from '@solo-mud/shared';
+import { CLASSES, xpForLevel, getStarterSpellId } from '@solo-mud/shared';
 
 export interface CreatePlayerOptions {
   id: string;
@@ -85,7 +85,7 @@ export function createPlayer(options: CreatePlayerOptions): Player {
     globalCooldown: 0,
     abilityCooldowns: {},
 
-    gold: 0,
+    currency: { copper: 0, silver: 0, gold: 0 },
 
     // Tutorial
     tutorial: {
@@ -99,5 +99,14 @@ export function createPlayer(options: CreatePlayerOptions): Player {
 
     // Status effects
     statusEffects: [],
+
+    // Quest/progress flags
+    questFlags: [],
+
+    // Spells - start with class-specific starter spell
+    spells: {
+      known: getStarterSpellId(className) ? [getStarterSpellId(className)!] : [],
+      slots: [getStarterSpellId(className) ?? null, null, null, null],
+    },
   };
 }

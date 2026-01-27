@@ -4,3 +4,4 @@ export * from './consumables';
 export * from './creatures';
 export * from './ecosystem';
 export * from './items';
+export * from './spells';

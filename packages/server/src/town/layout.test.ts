@@ -45,13 +45,26 @@ describe('Town Layout Validation', () => {
       }
     });
 
-    it('should have exactly 10 town locations', () => {
-      expect(Object.keys(EASTHOLLOW_LOCATIONS).length).toBe(10);
+    it('should have 12 town locations and 9 sewer locations', () => {
+      const townLocs = Object.keys(EASTHOLLOW_LOCATIONS).filter(id => id.startsWith('town_'));
+      const sewerLocs = Object.keys(EASTHOLLOW_LOCATIONS).filter(id => id.startsWith('sewer_'));
+      expect(townLocs.length).toBe(12);
+      expect(sewerLocs.length).toBe(9);
     });
 
-    it('all locations should be safe zones', () => {
+    it('all town locations should be safe zones', () => {
       for (const loc of Object.values(EASTHOLLOW_LOCATIONS)) {
-        expect(loc.isSafeZone, `${loc.id} should be a safe zone`).toBe(true);
+        if (loc.id.startsWith('town_')) {
+          expect(loc.isSafeZone, `${loc.id} should be a safe zone`).toBe(true);
+        }
+      }
+    });
+
+    it('sewer locations should not be safe zones', () => {
+      for (const loc of Object.values(EASTHOLLOW_LOCATIONS)) {
+        if (loc.id.startsWith('sewer_')) {
+          expect(loc.isSafeZone, `${loc.id} should not be a safe zone`).toBeFalsy();
+        }
       }
     });
 
@@ -132,24 +145,30 @@ describe('Town Layout Validation', () => {
 
       expect(templeExitData.length).toBe(1);
       expect(templeExitData[0]?.to).toBe(TOWN_EAST_ROAD);
-      expect(templeExitData[0]?.label).toBe('out');
+      // Temple is south of East Road, so exit goes north
+      expect(templeExitData[0]?.label).toBe('north');
     });
 
-    it('Market Street should connect to Square, Blacksmith, Alchemist', () => {
+    it('Market Street should connect to Square and shops', () => {
       const exits = EASTHOLLOW_ADJACENCY[TOWN_MARKET] ?? [];
       const destinations = exits.map(id => EASTHOLLOW_EXITS[id]?.to);
 
       expect(destinations).toContain(TOWN_SQUARE);
       expect(destinations).toContain(TOWN_BLACKSMITH);
       expect(destinations).toContain(TOWN_ALCHEMIST);
+      expect(destinations).toContain(TOWN_GENERAL);
     });
 
-    it('General Store should connect to both Blacksmith and Alchemist', () => {
-      const exits = EASTHOLLOW_ADJACENCY[TOWN_GENERAL] ?? [];
-      const destinations = exits.map(id => EASTHOLLOW_EXITS[id]?.to);
+    it('All shops should exit via out to Market', () => {
+      // Shops exit to Market via 'out' command
+      for (const shopId of [TOWN_GENERAL, TOWN_BLACKSMITH, TOWN_ALCHEMIST]) {
+        const exits = EASTHOLLOW_ADJACENCY[shopId] ?? [];
+        const exitData = exits.map(id => EASTHOLLOW_EXITS[id]).filter(Boolean);
 
-      expect(destinations).toContain(TOWN_BLACKSMITH);
-      expect(destinations).toContain(TOWN_ALCHEMIST);
+        expect(exitData.length).toBeGreaterThan(0);
+        expect(exitData[0]?.to).toBe(TOWN_MARKET);
+        expect(exitData[0]?.label).toBe('out');
+      }
     });
   });
 
@@ -171,7 +190,7 @@ describe('Town Layout Validation', () => {
 
     it('bidirectional exits should exist for all connections', () => {
       // For each exit A->B, there should be a return exit B->A
-      for (const [exitId, exit] of Object.entries(EASTHOLLOW_EXITS)) {
+      for (const [_exitId, exit] of Object.entries(EASTHOLLOW_EXITS)) {
         const returnExits = Object.values(EASTHOLLOW_EXITS).filter(
           e => e.from === exit.to && e.to === exit.from
         );
@@ -183,7 +202,7 @@ describe('Town Layout Validation', () => {
   describe('NPC Placement', () => {
     const requiredNPCs = [
       { id: 'npc_mira', location: TOWN_INN },
-      { id: 'npc_marcus', location: TOWN_GATE },
+      { id: 'npc_guard_marcus', location: TOWN_GATE },
       { id: 'npc_holt', location: TOWN_TRAINING },
       { id: 'npc_sera', location: TOWN_TRAINING },
       { id: 'npc_shadow', location: TOWN_TRAINING },
@@ -212,8 +231,11 @@ describe('Town Layout Validation', () => {
       }
     });
 
-    it('NPC locations should match location NPC lists', () => {
+    it('NPC locations should match location NPC lists (excluding patrolling NPCs)', () => {
       for (const npc of Object.values(EASTHOLLOW_NPCS)) {
+        // Skip NPCs that patrol (have schedule) or are guards that move around
+        if (npc.schedule || npc.id.includes('patrol')) continue;
+
         const location = EASTHOLLOW_LOCATIONS[npc.locationId];
         expect(location, `NPC ${npc.id} references non-existent location: ${npc.locationId}`).toBeDefined();
         expect(location?.npcs, `Location ${npc.locationId} has no NPC list`).toBeDefined();

@@ -16,6 +16,8 @@ CREATE TABLE IF NOT EXISTS characters (
   class         TEXT NOT NULL,
   level         INTEGER DEFAULT 1,
   xp            INTEGER DEFAULT 0,
+  copper        INTEGER DEFAULT 0,
+  silver        INTEGER DEFAULT 0,
   gold          INTEGER DEFAULT 0,
 
   base_stats    TEXT NOT NULL,
@@ -30,6 +32,8 @@ CREATE TABLE IF NOT EXISTS characters (
 
   equipment     TEXT DEFAULT '{}',
   inventory     TEXT DEFAULT '[]',
+  owned_items   TEXT DEFAULT '{}',
+  known_spells  TEXT DEFAULT '[]',
 
   created_at    INTEGER NOT NULL,
   last_played   INTEGER NOT NULL,

@@ -72,6 +72,12 @@ function generateAsciiWorldMap(world: World): string[] {
   lines.push('└─────────────────────────────────────────────────────────────────────────┘');
   lines.push('');
 
+  // Find town connection (keeping for reference even if not used in visual output)
+  world.adjacency['town_gate']?.find(exitId => {
+    const exit = world.exits[exitId];
+    return exit && !exit.to.startsWith('town_');
+  });
+
   lines.push('                              ┌──────────────┐');
   lines.push('                              │  EASTHOLLOW  │');
   lines.push('                              │   (TOWN)     │');

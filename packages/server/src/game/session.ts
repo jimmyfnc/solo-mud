@@ -6,6 +6,7 @@ import type { Player, World, CombatStats, ClassName } from '@solo-mud/shared';
 import { generateStarterGear } from '@solo-mud/shared';
 import { generateWorld } from '../world/generate';
 import { createPlayer, calculateCombatStats } from '../character';
+import { createIncursionState, type IncursionState } from './incursion';
 
 export interface GameSession {
   id: string;
@@ -21,6 +22,16 @@ export interface GameSession {
   worldSeed?: string;
   /** Current NPC the player is talking to */
   conversationNpc?: string;
+  /** Numbered list of learnable spells from current trainer (for "learn 1" etc.) */
+  learnableSpells?: string[];
+  /** Town incursion state */
+  incursionState?: IncursionState;
+  /** Valve puzzle state: tracks which valves have been turned in sequence */
+  valveSequence?: string[];
+  /** Current puzzle solution (randomized each attempt) */
+  puzzleSolution?: string[];
+  /** Whether the sewer gate is currently open (resets when leaving area) */
+  sewerGateOpen?: boolean;
 }
 
 /**
@@ -80,6 +91,7 @@ class SessionManager {
       createdAt: Date.now(),
       lastActivity: Date.now(),
       worldSeed,
+      incursionState: createIncursionState(),
     };
 
     this.sessions.set(socketId, session);

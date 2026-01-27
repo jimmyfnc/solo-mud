@@ -46,9 +46,41 @@ function initializeDatabase(): Database.Database {
   const schema = readFileSync(join(__dirname, 'schema.sql'), 'utf-8');
   database.exec(schema);
 
+  // Run migrations for existing databases
+  runMigrations(database);
+
   console.log(`Database initialized at ${DB_PATH}`);
 
   return database;
+}
+
+/**
+ * Run migrations for existing databases.
+ * Adds new columns that weren't in the original schema.
+ */
+function runMigrations(database: Database.Database): void {
+  // Check which columns exist in characters table
+  const columns = database.prepare(`PRAGMA table_info(characters)`).all() as { name: string }[];
+  const columnNames = new Set(columns.map(col => col.name));
+
+  // Migration: Add owned_items column
+  if (!columnNames.has('owned_items')) {
+    database.exec(`ALTER TABLE characters ADD COLUMN owned_items TEXT DEFAULT '{}'`);
+    console.log('Migration: Added owned_items column to characters table');
+  }
+
+  // Migration: Add copper and silver columns for multi-tier currency
+  if (!columnNames.has('copper')) {
+    database.exec(`ALTER TABLE characters ADD COLUMN copper INTEGER DEFAULT 0`);
+    // Migrate existing gold to copper (economy reset: gold becomes copper)
+    database.exec(`UPDATE characters SET copper = gold WHERE copper = 0 AND gold > 0`);
+    console.log('Migration: Added copper column and migrated gold → copper');
+  }
+
+  if (!columnNames.has('silver')) {
+    database.exec(`ALTER TABLE characters ADD COLUMN silver INTEGER DEFAULT 0`);
+    console.log('Migration: Added silver column to characters table');
+  }
 }
 
 /**

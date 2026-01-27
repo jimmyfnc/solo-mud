@@ -1,3 +1,4 @@
+import { formatCurrency } from '@solo-mud/shared';
 import { useGameStore } from '../store/gameStore';
 
 /**
@@ -71,10 +72,9 @@ export function StatusBar() {
           </div>
         )}
 
-        {/* Gold */}
-        <div className="text-yellow-500">
-          <span className="text-yellow-400">{player.gold}</span>
-          <span className="text-yellow-600 text-xs ml-1">gold</span>
+        {/* Currency */}
+        <div className="text-yellow-400">
+          {formatCurrency(player.currency)}
         </div>
       </div>
     </div>

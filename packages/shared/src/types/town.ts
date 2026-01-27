@@ -2,8 +2,11 @@
  * Town, NPC, and shop type definitions.
  */
 
-import type { NodeId } from './world';
+import type { NodeId, TimeOfDay } from './world';
 import type { NPCSimulation } from './simulation';
+
+/** Special action that a dialogue option can trigger */
+export type DialogueAction = 'heal' | 'train' | 'rest' | 'teach_track' | 'teach_trap' | 'skills_list';
 
 /** A dialogue topic an NPC can discuss */
 export interface DialogueTopic {
@@ -12,6 +15,16 @@ export interface DialogueTopic {
   response: string;
   /** If set, completing this topic marks a tutorial step done */
   teachesCommand?: string;
+  /** Special action to trigger when this option is selected */
+  action?: DialogueAction;
+  /** For teach actions: the spell ID to teach */
+  teachSpell?: string;
+  /** For teach actions: minimum level required */
+  teachLevel?: number;
+  /** Response shown to matching class below required level */
+  rangerResponse?: string;
+  /** Response shown to matching class at/above required level */
+  rangerReadyResponse?: string;
 }
 
 /** Shop item with price and optional stock limit */
@@ -29,11 +42,24 @@ export interface ShopInventory {
   sellMultiplier: number;
 }
 
+/** Schedule entry for time-based NPC location */
+export interface NpcScheduleEntry {
+  locationId: NodeId;
+  activity: string;
+}
+
+/** Full NPC schedule mapping time periods to locations */
+export type NpcSchedule = Record<TimeOfDay, NpcScheduleEntry>;
+
+/** NPC role types for behavior */
+export type NpcRole = 'shopkeeper' | 'guard' | 'trainer' | 'innkeeper' | 'citizen' | 'priest';
+
 /** An NPC in the game world */
 export interface NPC {
   id: string;
   name: string;
   title?: string;
+  /** Static location (used if no schedule) */
   locationId: NodeId;
   dialogue: DialogueTopic[];
   shop?: ShopInventory;
@@ -41,6 +67,19 @@ export interface NPC {
   tutorialTopics?: string[];
   /** Simulation data for ambient behaviors and reactions */
   simulation?: NPCSimulation;
+  /** NPC role for behavior (guards fight, shopkeepers sell) */
+  role?: NpcRole;
+  /** Time-based schedule (overrides locationId if present) */
+  schedule?: NpcSchedule;
+  /** For guards: combat stats */
+  combat?: {
+    level: number;
+    maxHp: number;
+    currentHp: number;
+    damage: number;
+  };
+  /** Class this NPC can train (for trainers) */
+  trainsClass?: string;
 }
 
 /** Tutorial progress tracker */

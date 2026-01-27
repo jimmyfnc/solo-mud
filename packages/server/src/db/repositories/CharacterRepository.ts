@@ -2,7 +2,7 @@
  * Repository for character data.
  */
 
-import type { Player, Stats, Equipment, InventorySlot } from '@solo-mud/shared';
+import type { Player, Stats, Equipment, InventorySlot, Item, Currency } from '@solo-mud/shared';
 import { getDatabase, generateId } from '../database';
 
 export const MAX_CHARACTERS_PER_PLAYER = 10;
@@ -14,7 +14,7 @@ export interface CharacterRecord {
   class: string;
   level: number;
   xp: number;
-  gold: number;
+  currency: Currency;
   baseStats: Stats;
   currentHp: number;
   maxHp: number;
@@ -25,6 +25,10 @@ export interface CharacterRecord {
   gameTime: number;
   equipment: Equipment;
   inventory: InventorySlot[];
+  /** Full Item objects owned by this character (equipment + inventory) */
+  ownedItems: Record<string, Item>;
+  /** Known spell IDs */
+  knownSpells: string[];
   createdAt: number;
   lastPlayed: number;
 }
@@ -44,7 +48,8 @@ export function createCharacter(
   playerId: string,
   player: Player,
   worldSeed: string,
-  gameTime: number
+  gameTime: number,
+  ownedItems: Record<string, Item>
 ): CharacterRecord {
   const db = getDatabase();
 
@@ -65,11 +70,11 @@ export function createCharacter(
 
   db.prepare(`
     INSERT INTO characters (
-      id, player_id, name, class, level, xp, gold,
+      id, player_id, name, class, level, xp, copper, silver, gold,
       base_stats, current_hp, max_hp, current_mp, max_mp,
       world_seed, location_id, game_time,
-      equipment, inventory, created_at, last_played
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      equipment, inventory, owned_items, known_spells, created_at, last_played
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     id,
     playerId,
@@ -77,7 +82,9 @@ export function createCharacter(
     player.class,
     player.level,
     player.xp,
-    player.gold,
+    player.currency.copper,
+    player.currency.silver,
+    player.currency.gold,
     JSON.stringify(player.baseStats),
     player.currentHp,
     player.maxHp,
@@ -88,6 +95,8 @@ export function createCharacter(
     gameTime,
     JSON.stringify(player.equipment),
     JSON.stringify(player.inventory),
+    JSON.stringify(ownedItems),
+    JSON.stringify(player.spells.known),
     now,
     now
   );
@@ -99,7 +108,7 @@ export function createCharacter(
     class: player.class,
     level: player.level,
     xp: player.xp,
-    gold: player.gold,
+    currency: player.currency,
     baseStats: player.baseStats,
     currentHp: player.currentHp,
     maxHp: player.maxHp,
@@ -110,6 +119,8 @@ export function createCharacter(
     gameTime,
     equipment: player.equipment,
     inventory: player.inventory,
+    ownedItems,
+    knownSpells: player.spells.known,
     createdAt: now,
     lastPlayed: now,
   };
@@ -149,25 +160,36 @@ export function findCharacterById(characterId: string): CharacterRecord | null {
   const db = getDatabase();
   const row = db.prepare(`
     SELECT
-      id, player_id as playerId, name, class, level, xp, gold,
+      id, player_id as playerId, name, class, level, xp,
+      copper, silver, gold,
       base_stats as baseStats, current_hp as currentHp, max_hp as maxHp,
       current_mp as currentMp, max_mp as maxMp,
       world_seed as worldSeed, location_id as locationId, game_time as gameTime,
-      equipment, inventory, created_at as createdAt, last_played as lastPlayed
+      equipment, inventory, owned_items as ownedItems, known_spells as knownSpells,
+      created_at as createdAt, last_played as lastPlayed
     FROM characters WHERE id = ?
-  `).get(characterId) as (Omit<CharacterRecord, 'baseStats' | 'equipment' | 'inventory'> & {
+  `).get(characterId) as (Omit<CharacterRecord, 'baseStats' | 'equipment' | 'inventory' | 'ownedItems' | 'knownSpells' | 'currency'> & {
     baseStats: string;
     equipment: string;
     inventory: string;
+    ownedItems: string | null;
+    knownSpells: string | null;
+    copper: number;
+    silver: number;
+    gold: number;
   }) | undefined;
 
   if (!row) return null;
 
+  const { copper, silver, gold, ...rest } = row;
   return {
-    ...row,
+    ...rest,
+    currency: { copper, silver, gold },
     baseStats: JSON.parse(row.baseStats),
     equipment: JSON.parse(row.equipment),
     inventory: JSON.parse(row.inventory),
+    ownedItems: row.ownedItems ? JSON.parse(row.ownedItems) : {},
+    knownSpells: row.knownSpells ? JSON.parse(row.knownSpells) : [],
   };
 }
 
@@ -178,25 +200,36 @@ export function findCharacterByName(playerId: string, name: string): CharacterRe
   const db = getDatabase();
   const row = db.prepare(`
     SELECT
-      id, player_id as playerId, name, class, level, xp, gold,
+      id, player_id as playerId, name, class, level, xp,
+      copper, silver, gold,
       base_stats as baseStats, current_hp as currentHp, max_hp as maxHp,
       current_mp as currentMp, max_mp as maxMp,
       world_seed as worldSeed, location_id as locationId, game_time as gameTime,
-      equipment, inventory, created_at as createdAt, last_played as lastPlayed
+      equipment, inventory, owned_items as ownedItems, known_spells as knownSpells,
+      created_at as createdAt, last_played as lastPlayed
     FROM characters WHERE player_id = ? AND name = ?
-  `).get(playerId, name) as (Omit<CharacterRecord, 'baseStats' | 'equipment' | 'inventory'> & {
+  `).get(playerId, name) as (Omit<CharacterRecord, 'baseStats' | 'equipment' | 'inventory' | 'ownedItems' | 'knownSpells' | 'currency'> & {
     baseStats: string;
     equipment: string;
     inventory: string;
+    ownedItems: string | null;
+    knownSpells: string | null;
+    copper: number;
+    silver: number;
+    gold: number;
   }) | undefined;
 
   if (!row) return null;
 
+  const { copper, silver, gold, ...rest } = row;
   return {
-    ...row,
+    ...rest,
+    currency: { copper, silver, gold },
     baseStats: JSON.parse(row.baseStats),
     equipment: JSON.parse(row.equipment),
     inventory: JSON.parse(row.inventory),
+    ownedItems: row.ownedItems ? JSON.parse(row.ownedItems) : {},
+    knownSpells: row.knownSpells ? JSON.parse(row.knownSpells) : [],
   };
 }
 
@@ -208,7 +241,7 @@ export function updateCharacter(
   updates: Partial<{
     level: number;
     xp: number;
-    gold: number;
+    currency: Currency;
     currentHp: number;
     maxHp: number;
     currentMp: number;
@@ -217,6 +250,8 @@ export function updateCharacter(
     gameTime: number;
     equipment: Equipment;
     inventory: InventorySlot[];
+    ownedItems: Record<string, Item>;
+    knownSpells: string[];
   }>
 ): void {
   const db = getDatabase();
@@ -231,9 +266,13 @@ export function updateCharacter(
     setClauses.push('xp = ?');
     values.push(updates.xp);
   }
-  if (updates.gold !== undefined) {
+  if (updates.currency !== undefined) {
+    setClauses.push('copper = ?');
+    values.push(updates.currency.copper);
+    setClauses.push('silver = ?');
+    values.push(updates.currency.silver);
     setClauses.push('gold = ?');
-    values.push(updates.gold);
+    values.push(updates.currency.gold);
   }
   if (updates.currentHp !== undefined) {
     setClauses.push('current_hp = ?');
@@ -266,6 +305,14 @@ export function updateCharacter(
   if (updates.inventory !== undefined) {
     setClauses.push('inventory = ?');
     values.push(JSON.stringify(updates.inventory));
+  }
+  if (updates.ownedItems !== undefined) {
+    setClauses.push('owned_items = ?');
+    values.push(JSON.stringify(updates.ownedItems));
+  }
+  if (updates.knownSpells !== undefined) {
+    setClauses.push('known_spells = ?');
+    values.push(JSON.stringify(updates.knownSpells));
   }
 
   // Always update last_played

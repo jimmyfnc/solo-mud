@@ -16,6 +16,9 @@ import {
   type LinkPlayerCodeMessage,
   type OutputLine,
   type ClassName,
+  type Item,
+  type Player,
+  type World,
 } from '@solo-mud/shared';
 import { sessionManager, type GameSession } from './game/session';
 import { restoreSession } from './game/restore';
@@ -45,6 +48,31 @@ export interface GameSocket extends Socket {
   playerRecord?: PlayerRecord;
   session?: GameSession;
   awaitingCharacterSelection?: boolean;
+}
+
+/**
+ * Extract all items owned by a player (equipped + inventory) from the world.
+ */
+function getOwnedItems(player: Player, world: World): Record<string, Item> {
+  const owned: Record<string, Item> = {};
+
+  // Collect equipped items
+  for (const itemId of Object.values(player.equipment)) {
+    const item = itemId ? world.items[itemId] : undefined;
+    if (item) {
+      owned[itemId] = item;
+    }
+  }
+
+  // Collect inventory items
+  for (const slot of player.inventory) {
+    const item = slot.itemId ? world.items[slot.itemId] : undefined;
+    if (item) {
+      owned[slot.itemId] = item;
+    }
+  }
+
+  return owned;
 }
 
 /**
@@ -131,18 +159,18 @@ export function createSocketServer(httpServer: HttpServer): SocketServer {
 
     // Send ASCII art banner on connect
     sendOutput(socket, [
-      { text: '╔═══════════════════════════════════════════════════════════╗', style: 'system' },
-      { text: '║                                                           ║', style: 'system' },
-      { text: '║   ███████╗ ██████╗ ██╗      ██████╗     ███╗   ███╗██╗   ██╗██████╗   ║', style: 'system' },
-      { text: '║   ██╔════╝██╔═══██╗██║     ██╔═══██╗    ████╗ ████║██║   ██║██╔══██╗  ║', style: 'system' },
-      { text: '║   ███████╗██║   ██║██║     ██║   ██║    ██╔████╔██║██║   ██║██║  ██║  ║', style: 'system' },
-      { text: '║   ╚════██║██║   ██║██║     ██║   ██║    ██║╚██╔╝██║██║   ██║██║  ██║  ║', style: 'system' },
-      { text: '║   ███████║╚██████╔╝███████╗╚██████╔╝    ██║ ╚═╝ ██║╚██████╔╝██████╔╝  ║', style: 'system' },
-      { text: '║   ╚══════╝ ╚═════╝ ╚══════╝ ╚═════╝     ╚═╝     ╚═╝ ╚═════╝ ╚═════╝   ║', style: 'system' },
-      { text: '║                                                           ║', style: 'system' },
-      { text: '║         A Solo Adventure in a Living World                ║', style: 'system' },
-      { text: '║                                                           ║', style: 'system' },
-      { text: '╚═══════════════════════════════════════════════════════════╝', style: 'system' },
+      { text: '╔═════════════════════════════════════════════════════════════════════════╗', style: 'system' },
+      { text: '║                                                                         ║', style: 'system' },
+      { text: '║   ███████╗ ██████╗ ██╗      ██████╗     ███╗   ███╗██╗   ██╗██████╗     ║', style: 'system' },
+      { text: '║   ██╔════╝██╔═══██╗██║     ██╔═══██╗    ████╗ ████║██║   ██║██╔══██╗    ║', style: 'system' },
+      { text: '║   ███████╗██║   ██║██║     ██║   ██║    ██╔████╔██║██║   ██║██║  ██║    ║', style: 'system' },
+      { text: '║   ╚════██║██║   ██║██║     ██║   ██║    ██║╚██╔╝██║██║   ██║██║  ██║    ║', style: 'system' },
+      { text: '║   ███████║╚██████╔╝███████╗╚██████╔╝    ██║ ╚═╝ ██║╚██████╔╝██████╔╝    ║', style: 'system' },
+      { text: '║   ╚══════╝ ╚═════╝ ╚══════╝ ╚═════╝     ╚═╝     ╚═╝ ╚═════╝ ╚═════╝     ║', style: 'system' },
+      { text: '║                                                                         ║', style: 'system' },
+      { text: '║              A Solo Adventure in a Living World                         ║', style: 'system' },
+      { text: '║                                                                         ║', style: 'system' },
+      { text: '╚═════════════════════════════════════════════════════════════════════════╝', style: 'system' },
       { text: '', style: 'normal' },
       { text: 'Connecting...', style: 'system' },
     ]);
@@ -267,12 +295,14 @@ function handleCharacterCreation(socket: GameSocket, message: CreateCharacterMes
       className as ClassName
     );
 
-    // Save to database
+    // Save to database (including owned items for restoration)
+    const ownedItems = getOwnedItems(session.player, session.world);
     const characterRecord = createCharacter(
       socket.playerRecord.id,
       session.player,
       worldSeed,
-      session.world.time.totalMinutes
+      session.world.time.totalMinutes,
+      ownedItems
     );
 
     // Update session with character ID
@@ -429,10 +459,26 @@ function handleCommand(socket: GameSocket, input: string): void {
   const result = executeCommand(session, input);
   sendOutput(socket, result.output);
 
+  // Send player update if HP/MP/gold/XP changed
+  if (result.updatePlayer) {
+    sendPlayerUpdate(socket, session);
+  }
+
   // Auto-save after commands that modify state
   if (session.characterId) {
     saveCharacterState(session);
   }
+}
+
+/**
+ * Send updated player state to the client (HP/MP bars, etc.)
+ */
+function sendPlayerUpdate(socket: GameSocket, session: GameSession): void {
+  socket.emit(SERVER_EVENTS.PLAYER_UPDATE, {
+    type: 'player_update',
+    player: session.player,
+    combatStats: session.combatStats,
+  });
 }
 
 /**
@@ -507,7 +553,7 @@ export function saveCharacterState(session: GameSession): void {
   updateCharacter(session.characterId, {
     level: session.player.level,
     xp: session.player.xp,
-    gold: session.player.gold,
+    currency: session.player.currency,
     currentHp: session.player.currentHp,
     maxHp: session.player.maxHp,
     currentMp: session.player.currentMp,
@@ -516,6 +562,8 @@ export function saveCharacterState(session: GameSession): void {
     gameTime: session.world.time.totalMinutes,
     equipment: session.player.equipment,
     inventory: session.player.inventory,
+    ownedItems: getOwnedItems(session.player, session.world),
+    knownSpells: session.player.spells.known,
   });
 }
 

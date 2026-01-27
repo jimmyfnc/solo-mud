@@ -3,6 +3,7 @@
  */
 
 import type { Player, World, ClassName, InventorySlot } from '@solo-mud/shared';
+import { getStarterSpellId } from '@solo-mud/shared';
 import { generateWorld } from '../world/generate';
 import { calculateCombatStats } from '../character';
 import type { CharacterRecord } from '../db/repositories/CharacterRepository';
@@ -33,6 +34,11 @@ export function restoreSession(
   // Apply world modifications
   applyWorldModifications(world, character.id);
 
+  // Restore player-owned items to the world
+  for (const [itemId, item] of Object.entries(character.ownedItems)) {
+    world.items[itemId] = item;
+  }
+
   // Rebuild the player object
   const player: Player = {
     id: socketId,
@@ -61,7 +67,7 @@ export function restoreSession(
     targetId: undefined,
     globalCooldown: 0,
     abilityCooldowns: {},
-    gold: character.gold,
+    currency: character.currency,
     corpseLocationId: undefined,
     corpseItems: undefined,
     tutorial: {
@@ -70,6 +76,11 @@ export function restoreSession(
       completedSteps: ['talk_mira', 'class_training', 'hit_dummy', 'visit_shop', 'leave_town'],
     },
     statusEffects: [],
+    questFlags: [], // Will need to be restored from database when quest persistence is added
+    spells: {
+      known: restoreKnownSpells(character.knownSpells, character.class),
+      slots: [null, null, null, null],
+    },
   };
 
   // Restore game time
@@ -178,4 +189,19 @@ function updateTimeOfDay(world: World): void {
   } else {
     world.time.timeOfDay = 'night';
   }
+}
+
+/**
+ * Restore known spells from database, granting starter spell if missing.
+ */
+function restoreKnownSpells(savedSpells: string[], className: string): string[] {
+  const knownSpells = [...savedSpells];
+
+  // Ensure starter spell is known (in case character was created before spell persistence)
+  const starterSpell = getStarterSpellId(className);
+  if (starterSpell && !knownSpells.includes(starterSpell)) {
+    knownSpells.unshift(starterSpell);
+  }
+
+  return knownSpells;
 }

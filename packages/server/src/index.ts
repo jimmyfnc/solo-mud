@@ -2,9 +2,11 @@
 
 import { createApp, startServer } from './app';
 import { createSocketServer } from './socket';
+import { createTelnetServer } from './telnet';
 import { startGameLoop, stopGameLoop } from './game/game-loop';
 
 const PORT = parseInt(process.env['PORT'] ?? '3001', 10);
+const TELNET_PORT = parseInt(process.env['TELNET_PORT'] ?? '4000', 10);
 
 async function main() {
   const app = createApp({ logger: true });
@@ -12,10 +14,13 @@ async function main() {
   try {
     const { address, server } = await startServer(app, PORT);
 
-    // Initialize Socket.io
+    // Initialize Socket.io (for web clients)
     const io = createSocketServer(server);
     console.log(`Solo MUD Server listening at ${address}`);
     console.log(`Socket.io server ready for connections`);
+
+    // Initialize Telnet server (for MUD clients)
+    const telnetServer = createTelnetServer(TELNET_PORT);
 
     // Start the game loop for creature movement, etc.
     startGameLoop(io);
@@ -25,6 +30,7 @@ async function main() {
       console.log('Shutting down...');
       stopGameLoop();
       io.close();
+      telnetServer.close();
       await app.close();
       process.exit(0);
     };

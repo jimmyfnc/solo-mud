@@ -123,7 +123,7 @@ describe('createPlayer', () => {
     expect(player.targetId).toBeUndefined();
   });
 
-  it('should initialize with zero gold', () => {
+  it('should initialize with zero currency', () => {
     const player = createPlayer({
       id: 'test-id',
       name: 'TestPlayer',
@@ -131,7 +131,7 @@ describe('createPlayer', () => {
       startLocationId: 'loc-1',
     });
 
-    expect(player.gold).toBe(0);
+    expect(player.currency).toEqual({ copper: 0, silver: 0, gold: 0 });
   });
 
   it('should calculate max carry weight based on STR', () => {

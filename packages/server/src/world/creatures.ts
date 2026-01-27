@@ -62,11 +62,51 @@ function weightedRandomSelect<T extends { spawnWeight: number }>(
 }
 
 /**
+ * Calculate creature level with variation based on depth.
+ *
+ * Formula:
+ * - Base level from template
+ * - Depth bonus: +1 level per 2 depths beyond creature's minDepth
+ * - Random variation: -1 to +1
+ * - Minimum level is always 1
+ *
+ * Example: Goblin (baseLevel 2, minDepth 2) at depth 5:
+ *   Base: 2 + depthBonus: floor((5-2)/2) = 1 + random: -1 to +1
+ *   Result: Level 2-4
+ */
+function calculateCreatureLevel(
+  baseLevel: number,
+  minDepth: number,
+  locationDepth: number,
+  rng: Rng
+): number {
+  // Depth bonus: +1 level for every 2 depths beyond minDepth
+  const depthBonus = Math.floor(Math.max(0, locationDepth - minDepth) / 2);
+
+  // Random variation: -1, 0, or +1
+  const variation = rng.nextInt(-1, 1);
+
+  // Calculate final level (minimum 1)
+  return Math.max(1, baseLevel + depthBonus + variation);
+}
+
+/**
+ * Calculate creature HP based on level scaling.
+ * HP scales by 20% per level above base.
+ */
+function calculateCreatureHp(baseHp: number, baseLevel: number, actualLevel: number): number {
+  const levelDiff = actualLevel - baseLevel;
+  const hpMultiplier = 1 + (levelDiff * 0.2); // +20% HP per level
+  return Math.floor(baseHp * hpMultiplier);
+}
+
+/**
  * Create a creature instance from a template.
  */
 function createCreature(
   templateId: string,
   locationId: string,
+  locationDepth: number,
   index: number,
   rng: Rng
 ): Creature {
@@ -77,6 +117,17 @@ function createCreature(
 
   const id: CreatureId = `creature_${locationId}_${templateId}_${index}`;
 
+  // Calculate level with variation
+  const level = calculateCreatureLevel(
+    template.baseLevel,
+    template.minDepth,
+    locationDepth,
+    rng
+  );
+
+  // Scale HP based on level
+  const maxHp = calculateCreatureHp(template.baseHp, template.baseLevel, level);
+
   // Pick a random idle description
   const description = rng.pick(template.descriptions.idle);
 
@@ -84,11 +135,11 @@ function createCreature(
     id,
     templateId,
     name: template.name,
-    level: template.baseLevel,
+    level,
     behavior: template.behavior,
     mobility: template.mobility,
-    currentHp: template.baseHp,
-    maxHp: template.baseHp,
+    currentHp: maxHp,
+    maxHp,
     locationId,
     homeLocationId: locationId,
     spawnLocationId: locationId,
@@ -136,7 +187,7 @@ export function spawnCreaturesForLocation(
     const template = weightedRandomSelect(validTemplates, rng);
     if (!template) continue;
 
-    const creature = createCreature(template.id, location.id, i, rng);
+    const creature = createCreature(template.id, location.id, location.depth, i, rng);
     creatures.push(creature);
     creatureIds.push(creature.id);
   }

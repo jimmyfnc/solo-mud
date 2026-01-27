@@ -27,6 +27,10 @@ export interface Exit {
   label: string; // "north", "iron door", "dark passage"
   type: EdgeType;
   requirement?: Requirement;
+  /** Item base ID required to use this exit (e.g., 'rope' for climbing) */
+  requiresItem?: string;
+  /** Message shown when player lacks required item */
+  requiresItemMessage?: string;
 }
 
 /** Biome weights for tag-based blending */
@@ -63,6 +67,8 @@ export interface Location {
   isRespawnPoint?: boolean;
   /** NPCs present in this location */
   npcs?: string[];
+  /** If true, location is dark and requires a light source to see properly */
+  isDark?: boolean;
 }
 
 /** Item rarity tiers */
@@ -121,6 +127,22 @@ export interface Creature {
   inCombat: boolean;
   targetId?: string;
 
+  // Trapped state (from ranger trap)
+  trapped?: {
+    /** When the trap effect expires (real timestamp) */
+    expiresAt: number;
+    /** Player ID who set the trap */
+    trappedByPlayerId: string;
+    /** DOT damage per tick */
+    dotDamage: number;
+    /** Next tick timestamp for DOT */
+    nextDotTick: number;
+    /** Next break attempt timestamp */
+    nextBreakAttempt: number;
+    /** Ranger level (for break calculations) */
+    rangerLevel: number;
+  };
+
   // Prose description
   description: string; // e.g., "A grazing sheep pays you no mind."
 }
@@ -156,6 +178,22 @@ export interface Corpse {
   looted: boolean;
   lootedAt?: number;
   loot: ItemId[]; // Items that can be taken from corpse
+}
+
+/** A container that can hold items (chests, boxes, etc.) */
+export interface Container {
+  id: string;
+  name: string;
+  description: string;
+  locationId: NodeId;
+  contents: ItemId[]; // Items inside the container
+  originalContents?: ItemId[]; // Original contents for respawning
+  locked: boolean;
+  keyId?: string; // Item ID of key that unlocks it
+  opened: boolean; // Has it been opened this session?
+  respawns: boolean; // Does it refill its contents over time?
+  respawnTime?: number; // Minutes until contents respawn
+  lastOpened?: number; // Game time when last opened
 }
 
 /** Entry in the respawn queue */
@@ -198,6 +236,7 @@ export interface World {
   items: Record<ItemId, Item>;
   creatures: Record<CreatureId, Creature>;
   corpses: Record<string, Corpse>;
+  containers?: Record<string, Container>;
   respawnQueue: RespawnEntry[];
   npcs: Record<string, NPC>;
   time: GameTime;

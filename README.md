@@ -53,6 +53,83 @@ pnpm --filter @solo-mud/server test
 pnpm --filter @solo-mud/client dev
 ```
 
+## Commands
+
+### Movement
+| Command | Aliases | Description |
+|---------|---------|-------------|
+| `go <direction>` | | Move in a direction |
+| `north`, `south`, `east`, `west` | `n`, `s`, `e`, `w` | Move directly |
+| `up`, `down` | `u`, `d` | Move vertically |
+| `go <exit> to <destination>` | | Disambiguate multiple exits |
+
+### Exploration
+| Command | Aliases | Description |
+|---------|---------|-------------|
+| `look` | `l` | Examine your surroundings |
+| `examine <target>` | | Look at something closely |
+| `map` | | Show a mini-map of nearby areas |
+
+### Items & Inventory
+| Command | Aliases | Description |
+|---------|---------|-------------|
+| `inventory` | `i` | Check your inventory |
+| `take <item>` | `get` | Pick up an item |
+| `take <item> from <corpse>` | | Loot from a corpse |
+| `drop <item>` | | Drop an item |
+| `use <item>` | | Use an item or interact |
+| `loot [target] [#\|all]` | | Loot items from corpse/container |
+| `open <container>` | | Open a chest or container |
+
+### Equipment
+| Command | Aliases | Description |
+|---------|---------|-------------|
+| `equipment` | `eq` | View equipped items |
+| `equip <item>` | | Equip an item from inventory |
+| `unequip <slot>` | | Remove equipped item |
+
+### Combat
+| Command | Aliases | Description |
+|---------|---------|-------------|
+| `attack <target>` | `kill`, `k` | Attack a creature |
+| `flee` | | Escape from combat (50% chance) |
+
+### Spells & Abilities
+| Command | Aliases | Description |
+|---------|---------|-------------|
+| `spells` | `skills`, `abilities` | View known spells |
+| `cast <spell>` | | Cast a spell |
+| `learn <spell>` | | Learn a spell from a trainer |
+
+### Quick Slots
+| Command | Aliases | Description |
+|---------|---------|-------------|
+| `slots` | `quickslots` | View quick slot assignments |
+| `assign <slot> <item/spell>` | | Assign to slot (q1-q4, a1-a4) |
+| `unassign <slot>` | | Clear a quick slot |
+
+### NPCs & Shops
+| Command | Aliases | Description |
+|---------|---------|-------------|
+| `talk <npc>` | | Talk to someone |
+| `say <number>` | | Respond in conversation |
+| `list` | | View shop inventory |
+| `buy <item>` | | Purchase from shop |
+| `sell <item>` | | Sell to shop |
+
+### Character
+| Command | Aliases | Description |
+|---------|---------|-------------|
+| `status` | `stats` | View stats and active effects |
+| `tutorial` | | Check tutorial progress |
+
+### System
+| Command | Aliases | Description |
+|---------|---------|-------------|
+| `help` | `?` | Show help message |
+| `quit` | `logout`, `exit` | Save and return to character select |
+| `debug` | | Show raw game data (dev mode) |
+
 ## Architecture
 
 ### Shared Package (`@solo-mud/shared`)

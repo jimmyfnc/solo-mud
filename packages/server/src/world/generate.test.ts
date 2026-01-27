@@ -6,8 +6,8 @@ describe('generateWorld', () => {
   it('should generate a connected world', () => {
     const world = generateWorld({ seed: 'test-connected', nodeCount: 18, extraEdges: 5, lockedEdges: 2 });
 
-    // 18 wilderness + 10 town locations = 28 total
-    expect(Object.keys(world.locations).length).toBe(28);
+    // 18 wilderness + 12 town + 9 sewer = 39 total
+    expect(Object.keys(world.locations).length).toBe(39);
     expect(world.startId).toBeDefined();
     expect(world.goalId).toBeDefined();
     expect(world.startId).not.toBe(world.goalId);
@@ -106,8 +106,9 @@ describe('town integration', () => {
       lockedEdges: 1,
     });
 
-    const gateExits = world.adjacency['town_gate'] ?? [];
-    const exitToWilderness = gateExits.find(exitId => {
+    // Town connects to wilderness via Outside Walls
+    const outsideWallsExits = world.adjacency['town_outside_walls'] ?? [];
+    const exitToWilderness = outsideWallsExits.find(exitId => {
       const exit = world.exits[exitId];
       return exit?.to === 'loc_0';
     });

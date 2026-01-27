@@ -19,8 +19,10 @@ import {
   EASTHOLLOW_ADJACENCY,
   EASTHOLLOW_NPCS,
   EASTHOLLOW_CREATURES,
+  EASTHOLLOW_CONTAINERS,
+  TEMPLE_ITEMS,
   TOWN_INN,
-  TOWN_GATE,
+  TOWN_OUTSIDE_WALLS,
 } from '@solo-mud/shared';
 
 import {
@@ -36,7 +38,8 @@ import { spawnAllCreatures } from './creatures';
 
 const MAX_RETRY_ATTEMPTS = 10;
 
-const EXIT_LABELS = ['north', 'south', 'east', 'west', 'up', 'down', 'passage', 'door', 'path', 'tunnel'];
+// Procedural exits use only cardinal directions + up/down for clear navigation
+const EXIT_LABELS = ['north', 'south', 'east', 'west', 'up', 'down'];
 
 const LOCATION_NAMES = [
   'Clearing', 'Crossroads', 'Hollow', 'Ridge', 'Valley', 'Grove', 'Ruins',
@@ -157,7 +160,13 @@ function generateWorldAttempt(params: WorldGenParams): World {
     lockKeys.set(edgeIndex, keyId);
   }
 
-  // Create exits
+  // Track which labels are used per location to avoid duplicates
+  const usedLabels: Record<string, Set<string>> = {};
+  for (const nodeId of nodeIds) {
+    usedLabels[nodeId] = new Set();
+  }
+
+  // Create exits - ensuring no duplicate direction labels per location
   for (let i = 0; i < allEdges.length; i++) {
     const [a, b] = allEdges[i]!;
     const nodeA = nodeIds[a]!;
@@ -165,9 +174,26 @@ function generateWorldAttempt(params: WorldGenParams): World {
     const isLocked = lockedEdgeIndices.has(i);
     const keyId = lockKeys.get(i);
 
+    // Find an available label for nodeA that won't conflict with nodeB's opposite
+    const availableLabels = EXIT_LABELS.filter(label => {
+      const opposite = getOppositeLabel(label);
+      return !usedLabels[nodeA]!.has(label) && !usedLabels[nodeB]!.has(opposite);
+    });
+
+    // If no cardinal directions available, skip this edge (shouldn't happen with proper graph structure)
+    if (availableLabels.length === 0) {
+      console.warn(`No available exit labels for edge ${nodeA} <-> ${nodeB}, skipping`);
+      continue;
+    }
+
     const exitIdAB = `exit_${i}_ab`;
     const exitIdBA = `exit_${i}_ba`;
-    const label = rng.pick(EXIT_LABELS);
+    const label = rng.pick(availableLabels);
+    const oppositeLabel = getOppositeLabel(label);
+
+    // Mark labels as used
+    usedLabels[nodeA]!.add(label);
+    usedLabels[nodeB]!.add(oppositeLabel);
 
     const exitAB: Exit = {
       id: exitIdAB,
@@ -182,7 +208,7 @@ function generateWorldAttempt(params: WorldGenParams): World {
       id: exitIdBA,
       from: nodeB,
       to: nodeA,
-      label: getOppositeLabel(label),
+      label: oppositeLabel,
       type: isLocked ? 'locked' : 'open',
       requirement: isLocked && keyId ? { kind: 'item', value: keyId } : undefined,
     };
@@ -241,30 +267,42 @@ function generateWorldAttempt(params: WorldGenParams): World {
     creatures[id] = { ...creature };
   }
 
-  // Connect town gate to wilderness (loc_0)
-  const gateToWildernessId = 'exit_gate_wilderness';
-  const wildernessToGateId = 'exit_wilderness_gate';
+  // Add temple items (cleric starter gear)
+  for (const [id, item] of Object.entries(TEMPLE_ITEMS)) {
+    items[id] = { ...item };
+  }
 
-  exits[gateToWildernessId] = {
-    id: gateToWildernessId,
-    from: TOWN_GATE,
+  // Connect outside walls to wilderness (loc_0)
+  // Flow: Town Gate → Outside Walls → Wilderness
+  const outsideToWildernessId = 'exit_outside_wilderness';
+  const wildernessToOutsideId = 'exit_wilderness_outside';
+
+  exits[outsideToWildernessId] = {
+    id: outsideToWildernessId,
+    from: TOWN_OUTSIDE_WALLS,
     to: 'loc_0',
-    label: 'wilderness',
+    label: 'west',
     type: 'open',
   };
-  exits[wildernessToGateId] = {
-    id: wildernessToGateId,
+  exits[wildernessToOutsideId] = {
+    id: wildernessToOutsideId,
     from: 'loc_0',
-    to: TOWN_GATE,
-    label: 'town',
+    to: TOWN_OUTSIDE_WALLS,
+    label: 'east',
     type: 'open',
   };
 
-  adjacency[TOWN_GATE]!.push(gateToWildernessId);
-  adjacency['loc_0']!.push(wildernessToGateId);
+  adjacency[TOWN_OUTSIDE_WALLS]!.push(outsideToWildernessId);
+  adjacency['loc_0']!.push(wildernessToOutsideId);
 
   // Set start to town inn instead of loc_0
   const townStartId = TOWN_INN;
+
+  // Deep copy containers
+  const containers: Record<string, typeof EASTHOLLOW_CONTAINERS[string]> = {};
+  for (const [id, container] of Object.entries(EASTHOLLOW_CONTAINERS)) {
+    containers[id] = { ...container, contents: [...container.contents] };
+  }
 
   return {
     seed: params.seed,
@@ -276,6 +314,7 @@ function generateWorldAttempt(params: WorldGenParams): World {
     items,
     creatures,
     corpses: {},
+    containers,
     respawnQueue: [],
     npcs: { ...EASTHOLLOW_NPCS },
     time: { totalMinutes: 480, timeOfDay: 'morning', day: 1 }, // 8 AM

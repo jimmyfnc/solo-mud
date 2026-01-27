@@ -8,6 +8,53 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+
+#### NPC Simulation System
+- Living world with ambient NPC behaviors and conversations
+- NPCs perform contextual actions (Mira wipes down the bar, Marcus watches the gate)
+- NPC-to-NPC conversations on shared topics with personality-driven dialogue
+- Player event reactions (enter, level up, death) from nearby NPCs
+- Zone-based activity levels (social, transitional, quiet, dungeon)
+- Cooldown tracking to prevent repetitive messages
+- Hot topics system for world events (boss defeats, player achievements)
+
+#### Sewer Dungeon (Levels 1-6)
+- 9-room beginner dungeon accessible from Northern Alley
+- Progressive difficulty: Rats (L1-2), Large Rats (L3-4), Rat King boss (L6)
+- Locked door puzzle requiring Rusty Key from East Tunnel
+- Valve puzzle in Valve Room with color-coded cryptic clues
+- Boss encounter: Rat King with unique loot drop (Rat King's Fang)
+- Sewer-specific loot tables and creature spawns
+
+#### Town Expansion
+- Eastern Road connecting Inn and Temple (spawn/respawn locations)
+- Temple of the Light with Priestess Anna (healing, cleric training)
+- Outside Town Walls location with wilderness connection
+- Northern Alley with sewer entrance
+- Guard patrol NPCs with schedules
+- Ambient citizens (Farmer Giles, Old Maude, Pete the Suspicious)
+
+#### Currency System
+- Multi-denomination currency (copper, silver, gold, platinum)
+- Automatic currency conversion and formatting
+- Death penalty: lose percentage of carried coin
+
+#### Other Features
+- Quick slot system for items and abilities
+  - `slots` command - View quick slot assignments (q1-q4 for items, a1-a4 for abilities)
+  - `assign <slot> <item/spell>` - Assign consumables or spells to quick slots
+  - `unassign <slot>` - Clear a quick slot
+- `map` command - View the world map with expanded, detailed ASCII view
+- `quit`/`logout`/`exit` commands - Gracefully leave the game
+- `buy`/`sell`/`list` commands for shop interactions
+- Consumable item effects and status system (food, drink, potions)
+- Drunk stumble mechanic - movement affected while intoxicated
+- Item templates and starter gear generation
+- Inn supplies shop added to Innkeeper Mira
+- Creature prose in location descriptions (shows what creatures are present)
+- Town gate tutorial system with guided new player experience
+- `examine` NPCs - view detailed NPC descriptions
+- XP and level-up system with proper progression
 - Exit disambiguation for duplicate labels (`go passage to Hollow`)
 - `debug` command for development/testing - shows raw game data
 - `use` command for items and props (keys, consumables, interactables)
@@ -16,11 +63,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Exits now display destinations (`passage -> Hollow`)
 
 ### Changed
+- Map display expanded with larger, more detailed view
+- Improved new player experience flow
+- Command shortcuts expanded (movement, common actions)
 - Name validation now allows spaces (for first/last names like "John Smith")
 - Movement parser supports custom exit labels (not just compass directions)
 - Help command updated with new commands and syntax
 
 ### Fixed
+- Fixed loot command not working with numbered items (e.g., `loot rat 1`, `loot rat all`)
+- Fixed tutorial dialogue option numbering bug
 - Fixed navigation through duplicate-labeled exits (both passages now accessible)
 - Fixed custom exit labels not working (only compass directions worked before)
 

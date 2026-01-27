@@ -2,9 +2,11 @@
  * Command handlers - execute player commands.
  */
 
-import type { OutputLine, Exit, Item, EquipSlot, Creature, Corpse, Location, NPC, StatusEffect } from '@solo-mud/shared';
-import { createRng, getWeaponDamage, CREATURE_TEMPLATES, TUTORIAL_STEPS, SHOP_ITEM_TEMPLATES, CONSUMABLE_EFFECTS, getDrunkLevel, checkDrunkStumble, getRandomStumbleText, xpForLevel, CLASSES } from '@solo-mud/shared';
+import type { OutputLine, Exit, Item, EquipSlot, Creature, Corpse, Location, StatusEffect, Spell, Player } from '@solo-mud/shared';
+import { createRng, getWeaponDamage, CREATURE_TEMPLATES, TUTORIAL_STEPS, SHOP_ITEM_TEMPLATES, CONSUMABLE_EFFECTS, getDrunkLevel, checkDrunkStumble, getRandomStumbleText, xpForLevel, CLASSES, getNpcsAtLocation, getNpcActivity, SEWER_VALVE_ROOM, SPELLS, getClassSpells, getLearnableSpells, getFutureSpells, formatCurrency, addCopper, canAfford, spendCurrency, formatPrice } from '@solo-mud/shared';
 import { handleCreatureDeath } from '../game/ecosystem';
+import { handlePlayerDeath } from '../game/game-loop';
+import { generateSewerLoot, SEWER_LOOT_TABLES } from '../loot/sewer-loot';
 import type { GameSession } from '../game/session';
 import { parseCommand, getDirection, type ParsedCommand } from './parser';
 import { generateDescription, generateExitProse, generateCreatureProse, type Biome, type Weather, type ExitInfo } from '../descriptions';
@@ -45,6 +47,7 @@ const handlers: Record<string, CommandHandler> = {
   kill: handleAttack,
   flee: handleFlee,
   loot: handleLoot,
+  open: handleOpen,
   talk: handleTalk,
   say: handleSay,
   tutorial: handleTutorial,
@@ -52,6 +55,26 @@ const handlers: Record<string, CommandHandler> = {
   buy: handleBuy,
   sell: handleSell,
   map: handleMap,
+  cast: handleCast,
+  spells: handleSpells,
+  skills: handleSpells,
+  abilities: handleSpells,
+  learn: handleLearn,
+  status: handleStatus,
+  stats: handleStatus,
+  slots: handleSlots,
+  quickslots: handleSlots,
+  assign: handleAssign,
+  unassign: handleUnassign,
+  // Quick slot shortcuts
+  q1: handleUseSlot,
+  q2: handleUseSlot,
+  q3: handleUseSlot,
+  q4: handleUseSlot,
+  a1: handleUseSlot,
+  a2: handleUseSlot,
+  a3: handleUseSlot,
+  a4: handleUseSlot,
   // Movement commands
   north: handleMove,
   south: handleMove,
@@ -99,6 +122,14 @@ export function executeCommand(session: GameSession, input: string): CommandResu
  * @param detailed - If true, show tactical breakdown (Items:, Creatures:, Exits: lines)
  * @param updateVisit - If true, increment visit count
  */
+/**
+ * Check if the player has an active light source.
+ */
+function hasLight(player: Player, gameTime: number): boolean {
+  if (!player.lightSource) return false;
+  return player.lightSource.expiresAt > gameTime;
+}
+
 function generateRoomOutput(
   session: GameSession,
   detailed: boolean,
@@ -110,6 +141,9 @@ function generateRoomOutput(
   if (!location) {
     return [{ text: 'You are nowhere. This should not happen.', style: 'error' }];
   }
+
+  // Check if area is dark and player has no light
+  const isDarkHere = location.isDark && !hasLight(player, world.time.totalMinutes);
 
   // Update visit count if requested
   if (updateVisit) {
@@ -124,6 +158,26 @@ function generateRoomOutput(
 
   // Location name (without debug ID)
   output.push({ text: `[ ${location.name} ]`, style: 'system' });
+
+  // If dark without light, show limited information
+  if (isDarkHere) {
+    output.push({ text: 'It is pitch dark. You cannot see anything.', style: 'combat' });
+    output.push({ text: 'You hear sounds echoing in the darkness...', style: 'normal' });
+
+    // Still show exits (you can feel your way along walls)
+    const exitIds = world.adjacency[player.locationId] ?? [];
+    const exits = exitIds.map(id => world.exits[id]).filter(Boolean) as Exit[];
+    if (exits.length > 0) {
+      const exitLabels = exits.map(e => e.label).join(', ');
+      output.push({ text: `You can feel passages leading: ${exitLabels}`, style: 'system' });
+    }
+
+    // Hint about needing light
+    output.push({ text: '', style: 'normal' });
+    output.push({ text: 'Use "use torch" to light your way.', style: 'system' });
+
+    return output;
+  }
 
   // Get dominant biome
   const biomeEntries = Object.entries(location.biome) as [string, number][];
@@ -169,7 +223,74 @@ function generateRoomOutput(
     output.push({ text: creatureProse, style: 'normal' });
   }
 
-  // Detailed mode: show tactical breakdown
+  // Condense exits that go to the same destination (e.g., "north" and "inn" both to Inn)
+  // Group by destination, prefer cardinal directions as primary
+  const cardinals = ['north', 'south', 'east', 'west', 'up', 'down'];
+  const exitsByDest = new Map<string, { primary: string; alternates: string[]; locked: boolean; destName: string }>();
+
+  for (const exit of exits) {
+    const destLocation = world.locations[exit.to];
+    const destName = destLocation?.name ?? 'Unknown';
+    const destKey = exit.to;
+
+    if (!exitsByDest.has(destKey)) {
+      exitsByDest.set(destKey, {
+        primary: exit.label,
+        alternates: [],
+        locked: exit.type === 'locked',
+        destName,
+      });
+    } else {
+      const existing = exitsByDest.get(destKey)!;
+      // If new label is cardinal and existing isn't, swap them
+      if (cardinals.includes(exit.label) && !cardinals.includes(existing.primary)) {
+        existing.alternates.push(existing.primary);
+        existing.primary = exit.label;
+      } else {
+        existing.alternates.push(exit.label);
+      }
+    }
+  }
+
+  // Always show condensed exits line
+  if (exitsByDest.size > 0) {
+    const exitList = Array.from(exitsByDest.values()).map(e => {
+      const locked = e.locked ? ' [LOCKED]' : '';
+      const alt = e.alternates.length > 0 ? `/${e.alternates.join('/')}` : '';
+      return `${e.primary}${alt}${locked}`;
+    }).join(', ');
+    output.push({ text: `Exits: ${exitList}`, style: 'system' });
+  }
+
+  // Always show NPCs and containers (important for gameplay)
+  // Containers (chests, crates, etc.)
+  if (world.containers) {
+    const containers = Object.values(world.containers).filter(
+      (c) => c.locationId === player.locationId
+    );
+    if (containers.length > 0) {
+      const containerNames = containers.map(c => {
+        const status = c.opened ? ' (open)' : c.locked ? ' (locked)' : '';
+        return `${c.name}${status}`;
+      }).join(', ');
+      output.push({ text: `Containers: ${containerNames}`, style: 'normal' });
+    }
+  }
+
+  // NPCs (using schedule-aware lookup)
+  const timeOfDay = world.time.timeOfDay;
+  const npcs = getNpcsAtLocation(world.npcs, location.npcs ?? [], location.id, timeOfDay);
+  if (npcs.length > 0) {
+    const npcList = npcs.map(n => {
+      const title = n.title ? `${n.title} ` : '';
+      const activity = getNpcActivity(n, timeOfDay);
+      const activityText = activity ? ` (${activity})` : '';
+      return `${title}${n.name}${activityText}`;
+    }).join(', ');
+    output.push({ text: `People: ${npcList}`, style: 'normal' });
+  }
+
+  // Detailed mode: show tactical breakdown (items, creature levels)
   if (detailed) {
     // Items
     const items = location.items.map(id => world.items[id]).filter(Boolean) as Item[];
@@ -177,17 +298,6 @@ function generateRoomOutput(
       const itemNames = items.map(i => i.name).join(', ');
       output.push({ text: '', style: 'normal' }); // blank line
       output.push({ text: `Items: ${itemNames}`, style: 'success' });
-    }
-
-    // NPCs
-    const npcIds = location.npcs ?? [];
-    const npcs = npcIds.map(id => world.npcs[id]).filter((n): n is NPC => n !== undefined);
-    if (npcs.length > 0) {
-      const npcList = npcs.map(n => {
-        const title = n.title ? `${n.title} ` : '';
-        return `${title}${n.name}`;
-      }).join(', ');
-      output.push({ text: `People: ${npcList}`, style: 'normal' });
     }
 
     // Creatures tactical breakdown
@@ -199,17 +309,6 @@ function generateRoomOutput(
       // Use 'combat' style for aggressive/territorial, 'normal' for passive
       const hasHostile = creatures.some(c => c.behavior !== 'passive');
       output.push({ text: `Creatures: ${creatureList}`, style: hasHostile ? 'combat' : 'normal' });
-    }
-
-    // Exits breakdown
-    if (exits.length > 0) {
-      const exitList = exits.map(exit => {
-        const destLocation = world.locations[exit.to];
-        const destName = destLocation?.name ?? 'Unknown';
-        const locked = exit.type === 'locked' ? ' [LOCKED]' : '';
-        return `${exit.label} (${destName})${locked}`;
-      }).join(', ');
-      output.push({ text: `Exits: ${exitList}`, style: 'system' });
     }
   }
 
@@ -245,18 +344,82 @@ function handleExamine(ctx: CommandContext): CommandResult {
     };
   }
 
-  // Check if examining an item in the room
+  // Check if examining an item in the room or inventory
   const targetLower = parsed.target.toLowerCase();
-  const item = location.items
+
+  // Check room items first
+  let item = location.items
     .map(id => world.items[id])
     .find(i => i?.name.toLowerCase().includes(targetLower));
+
+  // Also check inventory
+  if (!item) {
+    const invSlot = player.inventory.find(slot => {
+      const invItem = world.items[slot.itemId];
+      return invItem?.name.toLowerCase().includes(targetLower);
+    });
+    if (invSlot) {
+      item = world.items[invSlot.itemId];
+    }
+  }
+
+  // Also check equipped items
+  if (!item) {
+    for (const eqItemId of Object.values(player.equipment)) {
+      if (eqItemId) {
+        const eqItem = world.items[eqItemId];
+        if (eqItem?.name.toLowerCase().includes(targetLower)) {
+          item = eqItem;
+          break;
+        }
+      }
+    }
+  }
 
   if (item) {
     const output: OutputLine[] = [
       { text: `${item.name}`, style: 'system' },
       { text: `Rarity: ${item.rarity}`, style: 'normal' },
-      { text: `Tags: ${item.tags.join(', ')}`, style: 'normal' },
     ];
+
+    // Show equipment slot
+    const equipSlot = getEquipSlot(item);
+    if (equipSlot) {
+      const slotName = SLOT_NAMES[equipSlot];
+      output.push({ text: `Slot: ${slotName}`, style: 'normal' });
+    }
+
+    // Show weapon damage
+    if (item.tags.includes('weapon') || item.tags.includes('sword') || item.tags.includes('dagger') || item.tags.includes('mace') || item.tags.includes('axe') || item.tags.includes('staff') || item.tags.includes('bow')) {
+      const damage = getWeaponDamage(item);
+      output.push({ text: `Damage: ${damage.min}-${damage.max}`, style: 'combat' });
+    }
+
+    // Show stat bonuses from affixes
+    if (item.affixes && item.affixes.length > 0) {
+      const statBonuses: string[] = [];
+      for (const affix of item.affixes) {
+        for (const [stat, value] of Object.entries(affix.statMods)) {
+          const sign = value >= 0 ? '+' : '';
+          const statName = stat === 'str' ? 'STR' :
+                          stat === 'dex' ? 'DEX' :
+                          stat === 'con' ? 'CON' :
+                          stat === 'int' ? 'INT' :
+                          stat === 'wis' ? 'WIS' :
+                          stat === 'attackPower' ? 'Attack' :
+                          stat === 'defense' ? 'Defense' :
+                          stat === 'attackSpeed' ? 'Speed' :
+                          stat === 'critChance' ? 'Crit%' :
+                          stat === 'hitChance' ? 'Hit%' : stat;
+          statBonuses.push(`${sign}${value} ${statName}`);
+        }
+      }
+      if (statBonuses.length > 0) {
+        output.push({ text: `Stats: ${statBonuses.join(', ')}`, style: 'success' });
+      }
+    }
+
+    output.push({ text: `Type: ${item.tags.join(', ')}`, style: 'normal' });
     return { output };
   }
 
@@ -268,18 +431,25 @@ function handleExamine(ctx: CommandContext): CommandResult {
     };
   }
 
-  // Check for NPC
-  const npcIds = location.npcs ?? [];
-  const npc = npcIds
-    .map(id => world.npcs[id])
-    .filter((n): n is NPC => n !== undefined)
-    .find(n => n.name.toLowerCase().includes(targetLower));
+  // Check for NPC (using schedule-aware lookup)
+  const timeOfDay = world.time.timeOfDay;
+  const npcsHere = getNpcsAtLocation(world.npcs, location.npcs ?? [], location.id, timeOfDay);
+  const npc = npcsHere.find(n => n.name.toLowerCase().includes(targetLower));
 
   if (npc) {
     const title = npc.title ? `${npc.title} ` : '';
+    const activity = getNpcActivity(npc, timeOfDay);
     const output: OutputLine[] = [
       { text: `${title}${npc.name}`, style: 'system' },
     ];
+
+    if (activity) {
+      output.push({ text: `They appear to be ${activity}.`, style: 'normal' });
+    }
+
+    if (npc.role === 'guard' && npc.combat) {
+      output.push({ text: `A trained guard, level ${npc.combat.level}.`, style: 'normal' });
+    }
 
     if (npc.shop) {
       output.push({ text: 'This merchant has items for sale. Use "list" to see their wares.', style: 'normal' });
@@ -304,7 +474,7 @@ function handleUse(ctx: CommandContext): CommandResult {
 
   if (!parsed.target) {
     return {
-      output: [{ text: 'Use what? Specify an item or object.', style: 'system' }],
+      output: [{ text: 'Use what? Specify an item or object, or "use q1" for quick slot.', style: 'system' }],
     };
   }
 
@@ -315,7 +485,28 @@ function handleUse(ctx: CommandContext): CommandResult {
     };
   }
 
-  const targetLower = parsed.target.toLowerCase();
+  let targetLower = parsed.target.toLowerCase();
+
+  // Check if target is a slot reference (q1-q4)
+  const slotMatch = targetLower.match(/^q([1-4])$/);
+  if (slotMatch) {
+    const slotIndex = parseInt(slotMatch[1]!, 10) - 1;
+    const slot = player.itemSlots[slotIndex];
+    if (!slot) {
+      return {
+        output: [{ text: `Slot q${slotIndex + 1} is empty.`, style: 'error' }],
+      };
+    }
+    const slotItem = world.items[slot.id];
+    if (!slotItem) {
+      player.itemSlots[slotIndex] = null;
+      return {
+        output: [{ text: `Invalid item in slot q${slotIndex + 1}. Slot cleared.`, style: 'error' }],
+        updatePlayer: true,
+      };
+    }
+    targetLower = slotItem.name.toLowerCase();
+  }
 
   // Check inventory first for usable items
   const inventorySlot = player.inventory.find(slot => {
@@ -455,6 +646,45 @@ function handleUse(ctx: CommandContext): CommandResult {
       return { output, updatePlayer: true };
     }
 
+    // Handle light sources (torch, lantern, etc.)
+    if (item.tags.includes('light') || item.baseId === 'torch') {
+      const output: OutputLine[] = [];
+
+      // Check if player already has a light source active
+      if (player.lightSource && player.lightSource.expiresAt > world.time.totalMinutes) {
+        output.push({ text: `You already have a ${player.lightSource.name} lit.`, style: 'normal' });
+        return { output };
+      }
+
+      // Consume the item
+      if (inventorySlot.quantity > 1) {
+        inventorySlot.quantity--;
+      } else {
+        const slotIndex = player.inventory.indexOf(inventorySlot);
+        player.inventory.splice(slotIndex, 1);
+      }
+
+      // Torches last 30 game minutes
+      const duration = item.baseId === 'lantern' ? 120 : 30;
+      player.lightSource = {
+        itemBaseId: item.baseId,
+        name: item.name,
+        expiresAt: world.time.totalMinutes + duration,
+      };
+
+      output.push({ text: `You light the ${item.name}. Shadows dance on the walls.`, style: 'success' });
+      output.push({ text: `It will burn for about ${duration} minutes.`, style: 'system' });
+
+      // If in a dark area, show what you can now see
+      const location = world.locations[player.locationId];
+      if (location?.isDark) {
+        output.push({ text: '', style: 'normal' });
+        output.push({ text: 'The flickering light reveals your surroundings...', style: 'normal' });
+      }
+
+      return { output, updatePlayer: true, updateRoom: location?.isDark };
+    }
+
     return {
       output: [{ text: `You're not sure how to use the ${item.name}.`, style: 'normal' }],
     };
@@ -484,6 +714,10 @@ function handleUse(ctx: CommandContext): CommandResult {
       return {
         output: [{ text: `You warm your hands by the ${prop}. The flames crackle softly.`, style: 'normal' }],
       };
+    }
+    // Handle valve puzzle in the sewer
+    if (prop.includes('valve') && player.locationId === SEWER_VALVE_ROOM) {
+      return handleValvePuzzle(ctx, targetLower);
     }
     return {
       output: [{ text: `You interact with the ${prop}, but nothing special happens.`, style: 'normal' }],
@@ -655,6 +889,116 @@ function handleSpecialItem(ctx: CommandContext, item: Item, flavorText: string):
   return { output };
 }
 
+/** Puzzle hints mapped to their solutions */
+const PUZZLE_HINTS: { hint: string; solution: string[] }[] = [
+  { hint: 'Blood before sky, sky before earth', solution: ['red', 'blue', 'green'] },
+  { hint: 'Blood before earth, earth before sky', solution: ['red', 'green', 'blue'] },
+  { hint: 'Sky before blood, blood before earth', solution: ['blue', 'red', 'green'] },
+  { hint: 'Sky before earth, earth before blood', solution: ['blue', 'green', 'red'] },
+  { hint: 'Earth before blood, blood before sky', solution: ['green', 'red', 'blue'] },
+  { hint: 'Earth before sky, sky before blood', solution: ['green', 'blue', 'red'] },
+];
+
+/**
+ * Handle the valve puzzle in the sewer.
+ * The puzzle randomizes each attempt - hint changes to match the solution.
+ * Gate stays open until player leaves the sewer area.
+ */
+function handleValvePuzzle(ctx: CommandContext, targetLower: string): CommandResult {
+  const { session } = ctx;
+  const { world } = session;
+  const output: OutputLine[] = [];
+
+  // Check if gate is already open this session
+  if (session.sewerGateOpen) {
+    return {
+      output: [
+        { text: 'The valves have already been set correctly. The iron gate to the south stands open.', style: 'normal' },
+        { text: 'You can proceed south to the King Rat\'s lair.', style: 'system' },
+      ],
+    };
+  }
+
+  // Generate puzzle solution if not set (randomized each attempt)
+  if (!session.puzzleSolution) {
+    const rng = createRng(`${world.seed}-puzzle-${Date.now()}`);
+    const puzzleIndex = rng.nextInt(0, PUZZLE_HINTS.length - 1);
+    session.puzzleSolution = PUZZLE_HINTS[puzzleIndex]!.solution;
+    session.valveSequence = []; // Reset valve sequence for new puzzle
+  }
+
+  // Find the current hint based on solution
+  const currentHint = PUZZLE_HINTS.find(p =>
+    p.solution.every((v, i) => v === session.puzzleSolution![i])
+  )?.hint ?? 'Blood before sky, sky before earth';
+
+  // Determine which valve the player is trying to turn
+  let valve: string | null = null;
+  if (targetLower.includes('red')) {
+    valve = 'red';
+  } else if (targetLower.includes('blue')) {
+    valve = 'blue';
+  } else if (targetLower.includes('green')) {
+    valve = 'green';
+  }
+
+  if (!valve) {
+    // Generic valve interaction - show the randomized hint
+    return {
+      output: [
+        { text: 'Three large valve wheels are mounted on the wall: a red one, a blue one, and a green one.', style: 'normal' },
+        { text: `An ancient inscription above reads: "${currentHint}"`, style: 'system' },
+        { text: 'Try "use red valve", "use blue valve", or "use green valve".', style: 'system' },
+      ],
+    };
+  }
+
+  // Initialize valve sequence if not present
+  if (!session.valveSequence) {
+    session.valveSequence = [];
+  }
+
+  // Check if this valve was already turned in the current sequence
+  if (session.valveSequence.includes(valve)) {
+    output.push({ text: `The ${valve} valve has already been turned. It won't budge further.`, style: 'normal' });
+    return { output };
+  }
+
+  // Add this valve to the sequence
+  session.valveSequence.push(valve);
+  output.push({ text: `You grip the ${valve} valve wheel and turn it with effort. Ancient pipes groan and rumble.`, style: 'normal' });
+
+  // Check if sequence is complete (3 valves)
+  if (session.valveSequence.length === 3) {
+    const isCorrect = session.valveSequence.every((v, i) => v === session.puzzleSolution![i]);
+
+    if (isCorrect) {
+      // Puzzle solved! Open gate for this session
+      session.sewerGateOpen = true;
+      session.valveSequence = undefined;
+      session.puzzleSolution = undefined; // Will regenerate next time
+      output.push({ text: '', style: 'normal' });
+      output.push({ text: 'A deep grinding echoes through the chamber as the ancient mechanism engages.', style: 'system' });
+      output.push({ text: 'The heavy iron gate blocking the south passage slowly rises, revealing a dark passage beyond.', style: 'success' });
+      output.push({ text: 'A foul stench wafts from the newly opened way, and you hear heavy breathing in the darkness...', style: 'combat' });
+      return { output };
+    } else {
+      // Wrong sequence - reset and generate new puzzle
+      session.valveSequence = undefined;
+      session.puzzleSolution = undefined; // Will regenerate on next attempt
+      output.push({ text: '', style: 'normal' });
+      output.push({ text: 'The pipes shudder violently, then fall silent. Nothing happens.', style: 'normal' });
+      output.push({ text: 'The valves slowly reset to their original positions. The inscription seems to shimmer and change...', style: 'system' });
+      return { output };
+    }
+  }
+
+  // Sequence incomplete - give feedback
+  const remaining = 3 - session.valveSequence.length;
+  output.push({ text: `${remaining} valve${remaining > 1 ? 's' : ''} remain to be turned.`, style: 'system' });
+  return { output };
+}
+
 /**
  * Handle the "help" command.
  */
@@ -668,6 +1012,7 @@ function handleHelp(_ctx: CommandContext): CommandResult {
       { text: '  go <direction> - Move in a direction', style: 'normal' },
       { text: '  go <exit> to <destination> - Disambiguate multiple exits', style: 'normal' },
       { text: '  north/south/east/west (n/s/e/w) - Move directly', style: 'normal' },
+      { text: '  up/down (u/d) - Move vertically', style: 'normal' },
       { text: '  take <item> - Pick up an item', style: 'normal' },
       { text: '  take <item> from <corpse> - Loot an item from a corpse', style: 'normal' },
       { text: '  drop <item> - Drop an item', style: 'normal' },
@@ -677,7 +1022,15 @@ function handleHelp(_ctx: CommandContext): CommandResult {
       { text: '  unequip <slot> - Remove equipped item', style: 'normal' },
       { text: '  attack <target> (k) - Attack a creature', style: 'normal' },
       { text: '  flee - Escape from combat (50% chance)', style: 'normal' },
-      { text: '  loot [corpse] - Examine a corpse for loot', style: 'normal' },
+      { text: '  cast <spell> - Cast a spell', style: 'normal' },
+      { text: '  spells (skills, abilities) - View your known spells/abilities', style: 'normal' },
+      { text: '  learn <spell> - Learn a spell from a trainer', style: 'normal' },
+      { text: '  slots (quickslots) - View quick slot assignments', style: 'normal' },
+      { text: '  assign <slot> <item/spell> - Assign to slot (q1-q4, a1-a4)', style: 'normal' },
+      { text: '  unassign <slot> - Clear a quick slot', style: 'normal' },
+      { text: '  loot [corpse/container] [#|all] - Loot items (# to take item, all for everything)', style: 'normal' },
+      { text: '  open <container> - Open a chest or container', style: 'normal' },
+      { text: '  status (stats) - View your stats and active effects', style: 'normal' },
       { text: '  talk <npc> - Talk to someone', style: 'normal' },
       { text: '  say <number> - Respond in conversation', style: 'normal' },
       { text: '  list - View shop inventory', style: 'normal' },
@@ -888,7 +1241,8 @@ function handleMap(ctx: CommandContext): CommandResult {
       const dir = exit.label.charAt(0).toUpperCase() + exit.label.slice(1);
       const lock = exit.type === 'locked' ? ' 🔒' : '';
       const biome = dest ? getBiomeIcon(dest) : '?';
-      output.push({ text: `║    ${biome} ${dir.padEnd(10)} → ${destName}${lock}`.padEnd(75) + '║', style: 'normal' });
+      const danger = dest ? getDangerIcon(dest) : '';
+      output.push({ text: `║    ${biome}${danger} ${dir.padEnd(10)} → ${destName}${lock}`.padEnd(75) + '║', style: 'normal' });
     }
   }
 
@@ -1002,7 +1356,7 @@ function handleInventory(ctx: CommandContext): CommandResult {
     }
   }
 
-  output.push({ text: `Gold: ${player.gold}`, style: 'success' });
+  output.push({ text: `Currency: ${formatCurrency(player.currency)}`, style: 'success' });
   output.push({ text: `Weight: ${player.carryWeight}/${player.maxCarryWeight}`, style: 'normal' });
 
   return { output };
@@ -1377,7 +1731,45 @@ function handleMove(ctx: CommandContext): CommandResult {
       // Has key - unlock and proceed
       const keyItem = world.items[keySlot.itemId];
       usedKeyMessage = { text: `You use the ${keyItem?.name ?? 'key'} to unlock the way.`, style: 'success' };
+    } else if (exit.requirement?.kind === 'quest') {
+      // Check if player has completed the required quest/puzzle
+      const questFlag = exit.requirement.value as string;
+
+      // Special handling for sewer puzzle - uses session state, not permanent flags
+      if (questFlag === 'sewer_puzzle_solved') {
+        if (!session.sewerGateOpen) {
+          return {
+            output: [
+              { text: 'A heavy iron gate blocks the passage. It seems to be controlled by some mechanism.', style: 'error' },
+              { text: 'Perhaps the valves nearby hold the key to opening it...', style: 'system' },
+            ],
+          };
+        }
+        // Gate is open - can pass through
+      } else if (!player.questFlags.includes(questFlag)) {
+        // Other quests use permanent flags
+        return {
+          output: [{ text: `The way ${direction} is blocked. Something must be done to open it.`, style: 'error' }],
+        };
+      }
+      // Quest/puzzle complete - can pass through
     }
+  }
+
+  // Check for required items (rope, etc.)
+  if (exit.requiresItem) {
+    const hasItem = player.inventory.some(slot => {
+      const item = world.items[slot.itemId];
+      return item?.baseId === exit.requiresItem;
+    });
+
+    if (!hasItem) {
+      const message = exit.requiresItemMessage ?? `You need a ${exit.requiresItem} to go that way.`;
+      return {
+        output: [{ text: message, style: 'error' }],
+      };
+    }
+    // Player has the item - they can pass (item is not consumed, it's reusable)
   }
 
   // Check for leaving town through gate (before moving)
@@ -1395,8 +1787,19 @@ function handleMove(ctx: CommandContext): CommandResult {
     }
   }
 
+  // Track if leaving sewer area (to reset puzzle gate)
+  const wasInSewer = exit.from.startsWith('sewer_');
+  const nowInSewer = exit.to.startsWith('sewer_');
+
   // Move player
   player.locationId = exit.to;
+
+  // Reset sewer gate when leaving the sewer area (makes it repeatable)
+  if (wasInSewer && !nowInSewer && session.sewerGateOpen) {
+    session.sewerGateOpen = false;
+    session.puzzleSolution = undefined;
+    session.valveSequence = undefined;
+  }
 
   // Brief description of new location (not detailed)
   const roomOutput = generateRoomOutput(session, false, true);
@@ -1458,8 +1861,9 @@ function checkAggro(session: GameSession): OutputLine[] {
     style: 'combat',
   });
 
-  // Mark both as in combat
+  // Mark both as in combat - player auto-attacks back
   player.inCombat = true;
+  player.autoAttack = true;
   player.targetId = aggressor.id;
   aggressor.inCombat = true;
   aggressor.targetId = player.id;
@@ -1498,11 +1902,10 @@ function checkAggro(session: GameSession): OutputLine[] {
     });
 
     if (player.currentHp <= 0) {
-      output.push({
-        text: 'You have been slain!',
-        style: 'error',
-      });
-      player.currentHp = 1; // Prevent death for now
+      // Handle player death and respawn
+      const deathOutput = handlePlayerDeath(session);
+      output.push(...deathOutput);
+      return output;
     }
   }
 
@@ -1593,8 +1996,46 @@ function handleEquipment(ctx: CommandContext): CommandResult {
     const itemId = player.equipment[slot];
     const item = itemId ? world.items[itemId] : null;
     const slotName = SLOT_NAMES[slot];
-    const itemName = item ? item.name : '(empty)';
-    output.push({ text: `  ${slotName}: ${itemName}`, style: item ? 'normal' : 'system' });
+
+    if (!item) {
+      output.push({ text: `  ${slotName}: (empty)`, style: 'system' });
+    } else {
+      // Build stat summary
+      let stats = '';
+
+      // Show weapon damage
+      if (slot === 'weapon' || slot === 'offhand') {
+        const damage = getWeaponDamage(item);
+        stats = `[${damage.min}-${damage.max} dmg]`;
+      }
+
+      // Show affix stats
+      if (item.affixes && item.affixes.length > 0) {
+        const bonuses: string[] = [];
+        for (const affix of item.affixes) {
+          for (const [stat, value] of Object.entries(affix.statMods)) {
+            const sign = value >= 0 ? '+' : '';
+            const shortStat = stat === 'str' ? 'STR' :
+                            stat === 'dex' ? 'DEX' :
+                            stat === 'con' ? 'CON' :
+                            stat === 'int' ? 'INT' :
+                            stat === 'wis' ? 'WIS' :
+                            stat === 'attackPower' ? 'ATK' :
+                            stat === 'defense' ? 'DEF' :
+                            stat === 'attackSpeed' ? 'SPD' :
+                            stat === 'critChance' ? 'CRIT' :
+                            stat === 'hitChance' ? 'HIT' : stat.toUpperCase();
+            bonuses.push(`${sign}${value} ${shortStat}`);
+          }
+        }
+        if (bonuses.length > 0) {
+          stats = stats ? `${stats} ${bonuses.join(', ')}` : bonuses.join(', ');
+        }
+      }
+
+      const statDisplay = stats ? ` (${stats})` : '';
+      output.push({ text: `  ${slotName}: ${item.name}${statDisplay}`, style: 'normal' });
+    }
   }
 
   return { output };
@@ -1819,6 +2260,95 @@ function handleAttack(ctx: CommandContext): CommandResult {
 
   const output: OutputLine[] = [];
 
+  // Darkness ambush: if player is in dark without light and not already in combat,
+  // the creature gets a surprise attack with +50% damage
+  const isDarkHere = location.isDark && !hasLight(player, world.time.totalMinutes);
+  const isNewCombat = !player.inCombat;
+
+  if (isDarkHere && isNewCombat && targetCreature.behavior !== 'passive') {
+    output.push({
+      text: 'Something lurks in the darkness... it strikes before you can react!',
+      style: 'combat',
+    });
+
+    const ambushRng = createRng(`${world.seed}-ambush-${Date.now()}`);
+
+    // Ambush always hits
+    const minDmg = Math.max(1, targetCreature.level);
+    const maxDmg = Math.max(2, targetCreature.level * 2 + 2);
+    const baseDmg = minDmg + Math.floor(ambushRng.next() * (maxDmg - minDmg + 1));
+    const ambushDmg = Math.floor(baseDmg * 1.5); // +50% damage for ambush
+
+    // Apply damage to player
+    player.currentHp -= ambushDmg;
+
+    output.push({
+      text: `The ${targetCreature.name} ambushes you for ${ambushDmg} damage!`,
+      style: 'combat',
+    });
+    output.push({
+      text: `Your HP: ${player.currentHp}/${player.maxHp}`,
+      style: player.currentHp <= player.maxHp * 0.25 ? 'error' : 'system',
+    });
+
+    // Check if player died from ambush
+    if (player.currentHp <= 0) {
+      output.push({ text: '', style: 'normal' });
+      output.push({
+        text: 'You collapse in the darkness, never seeing what killed you...',
+        style: 'error',
+      });
+
+      // Handle player death
+      const deathOutput = handlePlayerDeath(session);
+      output.push(...deathOutput);
+
+      return { output, updatePlayer: true, updateRoom: true };
+    }
+
+    output.push({ text: '', style: 'normal' });
+    output.push({ text: 'You recover and prepare to fight back!', style: 'normal' });
+  }
+
+  // Check for ranger trap triggering when player initiates combat
+  if (isNewCombat && player.placedTrap && player.placedTrap.locationId === player.locationId) {
+    const trapResult = triggerRangerTrap(player, targetCreature, createRng(`trap-${Date.now()}`));
+    output.push(...trapResult.output);
+
+    if (trapResult.creatureKilled) {
+      // Grant XP
+      const xpGain = targetCreature.level * 15;
+      player.xp += xpGain;
+      output.push({ text: `You gain ${xpGain} XP.`, style: 'success' });
+
+      // Check level up
+      while (player.xp >= player.xpToNextLevel) {
+        player.level++;
+        player.xpToNextLevel = xpForLevel(player.level + 1);
+        const classDef = CLASSES[player.class];
+        player.maxHp += classDef.hpPerLevel;
+        player.maxMp += classDef.mpPerLevel;
+        player.currentHp = player.maxHp;
+        player.currentMp = player.maxMp;
+        output.push({
+          text: `★ LEVEL UP! You are now level ${player.level}!`,
+          style: 'success',
+        });
+      }
+
+      // Handle creature death
+      const template = CREATURE_TEMPLATES[targetCreature.templateId];
+      handleCreatureDeath(world, targetCreature, 'player', template?.tier ?? 'common', []);
+
+      output.push({
+        text: `Use "loot ${targetCreature.name.toLowerCase()}" to check the corpse.`,
+        style: 'system',
+      });
+
+      return { output, updateRoom: true, updatePlayer: true };
+    }
+  }
+
   // Get player's weapon
   const weaponId = player.equipment.weapon;
   const weapon = weaponId ? world.items[weaponId] : undefined;
@@ -1893,9 +2423,20 @@ function handleAttack(ctx: CommandContext): CommandResult {
       const template = CREATURE_TEMPLATES[targetCreature.templateId];
       const tier = template?.tier ?? 'common';
 
-      // Generate loot (placeholder - use existing loot system or empty for now)
+      // Generate loot based on creature template
+      let lootItems: Item[] = [];
+
+      // Check if this creature has a sewer loot table
+      if (SEWER_LOOT_TABLES[targetCreature.templateId]) {
+        lootItems = generateSewerLoot(targetCreature.templateId, targetCreature.level, rng);
+      }
+
+      // Add generated items to world and collect IDs for corpse
       const loot: string[] = [];
-      // TODO: Generate actual loot based on creature template
+      for (const item of lootItems) {
+        world.items[item.id] = item;
+        loot.push(item.id);
+      }
 
       // Use ecosystem death handler
       handleCreatureDeath(world, targetCreature, 'player', tier, loot);
@@ -1908,14 +2449,16 @@ function handleAttack(ctx: CommandContext): CommandResult {
       const baseXp = targetCreature.level * 10;
       const xpReward = Math.floor(baseXp * tierMultiplier * behaviorMultiplier);
 
-      // Gold reward (no gold from passive creatures)
-      const goldReward = targetCreature.behavior === 'passive' ? 0 : Math.floor(targetCreature.level * (2 + rng.next() * 3));
+      // Copper reward (no coins from passive creatures)
+      const copperReward = targetCreature.behavior === 'passive' ? 0 : Math.floor(targetCreature.level * (2 + rng.next() * 3));
 
       player.xp += xpReward;
-      player.gold += goldReward;
+      if (copperReward > 0) {
+        player.currency = addCopper(player.currency, copperReward);
+      }
 
       output.push({
-        text: `You gain ${xpReward} XP${goldReward > 0 ? ` and ${goldReward} gold` : ''}.`,
+        text: `You gain ${xpReward} XP${copperReward > 0 ? ` and ${formatPrice(copperReward)}` : ''}.`,
         style: 'success',
       });
 
@@ -1996,8 +2539,9 @@ function handleAttack(ctx: CommandContext): CommandResult {
     }
   }
 
-  // Set player in combat
+  // Set player in combat with auto-attack enabled
   player.inCombat = true;
+  player.autoAttack = true;
   player.targetId = targetCreature.id;
   targetCreature.inCombat = true;
   targetCreature.targetId = player.id;
@@ -2040,12 +2584,10 @@ function handleAttack(ctx: CommandContext): CommandResult {
 
       // Check if player died
       if (player.currentHp <= 0) {
-        output.push({
-          text: 'You have been slain!',
-          style: 'error',
-        });
-        // TODO: Handle player death properly
-        player.currentHp = 1; // For now, just prevent going below 1
+        // Handle player death and respawn
+        const deathOutput = handlePlayerDeath(session);
+        output.push(...deathOutput);
+        return { output, updateRoom: true, updatePlayer: true };
       }
     }
   } else if (targetCreature.currentHp > 0 && targetCreature.behavior === 'passive') {
@@ -2091,7 +2633,8 @@ function handleFlee(ctx: CommandContext): CommandResult {
 }
 
 /**
- * Handle the "loot" command - examine a corpse for items.
+ * Handle the "loot" command - examine a corpse or container for items or take loot directly.
+ * Supports: loot, loot <target>, loot <target> all, loot <target> <number>
  */
 function handleLoot(ctx: CommandContext): CommandResult {
   const { session, parsed } = ctx;
@@ -2104,63 +2647,1118 @@ function handleLoot(ctx: CommandContext): CommandResult {
     };
   }
 
-  // Find corpses in this location
+  // Find corpses and containers in this location
   const corpses = Object.values(world.corpses).filter(
     (c) => c.locationId === player.locationId
   );
 
-  if (corpses.length === 0) {
+  const containers = world.containers
+    ? Object.values(world.containers).filter(
+        (c) => c.locationId === player.locationId && c.opened
+      )
+    : [];
+
+  if (corpses.length === 0 && containers.length === 0) {
     return {
-      output: [{ text: 'There are no corpses here to loot.', style: 'error' }],
+      output: [{ text: 'There is nothing here to loot.', style: 'error' }],
     };
   }
 
-  // If no target specified, use the only corpse or prompt
-  let targetCorpse: Corpse | undefined;
+  // Parse the target - could be "rat", "rat all", "rat 1", "chest", etc.
+  // Use full args since target only contains the first argument
+  let targetName: string | undefined;
+  let action: string | undefined;
 
-  if (!parsed.target) {
-    if (corpses.length === 1) {
-      targetCorpse = corpses[0];
+  if (parsed.args.length > 0) {
+    targetName = parsed.args[0];
+    action = parsed.args.slice(1).join(' ').toLowerCase();
+  }
+
+  // Try to find the target - could be a corpse or container
+  let targetCorpse: Corpse | undefined;
+  let targetContainer: { id: string; name: string; contents: string[]; type: 'container' } | undefined;
+  let targetType: 'corpse' | 'container' = 'corpse';
+
+  if (!targetName) {
+    // No target specified - use the only lootable thing or prompt
+    const total = corpses.length + containers.length;
+    if (total === 1) {
+      if (corpses.length === 1) {
+        targetCorpse = corpses[0];
+        targetType = 'corpse';
+      } else {
+        const c = containers[0]!;
+        targetContainer = { id: c.id, name: c.name, contents: c.contents, type: 'container' };
+        targetType = 'container';
+      }
     } else {
-      const names = corpses.map((c) => c.name).join(', ');
+      const corpseNames = corpses.map((c) => `${c.name} (corpse)`);
+      const containerNames = containers.map((c) => `${c.name}`);
+      const names = [...corpseNames, ...containerNames].join(', ');
       return {
         output: [
-          { text: 'Multiple corpses here. Specify which one:', style: 'system' },
+          { text: 'Multiple lootable things here. Specify which one:', style: 'system' },
           { text: `  ${names}`, style: 'normal' },
         ],
       };
     }
   } else {
-    const targetLower = parsed.target.toLowerCase();
+    const nameLower = targetName.toLowerCase();
+
+    // Check corpses first
     targetCorpse = corpses.find((c) =>
-      c.name.toLowerCase().includes(targetLower)
+      c.name.toLowerCase().includes(nameLower)
+    );
+
+    if (targetCorpse) {
+      targetType = 'corpse';
+    } else {
+      // Check containers
+      const container = containers.find((c) =>
+        c.name.toLowerCase().includes(nameLower)
+      );
+      if (container) {
+        targetContainer = { id: container.id, name: container.name, contents: container.contents, type: 'container' };
+        targetType = 'container';
+      }
+    }
+  }
+
+  // Handle corpse looting
+  if (targetType === 'corpse' && targetCorpse) {
+    return handleLootFromSource(
+      world, player, targetCorpse.name, targetCorpse.loot, action,
+      (isEmpty) => {
+        if (isEmpty) {
+          targetCorpse!.looted = true;
+          targetCorpse!.lootedAt = Date.now();
+        }
+      },
+      'corpse'
     );
   }
 
-  if (!targetCorpse) {
+  // Handle container looting
+  if (targetType === 'container' && targetContainer) {
+    const container = world.containers![targetContainer.id]!;
+
+    // Save original contents for respawning (if not already saved)
+    if (!container.originalContents && container.respawns) {
+      container.originalContents = [...container.contents];
+    }
+
+    return handleLootFromSource(
+      world, player, container.name, container.contents, action,
+      () => {
+        // Track when container was looted for respawn timing
+        if (container.respawns && container.lastOpened === undefined) {
+          container.lastOpened = world.time.totalMinutes;
+        }
+      },
+      'container'
+    );
+  }
+
+  return {
+    output: [{ text: `You don't see a "${targetName}" here to loot.`, style: 'error' }],
+  };
+}
+
+/**
+ * Helper to handle looting from a corpse or container.
+ */
+function handleLootFromSource(
+  world: { items: Record<string, Item> },
+  player: { inventory: { itemId: string; quantity: number }[]; inventorySlots: number },
+  sourceName: string,
+  contents: string[],
+  action: string | undefined,
+  onEmpty: (isEmpty: boolean) => void,
+  sourceType: 'corpse' | 'container'
+): CommandResult {
+  const descriptor = sourceType === 'corpse' ? `${sourceName}'s corpse` : sourceName;
+
+  // Check if empty
+  if (contents.length === 0) {
+    const emptyMsg = sourceType === 'corpse'
+      ? `The ${descriptor} has nothing left of value.`
+      : `The ${sourceName} is empty.`;
     return {
-      output: [{ text: `You don't see a "${parsed.target}" corpse here.`, style: 'error' }],
+      output: [{ text: emptyMsg, style: 'normal' }],
     };
   }
 
-  // Show loot
-  if (targetCorpse.loot.length === 0) {
+  // Handle "loot <target> all" - take everything
+  if (action === 'all') {
+    const taken: string[] = [];
+    for (const itemId of [...contents]) {
+      const item = world.items[itemId];
+      if (item && player.inventory.length < player.inventorySlots) {
+        player.inventory.push({ itemId, quantity: 1 });
+        taken.push(item.name);
+        const idx = contents.indexOf(itemId);
+        if (idx !== -1) contents.splice(idx, 1);
+      }
+    }
+
+    if (taken.length === 0) {
+      return {
+        output: [{ text: 'Your inventory is full.', style: 'error' }],
+      };
+    }
+
+    onEmpty(contents.length === 0);
+
     return {
-      output: [{ text: `The ${targetCorpse.name}'s corpse has nothing left of value.`, style: 'normal' }],
+      output: [{ text: `You take ${taken.join(', ')}.`, style: 'success' }],
+      updatePlayer: true,
     };
   }
 
+  // Handle "loot <target> <number>" - take by number
+  const numMatch = action?.match(/^(\d+)$/);
+  if (numMatch) {
+    const index = parseInt(numMatch[1]!, 10) - 1;
+    if (index < 0 || index >= contents.length) {
+      return {
+        output: [{ text: `Invalid number. Use 1-${contents.length}.`, style: 'error' }],
+      };
+    }
+
+    const itemId = contents[index]!;
+    const item = world.items[itemId];
+
+    if (player.inventory.length >= player.inventorySlots) {
+      return {
+        output: [{ text: 'Your inventory is full.', style: 'error' }],
+      };
+    }
+
+    player.inventory.push({ itemId, quantity: 1 });
+    contents.splice(index, 1);
+
+    onEmpty(contents.length === 0);
+
+    // Show remaining loot if any
+    const output: OutputLine[] = [
+      { text: `You take the ${item?.name ?? 'item'}.`, style: 'success' },
+    ];
+
+    if (contents.length > 0) {
+      output.push({ text: `The ${descriptor} still contains:`, style: 'system' });
+      contents.forEach((id, idx) => {
+        const lootItem = world.items[id];
+        output.push({ text: `  ${idx + 1}. ${lootItem?.name ?? 'Unknown item'}`, style: 'normal' });
+      });
+    }
+
+    return { output, updatePlayer: true };
+  }
+
+  // No action specified - just show contents with options
   const output: OutputLine[] = [
-    { text: `The ${targetCorpse.name}'s corpse contains:`, style: 'system' },
+    { text: `The ${descriptor} contains:`, style: 'system' },
   ];
 
-  targetCorpse.loot.forEach((itemId, index) => {
+  contents.forEach((itemId, index) => {
     const item = world.items[itemId];
     const name = item?.name ?? 'Unknown item';
     output.push({ text: `  ${index + 1}. ${name}`, style: 'normal' });
   });
 
+  output.push({ text: '', style: 'normal' });
+  output.push({ text: `Use "loot ${sourceName.toLowerCase()} <#>" or "loot ${sourceName.toLowerCase()} all"`, style: 'system' });
+
   return { output };
+}
+
+/**
+ * Handle the "spells" command - list known spells.
+ */
+function handleSpells(ctx: CommandContext): CommandResult {
+  const { session } = ctx;
+  const { player } = session;
+
+  const output: OutputLine[] = [
+    { text: '=== Your Spells ===', style: 'system' },
+  ];
+
+  if (player.spells.known.length === 0) {
+    output.push({ text: 'You have not learned any spells yet.', style: 'normal' });
+    output.push({ text: 'Visit a class trainer to learn spells.', style: 'system' });
+    return { output };
+  }
+
+  for (const spellId of player.spells.known) {
+    const spell = SPELLS[spellId];
+    if (!spell) continue;
+
+    const cooldownRemaining = player.abilityCooldowns[spellId] ?? 0;
+    const cooldownText = cooldownRemaining > 0
+      ? ` [CD: ${Math.ceil(cooldownRemaining / 1000)}s]`
+      : '';
+
+    const slotIndex = player.spells.slots.indexOf(spellId);
+    const slotText = slotIndex >= 0 ? ` [Slot ${slotIndex + 1}]` : '';
+
+    output.push({
+      text: `  ${spell.name}${slotText}${cooldownText} - ${spell.manaCost} MP`,
+      style: 'normal'
+    });
+    output.push({
+      text: `    ${spell.description}`,
+      style: 'system'
+    });
+  }
+
+  output.push({ text: '', style: 'normal' });
+  output.push({ text: 'Use "cast <spell>" to cast a spell.', style: 'system' });
+
+  // Show learnable spells
+  const learnable = getLearnableSpells(player.class, player.level, player.spells.known);
+  if (learnable.length > 0) {
+    output.push({ text: '', style: 'normal' });
+    output.push({ text: 'Spells available to learn from trainers:', style: 'system' });
+    for (const spell of learnable) {
+      output.push({
+        text: `  ${spell.name} (Level ${spell.levelRequired}) - ${spell.learnCost} gold`,
+        style: 'normal'
+      });
+    }
+  }
+
+  return { output };
+}
+
+/**
+ * Handle the "slots" command - show quick slot assignments.
+ */
+function handleSlots(ctx: CommandContext): CommandResult {
+  const { session } = ctx;
+  const { world, player } = session;
+
+  const output: OutputLine[] = [
+    { text: '=== Quick Slots ===', style: 'system' },
+    { text: '', style: 'normal' },
+  ];
+
+  // Show item slots (q1-q4)
+  output.push({ text: 'Item Slots:', style: 'system' });
+  for (let i = 0; i < 4; i++) {
+    const slot = player.itemSlots[i];
+    if (slot) {
+      const item = world.items[slot.id];
+      const name = item?.name ?? 'Unknown item';
+      output.push({ text: `  [q${i + 1}] ${name}`, style: 'normal' });
+    } else {
+      output.push({ text: `  [q${i + 1}] (empty)`, style: 'system' });
+    }
+  }
+
+  output.push({ text: '', style: 'normal' });
+
+  // Show ability/spell slots (a1-a4)
+  output.push({ text: 'Ability Slots:', style: 'system' });
+  for (let i = 0; i < 4; i++) {
+    const slot = player.abilitySlots[i];
+    if (slot) {
+      const spell = SPELLS[slot.id];
+      const name = spell?.name ?? 'Unknown ability';
+      output.push({ text: `  [a${i + 1}] ${name}`, style: 'normal' });
+    } else {
+      output.push({ text: `  [a${i + 1}] (empty)`, style: 'system' });
+    }
+  }
+
+  output.push({ text: '', style: 'normal' });
+  output.push({ text: 'Use "assign q1 <item>" or "assign a1 <spell>" to set slots.', style: 'system' });
+  output.push({ text: 'Use "unassign q1" or "unassign a1" to clear slots.', style: 'system' });
+
+  return { output };
+}
+
+/**
+ * Handle the "assign" command - assign an item or spell to a quick slot.
+ * Usage: assign q1 potion, assign a2 fireball
+ */
+function handleAssign(ctx: CommandContext): CommandResult {
+  const { session, parsed } = ctx;
+  const { world, player } = session;
+
+  if (parsed.args.length < 2) {
+    return {
+      output: [
+        { text: 'Usage: assign <slot> <item/spell>', style: 'error' },
+        { text: 'Slots: q1-q4 (items), a1-a4 (abilities)', style: 'system' },
+      ],
+    };
+  }
+
+  const slotArg = parsed.args[0]!.toLowerCase();
+  const targetName = parsed.args.slice(1).join(' ').toLowerCase();
+
+  // Parse slot type and number
+  const slotMatch = slotArg.match(/^([qa])(\d)$/);
+  if (!slotMatch) {
+    return {
+      output: [{ text: 'Invalid slot. Use q1-q4 for items, a1-a4 for abilities.', style: 'error' }],
+    };
+  }
+
+  const slotType = slotMatch[1] as 'q' | 'a';
+  const slotNum = parseInt(slotMatch[2]!, 10);
+
+  if (slotNum < 1 || slotNum > 4) {
+    return {
+      output: [{ text: 'Slot number must be 1-4.', style: 'error' }],
+    };
+  }
+
+  const slotIndex = slotNum - 1;
+
+  if (slotType === 'q') {
+    // Assigning an item to item slot
+    const inventorySlot = player.inventory.find(slot => {
+      const item = world.items[slot.itemId];
+      return item?.name.toLowerCase().includes(targetName);
+    });
+
+    if (!inventorySlot) {
+      return {
+        output: [{ text: `You don't have "${targetName}" in your inventory.`, style: 'error' }],
+      };
+    }
+
+    const item = world.items[inventorySlot.itemId]!;
+
+    // Check if it's a usable item (consumable)
+    if (!item.tags.includes('consumable')) {
+      return {
+        output: [{ text: `${item.name} is not a usable item.`, style: 'error' }],
+      };
+    }
+
+    player.itemSlots[slotIndex] = { type: 'item', id: inventorySlot.itemId };
+
+    return {
+      output: [{ text: `Assigned ${item.name} to slot q${slotNum}.`, style: 'success' }],
+      updatePlayer: true,
+    };
+  } else {
+    // Assigning a spell/ability to ability slot
+    let foundSpell: Spell | undefined;
+    for (const spellId of player.spells.known) {
+      const spell = SPELLS[spellId];
+      if (spell && spell.name.toLowerCase().includes(targetName)) {
+        foundSpell = spell;
+        break;
+      }
+    }
+
+    if (!foundSpell) {
+      return {
+        output: [{ text: `You don't know a spell called "${targetName}".`, style: 'error' }],
+      };
+    }
+
+    player.abilitySlots[slotIndex] = { type: 'ability', id: foundSpell.id };
+
+    return {
+      output: [{ text: `Assigned ${foundSpell.name} to slot a${slotNum}.`, style: 'success' }],
+      updatePlayer: true,
+    };
+  }
+}
+
+/**
+ * Handle the "unassign" command - clear a quick slot.
+ * Usage: unassign q1, unassign a2
+ */
+function handleUnassign(ctx: CommandContext): CommandResult {
+  const { session, parsed } = ctx;
+  const { player } = session;
+
+  if (!parsed.target) {
+    return {
+      output: [
+        { text: 'Usage: unassign <slot>', style: 'error' },
+        { text: 'Slots: q1-q4 (items), a1-a4 (abilities)', style: 'system' },
+      ],
+    };
+  }
+
+  const slotArg = parsed.target.toLowerCase();
+
+  // Parse slot type and number
+  const slotMatch = slotArg.match(/^([qa])(\d)$/);
+  if (!slotMatch) {
+    return {
+      output: [{ text: 'Invalid slot. Use q1-q4 for items, a1-a4 for abilities.', style: 'error' }],
+    };
+  }
+
+  const slotType = slotMatch[1] as 'q' | 'a';
+  const slotNum = parseInt(slotMatch[2]!, 10);
+
+  if (slotNum < 1 || slotNum > 4) {
+    return {
+      output: [{ text: 'Slot number must be 1-4.', style: 'error' }],
+    };
+  }
+
+  const slotIndex = slotNum - 1;
+
+  if (slotType === 'q') {
+    if (!player.itemSlots[slotIndex]) {
+      return {
+        output: [{ text: `Slot q${slotNum} is already empty.`, style: 'system' }],
+      };
+    }
+    player.itemSlots[slotIndex] = null;
+    return {
+      output: [{ text: `Cleared item slot q${slotNum}.`, style: 'success' }],
+      updatePlayer: true,
+    };
+  } else {
+    if (!player.abilitySlots[slotIndex]) {
+      return {
+        output: [{ text: `Slot a${slotNum} is already empty.`, style: 'system' }],
+      };
+    }
+    player.abilitySlots[slotIndex] = null;
+    return {
+      output: [{ text: `Cleared ability slot a${slotNum}.`, style: 'success' }],
+      updatePlayer: true,
+    };
+  }
+}
+
+/**
+ * Handle quick slot shortcuts (q1-q4 for items, a1-a4 for abilities).
+ * Using a slot will use the item or cast the spell assigned to it.
+ */
+function handleUseSlot(ctx: CommandContext): CommandResult {
+  const { session, parsed } = ctx;
+  const { world, player } = session;
+
+  const command = parsed.command.toLowerCase();
+  const slotMatch = command.match(/^([qa])(\d)$/);
+
+  if (!slotMatch) {
+    return {
+      output: [{ text: 'Invalid slot command.', style: 'error' }],
+    };
+  }
+
+  const slotType = slotMatch[1] as 'q' | 'a';
+  const slotNum = parseInt(slotMatch[2]!, 10);
+  const slotIndex = slotNum - 1;
+
+  if (slotType === 'q') {
+    // Item slot - use the item
+    const slot = player.itemSlots[slotIndex];
+    if (!slot) {
+      return {
+        output: [{ text: `Slot q${slotNum} is empty. Use "assign q${slotNum} <item>" to set it.`, style: 'error' }],
+      };
+    }
+
+    // Find the item in inventory
+    const inventorySlot = player.inventory.find(inv => inv.itemId === slot.id);
+    if (!inventorySlot) {
+      // Item no longer in inventory - clear the slot
+      player.itemSlots[slotIndex] = null;
+      return {
+        output: [{ text: `That item is no longer in your inventory. Slot cleared.`, style: 'error' }],
+        updatePlayer: true,
+      };
+    }
+
+    // Delegate to the use command
+    return handleUse({ session, parsed: { ...parsed, command: 'use', target: world.items[slot.id]?.name ?? slot.id, args: [world.items[slot.id]?.name ?? slot.id], raw: parsed.raw } });
+  } else {
+    // Ability slot - cast the spell
+    const slot = player.abilitySlots[slotIndex];
+    if (!slot) {
+      return {
+        output: [{ text: `Slot a${slotNum} is empty. Use "assign a${slotNum} <spell>" to set it.`, style: 'error' }],
+      };
+    }
+
+    // Check if player still knows the spell
+    if (!player.spells.known.includes(slot.id)) {
+      player.abilitySlots[slotIndex] = null;
+      return {
+        output: [{ text: `You no longer know that spell. Slot cleared.`, style: 'error' }],
+        updatePlayer: true,
+      };
+    }
+
+    // Delegate to the cast command
+    const spell = SPELLS[slot.id];
+    return handleCast({ session, parsed: { ...parsed, command: 'cast', target: spell?.name ?? slot.id, args: [spell?.name ?? slot.id], raw: parsed.raw } });
+  }
+}
+
+/**
+ * Handle the "cast" command - cast a spell.
+ * Supports: cast <spell name>, cast a1 (slot reference)
+ */
+function handleCast(ctx: CommandContext): CommandResult {
+  const { session, parsed } = ctx;
+  const { world, player } = session;
+
+  if (!parsed.target) {
+    return {
+      output: [{ text: 'Cast what? Try "cast <spell name>" or "cast a1".', style: 'error' }],
+    };
+  }
+
+  let spellName = parsed.target.toLowerCase();
+
+  // Check if target is a slot reference (a1-a4)
+  const slotMatch = spellName.match(/^a([1-4])$/);
+  if (slotMatch) {
+    const slotIndex = parseInt(slotMatch[1]!, 10) - 1;
+    const slot = player.abilitySlots[slotIndex];
+    if (!slot) {
+      return {
+        output: [{ text: `Slot a${slotIndex + 1} is empty.`, style: 'error' }],
+      };
+    }
+    const slotSpell = SPELLS[slot.id];
+    if (!slotSpell) {
+      return {
+        output: [{ text: `Invalid spell in slot a${slotIndex + 1}.`, style: 'error' }],
+      };
+    }
+    spellName = slotSpell.name.toLowerCase();
+  }
+
+  // Find the spell by name or ID
+  let spell: Spell | undefined;
+  for (const spellId of player.spells.known) {
+    const s = SPELLS[spellId];
+    if (s && (s.id === spellName || s.name.toLowerCase().includes(spellName))) {
+      spell = s;
+      break;
+    }
+  }
+
+  if (!spell) {
+    return {
+      output: [{ text: `You don't know a spell called "${parsed.target}".`, style: 'error' }],
+    };
+  }
+
+  // Check if spell can be used out of combat
+  if (!spell.outOfCombat && !player.inCombat) {
+    return {
+      output: [{ text: `${spell.name} can only be used in combat.`, style: 'error' }],
+    };
+  }
+
+  // Check mana
+  if (player.currentMp < spell.manaCost) {
+    return {
+      output: [{ text: `Not enough mana. ${spell.name} costs ${spell.manaCost} MP.`, style: 'error' }],
+    };
+  }
+
+  // Check cooldown
+  const cooldownRemaining = player.abilityCooldowns[spell.id] ?? 0;
+  if (cooldownRemaining > 0) {
+    return {
+      output: [{ text: `${spell.name} is on cooldown for ${Math.ceil(cooldownRemaining / 1000)} more seconds.`, style: 'error' }],
+    };
+  }
+
+  // Check GCD
+  if (player.globalCooldown > 0) {
+    return {
+      output: [{ text: 'You are not ready yet.', style: 'error' }],
+    };
+  }
+
+  // For targeted spells, find a target
+  let targetCreature: Creature | undefined;
+  if (spell.requiresTarget && spell.target === 'enemy') {
+    // If in combat with a target, use that
+    if (player.targetId) {
+      targetCreature = world.creatures[player.targetId];
+    }
+
+    // Otherwise look for creatures in the room
+    if (!targetCreature) {
+      const location = world.locations[player.locationId];
+      if (location?.creatures) {
+        for (const creatureId of location.creatures) {
+          const creature = world.creatures[creatureId];
+          if (creature && creature.currentHp > 0) {
+            targetCreature = creature;
+            break;
+          }
+        }
+      }
+    }
+
+    if (!targetCreature) {
+      return {
+        output: [{ text: `${spell.name} requires a target. No enemies here.`, style: 'error' }],
+      };
+    }
+  }
+
+  // Deduct mana
+  player.currentMp -= spell.manaCost;
+
+  // Set cooldown
+  if (spell.cooldown > 0) {
+    player.abilityCooldowns[spell.id] = spell.cooldown * 1000;
+  }
+
+  // Trigger GCD (1.5 seconds)
+  player.globalCooldown = 1500;
+
+  const output: OutputLine[] = [];
+
+  // Execute spell effect
+  switch (spell.effect) {
+    case 'damage': {
+      if (!targetCreature) break;
+
+      // Calculate damage: baseValue + (spellPower * scaling)
+      const spellPower = player.baseStats.int * 2; // Simple spell power calculation
+      const damage = Math.floor(spell.baseValue + (spellPower * spell.spellPowerScaling));
+
+      targetCreature.currentHp -= damage;
+
+      output.push({
+        text: `You cast ${spell.name} on ${targetCreature.name} for ${damage} ${spell.damageType ?? 'magic'} damage!`,
+        style: 'combat'
+      });
+
+      // Check if creature died
+      if (targetCreature.currentHp <= 0) {
+        const template = CREATURE_TEMPLATES[targetCreature.templateId];
+        const tier = template?.tier ?? 'common';
+
+        // Generate loot
+        let lootItems: Item[] = [];
+        const rng = createRng(Date.now().toString());
+        if (SEWER_LOOT_TABLES[targetCreature.templateId]) {
+          lootItems = generateSewerLoot(targetCreature.templateId, targetCreature.level, rng);
+        }
+
+        // Add items to world
+        const loot: string[] = [];
+        for (const item of lootItems) {
+          world.items[item.id] = item;
+          loot.push(item.id);
+        }
+
+        handleCreatureDeath(world, targetCreature, 'player', tier, loot);
+        output.push({ text: `${targetCreature.name} has been slain!`, style: 'success' });
+
+        // Give XP
+        const xpGain = targetCreature.level * 15;
+        const xpResult = grantXp(player, xpGain);
+        output.push(...xpResult);
+
+        // Note about looting
+        output.push({
+          text: `Use "loot ${targetCreature.name.toLowerCase()}" to check the corpse.`,
+          style: 'system',
+        });
+
+        // Exit combat if no more enemies
+        const location = world.locations[player.locationId];
+        const remainingEnemies = location?.creatures?.some(id => {
+          const c = world.creatures[id];
+          return c && c.currentHp > 0;
+        });
+
+        if (!remainingEnemies) {
+          player.inCombat = false;
+          player.targetId = undefined;
+        }
+      }
+      break;
+    }
+
+    case 'heal': {
+      const spellPower = player.baseStats.wis * 2;
+      const healing = Math.floor(spell.baseValue + (spellPower * spell.spellPowerScaling));
+      const oldHp = player.currentHp;
+      player.currentHp = Math.min(player.maxHp, player.currentHp + healing);
+      const actualHealing = player.currentHp - oldHp;
+
+      output.push({
+        text: `You cast ${spell.name} and restore ${actualHealing} health!`,
+        style: 'success'
+      });
+      break;
+    }
+
+    case 'buff': {
+      // Create a status effect
+      const effect: StatusEffect = {
+        id: spell.id,
+        name: spell.name,
+        duration: spell.duration,
+        stacks: 1,
+        appliedAt: world.time.totalMinutes,
+      };
+
+      // Remove existing effect of same type
+      player.statusEffects = player.statusEffects.filter(e => e.id !== spell.id);
+      player.statusEffects.push(effect);
+
+      output.push({
+        text: `You cast ${spell.name}. Effect active for ${spell.duration} seconds.`,
+        style: 'success'
+      });
+      break;
+    }
+
+    case 'debuff': {
+      if (!targetCreature) break;
+
+      // For now, debuffs just deal initial damage (DoTs would need tick processing)
+      const spellPower = player.baseStats.int * 2;
+      const damage = Math.floor(spell.baseValue + (spellPower * spell.spellPowerScaling));
+
+      targetCreature.currentHp -= damage;
+
+      output.push({
+        text: `You cast ${spell.name} on ${targetCreature.name}, dealing ${damage} ${spell.damageType ?? 'magic'} damage!`,
+        style: 'combat'
+      });
+
+      if (targetCreature.currentHp <= 0) {
+        const template = CREATURE_TEMPLATES[targetCreature.templateId];
+        const tier = template?.tier ?? 'common';
+
+        // Generate loot
+        let lootItems: Item[] = [];
+        const rng = createRng(Date.now().toString());
+        if (SEWER_LOOT_TABLES[targetCreature.templateId]) {
+          lootItems = generateSewerLoot(targetCreature.templateId, targetCreature.level, rng);
+        }
+
+        // Add items to world
+        const loot: string[] = [];
+        for (const item of lootItems) {
+          world.items[item.id] = item;
+          loot.push(item.id);
+        }
+
+        handleCreatureDeath(world, targetCreature, 'player', tier, loot);
+        output.push({ text: `${targetCreature.name} has been slain!`, style: 'success' });
+
+        // Give XP
+        const xpGain = targetCreature.level * 15;
+        const xpResult = grantXp(player, xpGain);
+        output.push(...xpResult);
+
+        // Note about looting
+        output.push({
+          text: `Use "loot ${targetCreature.name.toLowerCase()}" to check the corpse.`,
+          style: 'system',
+        });
+      }
+      break;
+    }
+
+    case 'utility': {
+      // Handle utility spells like Set Trap and Track
+      if (spell.id === 'set_trap') {
+        // Check if already have a trap set
+        if (player.placedTrap) {
+          // Check if it's in this location
+          if (player.placedTrap.locationId === player.locationId) {
+            output.push({ text: 'You already have a trap set here.', style: 'error' });
+            // Refund mana
+            player.currentMp += spell.manaCost;
+            player.abilityCooldowns[spell.id] = 0;
+            break;
+          }
+          // Remove old trap
+          output.push({ text: 'Your previous trap fades away as you set a new one.', style: 'system' });
+        }
+
+        // Check if in combat - can't set traps in combat
+        if (player.inCombat) {
+          output.push({ text: 'You cannot set a trap while in combat!', style: 'error' });
+          player.currentMp += spell.manaCost;
+          player.abilityCooldowns[spell.id] = 0;
+          break;
+        }
+
+        // Calculate trap damage based on ranger level
+        const baseDamage = spell.baseValue + Math.floor(player.level * spell.spellPowerScaling * 10);
+        const dotDamage = Math.floor(baseDamage * 0.2); // DOT is 20% of initial per tick
+
+        // Place the trap
+        const now = Date.now();
+        player.placedTrap = {
+          locationId: player.locationId,
+          rangerLevel: player.level,
+          damage: baseDamage,
+          dotDamage: dotDamage,
+          rootDuration: 60, // 60 seconds base root duration
+          placedAt: now,
+          expiresAt: now + (spell.duration * 1000), // 10 minutes
+        };
+
+        const location = world.locations[player.locationId];
+        output.push({
+          text: `You carefully set a trap in ${location?.name || 'this area'}.`,
+          style: 'success'
+        });
+        output.push({
+          text: `The trap will deal ${baseDamage} initial damage and ${dotDamage}/tick while rooted.`,
+          style: 'system'
+        });
+        output.push({
+          text: 'The trap will trigger when a creature enters combat with you here.',
+          style: 'system'
+        });
+      } else if (spell.id === 'track') {
+        // Track spell - show creatures in adjacent locations
+        const adjacentCreatures: string[] = [];
+        const exitIds = world.adjacency[player.locationId] ?? [];
+
+        for (const exitId of exitIds) {
+          const exit = world.exits[exitId];
+          if (exit) {
+            const targetLocId = exit.from === player.locationId ? exit.to : exit.from;
+            const targetLoc = world.locations[targetLocId];
+            if (targetLoc?.creatures) {
+              for (const creatureId of targetLoc.creatures) {
+                const creature = world.creatures[creatureId];
+                if (creature && creature.currentHp > 0) {
+                  adjacentCreatures.push(`${creature.name} (${targetLoc.name})`);
+                }
+              }
+            }
+          }
+        }
+
+        output.push({ text: 'You read the signs of the wild...', style: 'normal' });
+        if (adjacentCreatures.length > 0) {
+          output.push({ text: 'Nearby creatures:', style: 'system' });
+          for (const c of adjacentCreatures) {
+            output.push({ text: `  - ${c}`, style: 'normal' });
+          }
+        } else {
+          output.push({ text: 'You sense no creatures nearby.', style: 'system' });
+        }
+      } else {
+        output.push({ text: `You use ${spell.name}.`, style: 'normal' });
+      }
+      break;
+    }
+
+    default:
+      output.push({ text: `You cast ${spell.name}.`, style: 'normal' });
+  }
+
+  output.push({ text: `(${player.currentMp}/${player.maxMp} MP remaining)`, style: 'system' });
+
+  return { output, updatePlayer: true };
+}
+
+/**
+ * Grant XP to player and handle level ups.
+ */
+function grantXp(player: any, xp: number): OutputLine[] {
+  const output: OutputLine[] = [];
+  player.xp += xp;
+  output.push({ text: `You gain ${xp} experience!`, style: 'success' });
+
+  // Check for level up
+  while (player.xp >= player.xpToNextLevel) {
+    player.xp -= player.xpToNextLevel;
+    player.level++;
+    player.xpToNextLevel = xpForLevel(player.level + 1);
+
+    // Increase stats
+    const classDef = CLASSES[player.class as keyof typeof CLASSES];
+    const hpGain = classDef.hpPerLevel + Math.floor(classDef.baseStats.con / 3);
+    const mpGain = classDef.mpPerLevel + Math.floor(Math.max(classDef.baseStats.int, classDef.baseStats.wis) / 3);
+
+    player.maxHp += hpGain;
+    player.maxMp += mpGain;
+    player.currentHp = player.maxHp;
+    player.currentMp = player.maxMp;
+
+    output.push({ text: '', style: 'normal' });
+    output.push({ text: '╔════════════════════════════════════════╗', style: 'system' });
+    output.push({ text: `║       LEVEL UP! Level ${player.level}!        ║`, style: 'success' });
+    output.push({ text: '╠════════════════════════════════════════╣', style: 'system' });
+    output.push({ text: `║  HP: +${hpGain} (now ${player.maxHp})`.padEnd(40) + '║', style: 'normal' });
+    output.push({ text: `║  MP: +${mpGain} (now ${player.maxMp})`.padEnd(40) + '║', style: 'normal' });
+    output.push({ text: '║  Health and Mana fully restored!'.padEnd(40) + '║', style: 'normal' });
+    output.push({ text: `║  Next level: ${player.xpToNextLevel} XP`.padEnd(40) + '║', style: 'normal' });
+    output.push({ text: '╚════════════════════════════════════════╝', style: 'system' });
+  }
+
+  return output;
+}
+
+/**
+ * Handle the "learn" command - learn a spell from a trainer.
+ */
+function handleLearn(ctx: CommandContext): CommandResult {
+  const { session, parsed } = ctx;
+  const { world, player } = session;
+
+  if (!parsed.target) {
+    return {
+      output: [{ text: 'Learn what? Try "learn <spell name>".', style: 'error' }],
+    };
+  }
+
+  // Must be in conversation with an NPC
+  if (!session.conversationNpc) {
+    return {
+      output: [{ text: 'You need to talk to a trainer first. Use "talk <trainer>".', style: 'error' }],
+    };
+  }
+
+  const npc = world.npcs[session.conversationNpc];
+  if (!npc) {
+    session.conversationNpc = undefined;
+    session.learnableSpells = undefined;
+    return {
+      output: [{ text: 'That trainer seems to have left.', style: 'error' }],
+    };
+  }
+
+  // Check if NPC is a trainer
+  if (!npc.trainsClass) {
+    return {
+      output: [{ text: `${npc.name} is not a trainer.`, style: 'error' }],
+    };
+  }
+
+  // Check if trainer trains player's class
+  if (npc.trainsClass !== player.class) {
+    return {
+      output: [{ text: `${npc.name} only trains ${npc.trainsClass}s, not ${player.class}s.`, style: 'error' }],
+    };
+  }
+
+  // Check if target is a number (learn 1, learn 2, etc.)
+  const numMatch = parsed.target.match(/^(\d+)$/);
+  if (numMatch && session.learnableSpells) {
+    const index = parseInt(numMatch[1]!, 10) - 1;
+    if (index >= 0 && index < session.learnableSpells.length) {
+      const spellId = session.learnableSpells[index]!;
+      const spell = SPELLS[spellId];
+      if (spell) {
+        // Check currency (learnCost is in copper)
+        if (!canAfford(player.currency, spell.learnCost)) {
+          return {
+            output: [
+              { text: `${spell.name} costs ${formatPrice(spell.learnCost)} to learn.`, style: 'error' },
+              { text: `You have ${formatCurrency(player.currency)}.`, style: 'system' },
+            ],
+          };
+        }
+
+        // Learn the spell
+        player.spells.known.push(spell.id);
+        player.currency = spendCurrency(player.currency, spell.learnCost);
+
+        // Update learnable list
+        session.learnableSpells = session.learnableSpells.filter(id => id !== spell.id);
+
+        const output: OutputLine[] = [
+          { text: `${npc.name} teaches you the secrets of ${spell.name}.`, style: 'normal' },
+          { text: `✨ Learned: ${spell.name}!`, style: 'success' },
+          { text: `   ${spell.description}`, style: 'normal' },
+          { text: `   Mana cost: ${spell.manaCost} | Cooldown: ${spell.cooldown}s`, style: 'system' },
+        ];
+        if (spell.learnCost > 0) {
+          output.push({ text: `Paid ${formatPrice(spell.learnCost)}. Remaining: ${formatCurrency(player.currency)}.`, style: 'system' });
+        }
+        output.push({ text: 'Use "cast <spell>" to use your new ability.', style: 'system' });
+
+        return { output, updatePlayer: true };
+      }
+    }
+    return {
+      output: [{ text: `Invalid number. Use 1-${session.learnableSpells.length}.`, style: 'error' }],
+    };
+  }
+
+  // Find the spell by name
+  const spellName = parsed.target.toLowerCase();
+  const learnable = getLearnableSpells(player.class, player.level, player.spells.known);
+  const spell = learnable.find(s =>
+    s.id === spellName || s.name.toLowerCase().includes(spellName)
+  );
+
+  if (!spell) {
+    // Check if they already know it
+    const alreadyKnown = player.spells.known.some(id => {
+      const s = SPELLS[id];
+      return s && (s.id === spellName || s.name.toLowerCase().includes(spellName));
+    });
+
+    if (alreadyKnown) {
+      return {
+        output: [{ text: `You already know that spell.`, style: 'error' }],
+      };
+    }
+
+    // Check if it's a spell for their class but wrong level
+    const classSpells = getClassSpells(player.class);
+    const tooHighLevel = classSpells.find(s =>
+      (s.id === spellName || s.name.toLowerCase().includes(spellName)) &&
+      s.levelRequired > player.level
+    );
+
+    if (tooHighLevel) {
+      return {
+        output: [{ text: `You need to be level ${tooHighLevel.levelRequired} to learn ${tooHighLevel.name}.`, style: 'error' }],
+      };
+    }
+
+    return {
+      output: [{ text: `${npc.name} doesn't teach a spell called "${parsed.target}".`, style: 'error' }],
+    };
+  }
+
+  // Check currency (learnCost is in copper)
+  if (!canAfford(player.currency, spell.learnCost)) {
+    return {
+      output: [
+        { text: `${spell.name} costs ${formatPrice(spell.learnCost)} to learn.`, style: 'error' },
+        { text: `You have ${formatCurrency(player.currency)}.`, style: 'system' },
+      ],
+    };
+  }
+
+  // Learn the spell
+  player.currency = spendCurrency(player.currency, spell.learnCost);
+  player.spells.known.push(spell.id);
+
+  const output: OutputLine[] = [];
+  const title = npc.title ? `${npc.title} ` : '';
+  output.push({ text: `${title}${npc.name} teaches you the secrets of ${spell.name}.`, style: 'normal' });
+  output.push({ text: '', style: 'normal' });
+  output.push({ text: `✨ Learned: ${spell.name}!`, style: 'success' });
+  output.push({ text: `   ${spell.description}`, style: 'system' });
+  output.push({ text: `   Mana cost: ${spell.manaCost} | Cooldown: ${spell.cooldown}s`, style: 'system' });
+  output.push({ text: '', style: 'normal' });
+  output.push({ text: `Paid ${formatPrice(spell.learnCost)}. Remaining: ${formatCurrency(player.currency)}.`, style: 'normal' });
+  output.push({ text: '', style: 'normal' });
+  output.push({ text: 'Use "cast <spell>" to use your new ability.', style: 'system' });
+
+  return { output, updatePlayer: true };
 }
 
 /**
@@ -2183,9 +3781,10 @@ function handleTalk(ctx: CommandContext): CommandResult {
     };
   }
 
-  // Find NPCs in this location
-  const npcIds = location.npcs ?? [];
-  if (npcIds.length === 0) {
+  // Find NPCs in this location (using schedule-aware lookup)
+  const timeOfDay = world.time.timeOfDay;
+  const npcsHere = getNpcsAtLocation(world.npcs, location.npcs ?? [], location.id, timeOfDay);
+  if (npcsHere.length === 0) {
     return {
       output: [{ text: 'There is no one here to talk to.', style: 'error' }],
     };
@@ -2193,10 +3792,7 @@ function handleTalk(ctx: CommandContext): CommandResult {
 
   // Find the NPC by name
   const targetLower = parsed.target.toLowerCase();
-  const npc = npcIds
-    .map(id => world.npcs[id])
-    .filter((n): n is NPC => n !== undefined)
-    .find(n => n.name.toLowerCase().includes(targetLower));
+  const npc = npcsHere.find(n => n.name.toLowerCase().includes(targetLower));
 
   if (!npc) {
     return {
@@ -2241,15 +3837,18 @@ function handleSay(ctx: CommandContext): CommandResult {
   const npc = world.npcs[session.conversationNpc];
   if (!npc) {
     session.conversationNpc = undefined;
+    session.learnableSpells = undefined;
     return {
       output: [{ text: 'That person seems to have left.', style: 'error' }],
     };
   }
 
-  // Check if player is still in same location
+  // Check if player is still in same location (use schedule-aware lookup)
   const location = world.locations[player.locationId];
-  if (!location?.npcs?.includes(npc.id)) {
+  const npcsHereForSay = getNpcsAtLocation(world.npcs, location?.npcs ?? [], player.locationId, world.time.timeOfDay);
+  if (!npcsHereForSay.some(n => n.id === npc.id)) {
     session.conversationNpc = undefined;
+    session.learnableSpells = undefined;
     return {
       output: [{ text: `${npc.name} is no longer here.`, style: 'error' }],
     };
@@ -2277,7 +3876,25 @@ function handleSay(ctx: CommandContext): CommandResult {
 
   const output: OutputLine[] = [];
   const title = npc.title ? `${npc.title} ` : '';
-  output.push({ text: `${title}${npc.name}: "${topic.response}"`, style: 'normal' });
+
+  // Handle special teaching actions with class/level-based responses
+  let responseText = topic.response;
+  if ((topic.action === 'teach_track' || topic.action === 'teach_trap') && topic.teachSpell && topic.teachLevel) {
+    const isRanger = player.class === 'ranger';
+    const meetsLevel = player.level >= topic.teachLevel;
+    const alreadyKnows = player.spells.known.includes(topic.teachSpell);
+
+    if (isRanger && alreadyKnows) {
+      responseText = `You've already mastered ${SPELLS[topic.teachSpell]?.name || 'that technique'}. Use it well.`;
+    } else if (isRanger && meetsLevel && topic.rangerReadyResponse) {
+      responseText = topic.rangerReadyResponse;
+    } else if (isRanger && !meetsLevel && topic.rangerResponse) {
+      responseText = topic.rangerResponse;
+    }
+    // Non-rangers get the default response
+  }
+
+  output.push({ text: `${title}${npc.name}: "${responseText}"`, style: 'normal' });
 
   // Check if this completes a tutorial step
   if (topic.teachesCommand && !player.tutorial.completedSteps.includes(topic.teachesCommand)) {
@@ -2286,9 +3903,140 @@ function handleSay(ctx: CommandContext): CommandResult {
     output.push({ text: `[Tutorial] ${topic.teachesCommand} complete!`, style: 'success' });
   }
 
+  // Handle special dialogue actions
+  if (topic.action === 'heal') {
+    const oldHp = player.currentHp;
+    const oldMp = player.currentMp;
+    player.currentHp = player.maxHp;
+    player.currentMp = player.maxMp;
+    const hpHealed = player.currentHp - oldHp;
+    const mpRestored = player.currentMp - oldMp;
+    output.push({ text: '', style: 'normal' });
+    if (hpHealed > 0 || mpRestored > 0) {
+      output.push({ text: `You are fully healed! (+${hpHealed} HP, +${mpRestored} MP)`, style: 'success' });
+    } else {
+      output.push({ text: 'You are already at full health.', style: 'system' });
+    }
+  }
+
+  if (topic.action === 'train') {
+    // Show training options for this NPC's class
+    const trainableClass = npc.trainsClass;
+    if (trainableClass && player.class === trainableClass) {
+      const learnable = getLearnableSpells(player.class, player.level, player.spells.known);
+      if (learnable.length > 0) {
+        output.push({ text: '', style: 'normal' });
+        output.push({ text: '=== Available Training ===', style: 'system' });
+        for (const spell of learnable) {
+          output.push({
+            text: `  ${spell.name} (Level ${spell.levelRequired}) - ${spell.learnCost} gold`,
+            style: 'normal'
+          });
+          output.push({
+            text: `    ${spell.description}`,
+            style: 'system'
+          });
+        }
+        output.push({ text: '', style: 'normal' });
+        output.push({ text: 'Use "learn <spell>" to learn a new spell.', style: 'system' });
+      } else {
+        output.push({ text: '', style: 'normal' });
+        output.push({ text: 'You have learned all the spells I can teach at your level.', style: 'system' });
+
+        // Show future spells that unlock at higher levels
+        const future = getFutureSpells(player.class, player.level, player.spells.known);
+        if (future.length > 0) {
+          output.push({ text: '', style: 'normal' });
+          output.push({ text: '=== Future Training ===', style: 'system' });
+          for (const spell of future) {
+            output.push({
+              text: `  ${spell.name} - unlocks at level ${spell.levelRequired} (${spell.learnCost} gold)`,
+              style: 'normal'
+            });
+          }
+        }
+      }
+    } else if (trainableClass && player.class !== trainableClass) {
+      output.push({ text: '', style: 'normal' });
+      output.push({ text: `I only train ${trainableClass}s. You should seek a trainer for your class.`, style: 'system' });
+    }
+  }
+
+  // Handle skills_list action - show full class skill progression
+  if (topic.action === 'skills_list') {
+    const trainableClass = npc.trainsClass;
+    if (trainableClass && player.class === trainableClass) {
+      const allSpells = getClassSpells(player.class).sort((a, b) => a.levelRequired - b.levelRequired);
+      const knownSpellIds = player.spells.known;
+
+      // Build numbered list of learnable spells
+      const learnableList: string[] = [];
+      let learnableNum = 1;
+
+      output.push({ text: '', style: 'normal' });
+      output.push({ text: `=== ${player.class.charAt(0).toUpperCase() + player.class.slice(1)} Skill Progression ===`, style: 'system' });
+
+      for (const spell of allSpells) {
+        const isKnown = knownSpellIds.includes(spell.id);
+        const canLearn = spell.levelRequired <= player.level && !isKnown;
+        const isFuture = spell.levelRequired > player.level;
+
+        let prefix = '  ';
+        let status = '';
+        if (isKnown) {
+          status = '[KNOWN]';
+        } else if (canLearn) {
+          prefix = `  ${learnableNum}. `;
+          status = `[${spell.learnCost} gold]`;
+          learnableList.push(spell.id);
+          learnableNum++;
+        } else if (isFuture) {
+          status = `[Level ${spell.levelRequired}]`;
+        }
+
+        output.push({
+          text: `${prefix}${spell.name} ${status}`,
+          style: isKnown ? 'system' : canLearn ? 'normal' : 'system'
+        });
+        output.push({
+          text: `      ${spell.description}`,
+          style: 'system'
+        });
+      }
+
+      // Store learnable spells for "learn 1" etc.
+      session.learnableSpells = learnableList;
+
+      output.push({ text: '', style: 'normal' });
+      if (learnableList.length > 0) {
+        output.push({ text: 'Use "learn <#>" or "learn <spell name>" to learn.', style: 'system' });
+      }
+    } else if (trainableClass && player.class !== trainableClass) {
+      output.push({ text: '', style: 'normal' });
+      output.push({ text: `I only train ${trainableClass}s. You should seek a trainer for your class.`, style: 'system' });
+    }
+  }
+
+  // Handle special teaching dialogue for ranger skills
+  if ((topic.action === 'teach_track' || topic.action === 'teach_trap') && topic.teachSpell && topic.teachLevel) {
+    const isRanger = player.class === 'ranger';
+    const meetsLevel = player.level >= topic.teachLevel;
+    const alreadyKnows = player.spells.known.includes(topic.teachSpell);
+    const spell = SPELLS[topic.teachSpell];
+
+    if (isRanger && meetsLevel && !alreadyKnows && spell) {
+      output.push({ text: '', style: 'normal' });
+      output.push({
+        text: `Use "learn ${spell.name.toLowerCase()}" to learn this skill for ${spell.learnCost} gold.`,
+        style: 'system'
+      });
+    }
+  }
+
   // End conversation on farewell - check BEFORE showing menu
   if (topic.id === 'farewell') {
     session.conversationNpc = undefined;
+    session.learnableSpells = undefined;
     return { output, updatePlayer: true };
   }
 
@@ -2302,6 +4050,7 @@ function handleSay(ctx: CommandContext): CommandResult {
     });
   } else {
     session.conversationNpc = undefined;
+    session.learnableSpells = undefined;
   }
 
   return { output, updatePlayer: true };
@@ -2351,16 +4100,16 @@ function handleList(ctx: CommandContext): CommandResult {
   const { world, player } = session;
 
   const location = world.locations[player.locationId];
-  if (!location?.npcs?.length) {
+  if (!location) {
     return {
       output: [{ text: 'There is no shop here.', style: 'error' }],
     };
   }
 
-  // Find merchant NPC
-  const merchant = location.npcs
-    .map(id => world.npcs[id])
-    .find(npc => npc?.shop);
+  // Find merchant NPC (using schedule-aware lookup)
+  const timeOfDay = world.time.timeOfDay;
+  const npcsHere = getNpcsAtLocation(world.npcs, location.npcs ?? [], location.id, timeOfDay);
+  const merchant = npcsHere.find(npc => npc?.shop);
 
   if (!merchant?.shop) {
     return {
@@ -2378,11 +4127,11 @@ function handleList(ctx: CommandContext): CommandResult {
     const name = template?.name ?? item.baseId;
     const price = Math.ceil(item.basePrice * merchant.shop.buyMultiplier);
     const stock = item.stock !== undefined ? ` (${item.stock} in stock)` : '';
-    output.push({ text: `  ${name} - ${price}g${stock}`, style: 'normal' });
+    output.push({ text: `  ${name} - ${formatPrice(price)}${stock}`, style: 'normal' });
   }
 
   output.push({ text: '', style: 'normal' });
-  output.push({ text: `Your gold: ${player.gold}`, style: 'system' });
+  output.push({ text: `Your currency: ${formatCurrency(player.currency)}`, style: 'system' });
   output.push({ text: "Use 'buy <item>' to purchase.", style: 'system' });
 
   // Mark tutorial step
@@ -2409,9 +4158,16 @@ function handleBuy(ctx: CommandContext): CommandResult {
   }
 
   const location = world.locations[player.locationId];
-  const merchant = location?.npcs
-    ?.map(id => world.npcs[id])
-    .find(npc => npc?.shop);
+  if (!location) {
+    return {
+      output: [{ text: 'There is no merchant here.', style: 'error' }],
+    };
+  }
+
+  // Find merchant NPC (using schedule-aware lookup)
+  const timeOfDay = world.time.timeOfDay;
+  const npcsHere = getNpcsAtLocation(world.npcs, location.npcs ?? [], location.id, timeOfDay);
+  const merchant = npcsHere.find(npc => npc?.shop);
 
   if (!merchant?.shop) {
     return {
@@ -2436,10 +4192,10 @@ function handleBuy(ctx: CommandContext): CommandResult {
   const template = SHOP_ITEM_TEMPLATES[shopItem.baseId];
   const price = Math.ceil(shopItem.basePrice * merchant.shop.buyMultiplier);
 
-  // Check gold
-  if (player.gold < price) {
+  // Check currency (price is in copper)
+  if (!canAfford(player.currency, price)) {
     return {
-      output: [{ text: `You need ${price} gold but only have ${player.gold}.`, style: 'error' }],
+      output: [{ text: `You need ${formatPrice(price)} but only have ${formatCurrency(player.currency)}.`, style: 'error' }],
     };
   }
 
@@ -2469,7 +4225,7 @@ function handleBuy(ctx: CommandContext): CommandResult {
   };
 
   // Complete purchase
-  player.gold -= price;
+  player.currency = spendCurrency(player.currency, price);
   if (shopItem.stock !== undefined) {
     shopItem.stock--;
   }
@@ -2477,7 +4233,7 @@ function handleBuy(ctx: CommandContext): CommandResult {
   player.inventory.push({ itemId: newItem.id, quantity: 1 });
 
   return {
-    output: [{ text: `You buy ${newItem.name} for ${price} gold.`, style: 'success' }],
+    output: [{ text: `You buy ${newItem.name} for ${formatPrice(price)}.`, style: 'success' }],
     updatePlayer: true,
   };
 }
@@ -2496,9 +4252,16 @@ function handleSell(ctx: CommandContext): CommandResult {
   }
 
   const location = world.locations[player.locationId];
-  const merchant = location?.npcs
-    ?.map(id => world.npcs[id])
-    .find(npc => npc?.shop);
+  if (!location) {
+    return {
+      output: [{ text: 'There is no merchant here.', style: 'error' }],
+    };
+  }
+
+  // Find merchant NPC (using schedule-aware lookup)
+  const timeOfDay = world.time.timeOfDay;
+  const npcsHere = getNpcsAtLocation(world.npcs, location.npcs ?? [], location.id, timeOfDay);
+  const merchant = npcsHere.find(npc => npc?.shop);
 
   if (!merchant?.shop) {
     return {
@@ -2529,16 +4292,312 @@ function handleSell(ctx: CommandContext): CommandResult {
     };
   }
 
-  // Calculate sell price (base 10g for common items)
+  // Calculate sell price (base 10 copper for common items)
   const basePrice = 10;
   const sellPrice = Math.floor(basePrice * merchant.shop.sellMultiplier);
 
   // Complete sale
-  player.gold += sellPrice;
+  player.currency = addCopper(player.currency, sellPrice);
   player.inventory.splice(invIndex, 1);
 
   return {
-    output: [{ text: `You sell ${item.name} for ${sellPrice} gold.`, style: 'success' }],
+    output: [{ text: `You sell ${item.name} for ${formatPrice(sellPrice)}.`, style: 'success' }],
     updatePlayer: true,
   };
+}
+
+/**
+ * Handle the "status" command - show player stats and active effects.
+ */
+function handleStatus(ctx: CommandContext): CommandResult {
+  const { session } = ctx;
+  const { player, world } = session;
+
+  const output: OutputLine[] = [];
+
+  // Check for pending level ups (in case XP was gained without level check)
+  while (player.xp >= player.xpToNextLevel) {
+    player.level++;
+    player.xpToNextLevel = xpForLevel(player.level + 1);
+
+    const classDef = CLASSES[player.class];
+    const hpGain = classDef.hpPerLevel;
+    const mpGain = classDef.mpPerLevel;
+
+    player.maxHp += hpGain;
+    player.maxMp += mpGain;
+    player.currentHp = player.maxHp;
+    player.currentMp = player.maxMp;
+    player.maxCarryWeight = 50 + (player.baseStats.str * 5);
+
+    output.push({
+      text: '╔═══════════════════════════════════════╗',
+      style: 'success',
+    });
+    output.push({
+      text: `║       ⭐ LEVEL UP! Level ${player.level}! ⭐        ║`,
+      style: 'success',
+    });
+    output.push({
+      text: '╠═══════════════════════════════════════╣',
+      style: 'success',
+    });
+    output.push({
+      text: `║  HP: +${hpGain} (now ${player.maxHp})`.padEnd(40) + '║',
+      style: 'normal',
+    });
+    output.push({
+      text: `║  MP: +${mpGain} (now ${player.maxMp})`.padEnd(40) + '║',
+      style: 'normal',
+    });
+    output.push({
+      text: '║  Health & Mana fully restored!'.padEnd(40) + '║',
+      style: 'normal',
+    });
+    output.push({
+      text: `║  Next level: ${player.xpToNextLevel} XP`.padEnd(40) + '║',
+      style: 'normal',
+    });
+    output.push({
+      text: '╚═══════════════════════════════════════╝',
+      style: 'success',
+    });
+    output.push({ text: '', style: 'normal' });
+  }
+
+  // Header
+  output.push({ text: '╔════════════════════════════════════════╗', style: 'system' });
+  output.push({ text: `║  ${player.name.toUpperCase()} - ${player.class.charAt(0).toUpperCase() + player.class.slice(1)}`.padEnd(40) + '║', style: 'normal' });
+  output.push({ text: '╠════════════════════════════════════════╣', style: 'system' });
+
+  // Level and XP
+  output.push({ text: `║  Level: ${player.level}`.padEnd(40) + '║', style: 'normal' });
+  output.push({ text: `║  XP: ${player.xp} / ${player.xpToNextLevel}`.padEnd(40) + '║', style: 'normal' });
+  output.push({ text: '╠════════════════════════════════════════╣', style: 'system' });
+
+  // HP and MP
+  const hpPercent = Math.floor((player.currentHp / player.maxHp) * 100);
+  const mpPercent = Math.floor((player.currentMp / player.maxMp) * 100);
+  const hpStyle = hpPercent <= 25 ? 'error' : hpPercent <= 50 ? 'combat' : 'success';
+  output.push({ text: `║  HP: ${player.currentHp}/${player.maxHp} (${hpPercent}%)`.padEnd(40) + '║', style: hpStyle });
+  output.push({ text: `║  MP: ${player.currentMp}/${player.maxMp} (${mpPercent}%)`.padEnd(40) + '║', style: 'normal' });
+  output.push({ text: '╠════════════════════════════════════════╣', style: 'system' });
+
+  // Base Stats
+  output.push({ text: '║  Base Stats:'.padEnd(40) + '║', style: 'system' });
+  const stats = player.baseStats;
+  output.push({ text: `║    STR: ${stats.str}  DEX: ${stats.dex}  CON: ${stats.con}`.padEnd(40) + '║', style: 'normal' });
+  output.push({ text: `║    INT: ${stats.int}  WIS: ${stats.wis}`.padEnd(40) + '║', style: 'normal' });
+
+  // Currency
+  output.push({ text: '╠════════════════════════════════════════╣', style: 'system' });
+  output.push({ text: `║  Currency: ${formatCurrency(player.currency)}`.padEnd(40) + '║', style: 'normal' });
+
+  // Active Status Effects
+  if (player.statusEffects.length > 0) {
+    output.push({ text: '╠════════════════════════════════════════╣', style: 'system' });
+    output.push({ text: '║  Active Effects:'.padEnd(40) + '║', style: 'system' });
+    for (const effect of player.statusEffects) {
+      const remaining = effect.appliedAt !== undefined
+        ? Math.max(0, effect.duration - (world.time.totalMinutes - effect.appliedAt))
+        : effect.duration;
+      const stackText = effect.stacks > 1 ? ` x${effect.stacks}` : '';
+      const durationText = remaining > 0 ? ` (${remaining}m)` : ' (permanent)';
+      output.push({ text: `║    • ${effect.name}${stackText}${durationText}`.padEnd(40) + '║', style: 'success' });
+    }
+  }
+
+  // Combat status
+  if (player.inCombat) {
+    output.push({ text: '╠════════════════════════════════════════╣', style: 'system' });
+    output.push({ text: '║  ⚔️  IN COMBAT'.padEnd(40) + '║', style: 'combat' });
+    if (player.targetId) {
+      const target = world.creatures[player.targetId];
+      if (target) {
+        output.push({ text: `║    Target: ${target.name} (${target.currentHp}/${target.maxHp} HP)`.padEnd(40) + '║', style: 'combat' });
+      }
+    }
+  }
+
+  output.push({ text: '╚════════════════════════════════════════╝', style: 'system' });
+
+  return { output };
+}
+
+/**
+ * Handle the "open" command - open a container to see its contents.
+ */
+function handleOpen(ctx: CommandContext): CommandResult {
+  const { session, parsed } = ctx;
+  const { world, player } = session;
+
+  if (!parsed.target) {
+    return {
+      output: [{ text: 'Open what? Try "open <container>".', style: 'error' }],
+    };
+  }
+
+  const location = world.locations[player.locationId];
+  if (!location) {
+    return {
+      output: [{ text: 'You are nowhere.', style: 'error' }],
+    };
+  }
+
+  const targetLower = parsed.target.toLowerCase();
+
+  // Check containers in location
+  if (world.containers) {
+    const containers = Object.values(world.containers).filter(
+      (c) => c.locationId === player.locationId
+    );
+
+    const container = containers.find((c) =>
+      c.name.toLowerCase().includes(targetLower)
+    );
+
+    if (container) {
+      const output: OutputLine[] = [];
+
+      if (container.locked) {
+        output.push({ text: `The ${container.name} is locked.`, style: 'error' });
+        if (container.keyId) {
+          output.push({ text: 'You need a key to open it.', style: 'system' });
+        }
+        return { output };
+      }
+
+      output.push({ text: `You open the ${container.name}.`, style: 'normal' });
+
+      if (container.contents.length === 0) {
+        output.push({ text: 'It is empty.', style: 'normal' });
+      } else {
+        output.push({ text: 'Inside you find:', style: 'system' });
+        container.contents.forEach((itemId, index) => {
+          const item = world.items[itemId];
+          output.push({ text: `  ${index + 1}. ${item?.name ?? 'Unknown item'}`, style: 'normal' });
+        });
+        output.push({ text: '', style: 'normal' });
+        output.push({ text: `Use "loot ${container.name.toLowerCase()}" to take items.`, style: 'system' });
+      }
+
+      container.opened = true;
+      return { output };
+    }
+  }
+
+  // Check if it's a corpse (can also be "opened" to check)
+  const corpses = Object.values(world.corpses).filter(
+    (c) => c.locationId === player.locationId
+  );
+
+  const corpse = corpses.find((c) =>
+    c.name.toLowerCase().includes(targetLower)
+  );
+
+  if (corpse) {
+    // Redirect to loot command for corpses
+    return handleLoot({ session, parsed: { ...parsed, command: 'loot' } });
+  }
+
+  return {
+    output: [{ text: `You don't see a "${parsed.target}" here to open.`, style: 'error' }],
+  };
+}
+
+/**
+ * Trigger a ranger's trap on a creature.
+ * Returns output and whether creature was killed.
+ */
+function triggerRangerTrap(
+  player: Player,
+  creature: Creature,
+  rng: { next: () => number }
+): { output: OutputLine[]; creatureKilled: boolean } {
+  const trap = player.placedTrap!;
+  const output: OutputLine[] = [];
+  const now = Date.now();
+
+  // Check if trap expired
+  if (now > trap.expiresAt) {
+    player.placedTrap = undefined;
+    return { output: [], creatureKilled: false };
+  }
+
+  // Calculate effectiveness based on creature level vs ranger level
+  const levelDiff = creature.level - trap.rangerLevel;
+
+  // Size/level effectiveness
+  if (levelDiff >= 5) {
+    output.push({
+      text: `The ${creature.name} is too powerful - it destroys your trap instantly!`,
+      style: 'error',
+    });
+    player.placedTrap = undefined;
+    return { output, creatureKilled: false };
+  }
+
+  if (levelDiff >= 3 && rng.next() < 0.5) {
+    output.push({
+      text: `The ${creature.name} spots your trap and avoids it!`,
+      style: 'error',
+    });
+    player.placedTrap = undefined;
+    return { output, creatureKilled: false };
+  }
+
+  // Calculate modified values
+  let effectiveDamage = trap.damage;
+  let effectiveRootDuration = trap.rootDuration;
+
+  if (levelDiff > 0) {
+    const reduction = levelDiff * 0.15;
+    effectiveDamage = Math.floor(effectiveDamage * (1 - reduction));
+    effectiveRootDuration = Math.floor(effectiveRootDuration * (1 - reduction));
+  }
+
+  // Apply damage
+  creature.currentHp -= effectiveDamage;
+  output.push({
+    text: `★ Your trap springs! The ${creature.name} takes ${effectiveDamage} damage!`,
+    style: 'success',
+  });
+
+  // Remove trap
+  player.placedTrap = undefined;
+
+  if (creature.currentHp <= 0) {
+    output.push({
+      text: `The ${creature.name} dies instantly in your trap!`,
+      style: 'success',
+    });
+    return { output, creatureKilled: true };
+  }
+
+  // Apply root effect
+  const rootDurationMs = effectiveRootDuration * 1000;
+  const breakAttemptInterval = levelDiff >= 2 ? 5000 : 10000;
+
+  creature.trapped = {
+    expiresAt: now + rootDurationMs,
+    trappedByPlayerId: player.id,
+    dotDamage: trap.dotDamage,
+    nextDotTick: now + 5000,
+    nextBreakAttempt: now + breakAttemptInterval,
+    rangerLevel: trap.rangerLevel,
+  };
+
+  output.push({
+    text: `The ${creature.name} is caught in your trap and cannot flee for ${effectiveRootDuration} seconds!`,
+    style: 'success',
+  });
+
+  if (levelDiff >= 2) {
+    output.push({
+      text: `The powerful creature strains against the trap - it may break free quickly!`,
+      style: 'system',
+    });
+  }
+
+  return { output, creatureKilled: false };
 }
