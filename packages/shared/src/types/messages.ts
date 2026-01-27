@@ -4,6 +4,7 @@
 
 import type { Player, CombatStats } from './character';
 import type { Location, Exit, Item, GameTime, WeatherState } from './world';
+import type { SimulationMessage } from './simulation';
 
 // ============ Client -> Server Messages ============
 
@@ -202,7 +203,8 @@ export type ServerMessage =
   | SyncMessage
   | CharacterCreationMessage
   | WelcomeMessage
-  | CharacterDeletedMessage;
+  | CharacterDeletedMessage
+  | SimulationMessage;
 
 // ============ Event Names ============
 
@@ -227,4 +229,5 @@ export const SERVER_EVENTS = {
   CHARACTER_CREATION: 'character_creation',
   WELCOME: 'welcome',
   CHARACTER_DELETED: 'character_deleted',
+  SIMULATION: 'simulation',
 } as const;
