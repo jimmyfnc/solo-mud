@@ -324,14 +324,21 @@ export const EASTHOLLOW_NPCS: Record<string, NPC> = {
         { text: 'laughs at something someone said', weight: 3 },
         { text: 'stacks clean mugs behind the counter', weight: 2 },
         { text: 'hums a cheerful tune', weight: 2 },
+        { text: "shakes her head at Pete lurking outside the window", weight: 1 },
+        { text: 'swats a fly away from the cheese', weight: 1 },
       ],
       reactions: {
         player_enter: [
           { weight: 5, says: 'Welcome, traveler! Sit anywhere you like.' },
           { weight: 3, says: 'Back again? The usual?', condition: 'player.visits > 3' },
+          { weight: 1, says: "You look like you've seen some things out there. First drink's on me." },
         ],
         time_change: [
           { weight: 5, action: 'lights the lanterns', says: "Evening crowd'll be here soon." },
+        ],
+        player_levelup: [
+          { weight: 4, says: 'Look at you! Moving up in the world!' },
+          { weight: 1, action: 'raises a mug', says: 'A toast! To the hero in our midst!' },
         ],
       },
     },
@@ -360,6 +367,33 @@ export const EASTHOLLOW_NPCS: Record<string, NPC> = {
         response: "The dummy is enchanted - it can take a beating but never breaks. Perfect for practice. Go ahead, give it a whack!",
       },
     ],
+    simulation: {
+      personality: 'stern',
+      topics: ['combat', 'discipline', 'training', 'threats'],
+      topicInterest: { combat: 10, discipline: 9, training: 8, threats: 7 },
+      ambientActions: [
+        { text: 'barks orders at an invisible recruit', weight: 5 },
+        { text: 'demonstrates a sword form with practiced precision', weight: 4 },
+        { text: 'inspects a training dummy with a critical eye', weight: 3 },
+        { text: 'mutters about the sorry state of new recruits', weight: 3 },
+        { text: 'does push-ups to stay sharp', weight: 2 },
+      ],
+      reactions: {
+        player_enter: [
+          { weight: 5, says: 'New blood! Show me what you can do.' },
+          { weight: 3, says: 'Back for more training? Good. Discipline wins battles.' },
+          { weight: 1, says: "You remind me of myself at your age. Except I had better posture." },
+        ],
+        player_combat: [
+          { weight: 5, says: 'Watch your footwork! Sloppy stance gets you killed.' },
+          { weight: 2, says: "Not bad. Not great. But not bad." },
+        ],
+        player_levelup: [
+          { weight: 5, says: 'Stronger, eh? Good. Now train harder.' },
+          { weight: 1, action: 'nods with rare approval', says: "You might just survive out there after all." },
+        ],
+      },
+    },
   },
   npc_sera: {
     id: 'npc_sera',
@@ -380,6 +414,35 @@ export const EASTHOLLOW_NPCS: Record<string, NPC> = {
         response: "You start with basic attack magic. As you grow stronger, you'll learn more powerful spells. Check your abilities with 'abilities'.",
       },
     ],
+    simulation: {
+      personality: 'nervous',
+      topics: ['magic', 'spells', 'elements', 'study'],
+      topicInterest: { magic: 10, spells: 9, elements: 8, study: 7 },
+      ambientActions: [
+        { text: 'traces arcane symbols in the air, leaving faint glowing trails', weight: 5 },
+        { text: 'mutters an incantation under her breath', weight: 4 },
+        { text: 'flips through a worn spellbook', weight: 4 },
+        { text: 'accidentally singes her sleeve and quickly pats it out', weight: 2 },
+        { text: 'creates tiny sparks between her fingertips, looking pleased', weight: 3 },
+      ],
+      reactions: {
+        player_enter: [
+          { weight: 5, says: 'Oh! A student? I mean... welcome to magic training.' },
+          { weight: 3, says: "Careful where you step! I'm working on a... actually, it's fine. It's fine." },
+          { weight: 1, says: "Don't mind the scorch marks. Those are from... someone else. Definitely." },
+        ],
+        player_combat: [
+          { weight: 5, says: 'Remember: aim AWAY from friendlies!' },
+          { weight: 2, action: 'winces', says: 'That looked like it hurt. The magic, I mean. Not your form.' },
+        ],
+        player_levelup: [
+          { weight: 5, says: "Your magical potential grows! I can sense it. Or that might be the potions..." },
+        ],
+        time_change: [
+          { weight: 3, action: 'yawns', says: 'Magic practice is exhausting. But also invigorating! Mostly exhausting.' },
+        ],
+      },
+    },
   },
   npc_shadow: {
     id: 'npc_shadow',
@@ -400,6 +463,33 @@ export const EASTHOLLOW_NPCS: Record<string, NPC> = {
         response: "When hidden, your first attack deals bonus damage. Get behind your enemy, stay silent, then strike!",
       },
     ],
+    simulation: {
+      personality: 'wise',
+      topics: ['stealth', 'shadows', 'secrets', 'survival'],
+      topicInterest: { stealth: 10, shadows: 9, secrets: 8, survival: 7 },
+      ambientActions: [
+        { text: 'seems to flicker in and out of the shadows', weight: 5 },
+        { text: 'flips a dagger between her fingers absently', weight: 4 },
+        { text: 'appears suddenly from somewhere you could swear was empty', weight: 3 },
+        { text: 'examines a lock pick with professional interest', weight: 3 },
+        { text: 'is definitely NOT behind you right now', weight: 1 },
+      ],
+      reactions: {
+        player_enter: [
+          { weight: 5, says: '...How long have you been standing there?' },
+          { weight: 3, says: "Good. You're learning to move quietly. I almost didn't hear you." },
+          { weight: 1, says: "I saw you coming from three rooms away. We'll work on that." },
+        ],
+        player_combat: [
+          { weight: 5, says: "Strike from the shadows. They can't hit what they can't see." },
+          { weight: 2, action: 'watches silently', says: "...Adequate." },
+        ],
+        player_levelup: [
+          { weight: 5, says: 'Your instincts sharpen. The shadows welcome you.' },
+          { weight: 1, action: 'almost smiles', says: "You might make a decent rogue yet. Don't let it go to your head." },
+        ],
+      },
+    },
   },
   npc_thom: {
     id: 'npc_thom',
@@ -441,14 +531,21 @@ export const EASTHOLLOW_NPCS: Record<string, NPC> = {
         { text: 'checks inventory on a worn ledger', weight: 3 },
         { text: 'dusts off a display of goods', weight: 3 },
         { text: 'whistles while working', weight: 2 },
+        { text: "glances toward the blacksmith and sighs competitively", weight: 2 },
+        { text: "adjusts a sign reading 'BETTER PRICES THAN THE FORGE'", weight: 1 },
       ],
       reactions: {
         player_enter: [
           { weight: 5, says: 'Welcome! Looking for supplies?' },
           { weight: 3, says: 'Ah, a familiar face! What can I get you today?', condition: 'player.visits > 3' },
+          { weight: 1, says: "Don't believe what Kira says about my merchandise. It's all quality goods here." },
         ],
         player_levelup: [
           { weight: 5, says: 'Congratulations! Growing stronger every day.' },
+          { weight: 1, says: 'Moving up in the world! Might need some premium supplies now, eh?' },
+        ],
+        time_change: [
+          { weight: 3, action: 'stretches', says: 'Time flies when business is good!' },
         ],
       },
     },
@@ -492,14 +589,21 @@ export const EASTHOLLOW_NPCS: Record<string, NPC> = {
         { text: 'inspects a blade for imperfections', weight: 3 },
         { text: 'stokes the forge fire', weight: 3 },
         { text: 'grunts as she lifts a heavy piece of armor', weight: 2 },
+        { text: "mutters about Thom's 'quality' merchandise", weight: 2 },
+        { text: "shakes her head at a sword that clearly wasn't made here", weight: 1 },
       ],
       reactions: {
         player_enter: [
           { weight: 5, says: 'Need something forged?' },
           { weight: 3, says: "You again. Here for repairs or something new?" },
+          { weight: 1, says: "Let me guess - you bought gear from Thom and now it's broken. I'm not surprised." },
         ],
         player_combat: [
           { weight: 5, says: 'Take the fight outside! This is a forge, not a battlefield.' },
+        ],
+        player_levelup: [
+          { weight: 5, says: 'Getting stronger? Good. You can handle heavier armor now.' },
+          { weight: 1, action: 'nods approvingly', says: "Now THAT'S what proper training looks like." },
         ],
       },
     },
@@ -532,6 +636,34 @@ export const EASTHOLLOW_NPCS: Record<string, NPC> = {
         response: "Type 'use <potion>' to drink one. Health potions restore hit points, mana potions restore magical energy.",
       },
     ],
+    simulation: {
+      personality: 'wise',
+      topics: ['alchemy', 'herbs', 'healing', 'knowledge'],
+      topicInterest: { alchemy: 10, herbs: 9, healing: 8, knowledge: 9 },
+      ambientActions: [
+        { text: 'stirs a bubbling cauldron with practiced care', weight: 5 },
+        { text: 'examines a vial of suspicious liquid, then nods approvingly', weight: 4 },
+        { text: 'crushes dried herbs with a mortar and pestle', weight: 4 },
+        { text: 'mutters formulas and measurements to himself', weight: 3 },
+        { text: 'tastes something and makes an indescribable face', weight: 2 },
+      ],
+      reactions: {
+        player_enter: [
+          { weight: 5, says: 'Ah, seeking remedies? Or perhaps... enhancements?' },
+          { weight: 3, says: "Mind the purple cauldron. It's... temperamental today." },
+          { weight: 1, says: "Perfect timing! I need someone to test - I mean, to PURCHASE a new formula." },
+        ],
+        player_combat: [
+          { weight: 5, says: 'Not near the volatile compounds! Take it outside!' },
+        ],
+        player_levelup: [
+          { weight: 5, says: 'Your constitution grows stronger. Excellent for surviving my experiments - I mean, potions.' },
+        ],
+        time_change: [
+          { weight: 4, action: 'lights more candles', says: 'Delicate work continues into the night...' },
+        ],
+      },
+    },
   },
   npc_marcus: {
     id: 'npc_marcus',
@@ -561,14 +693,24 @@ export const EASTHOLLOW_NPCS: Record<string, NPC> = {
         { text: 'scans the horizon for threats', weight: 4 },
         { text: 'nods curtly to a passing citizen', weight: 3 },
         { text: 'polishes a scuff mark from his armor', weight: 2 },
+        { text: 'mutters about being stuck on gate duty again', weight: 2 },
+        { text: 'suppresses a yawn and stands up straighter', weight: 1 },
       ],
       reactions: {
         player_enter: [
           { weight: 5, says: 'Halt. State your business.' },
           { weight: 3, says: 'Back from the wilds? Any trouble out there?' },
+          { weight: 1, says: "You know, I used to be an adventurer too. Then I got promoted. ...I miss the adventure." },
         ],
         creature_enter: [
           { weight: 5, action: 'draws his sword', says: 'Stand back, citizen!' },
+        ],
+        time_change: [
+          { weight: 4, says: 'Another shift, another day. At least nothing attacked the gate today.' },
+          { weight: 2, action: 'stretches stiffly', says: "Relief should be here soon. I hope." },
+        ],
+        player_levelup: [
+          { weight: 3, says: 'Growing stronger? Good. The wilds need more capable fighters.' },
         ],
       },
     },
@@ -600,14 +742,21 @@ export const EASTHOLLOW_NPCS: Record<string, NPC> = {
         { text: 'chats amiably with a passerby', weight: 3 },
         { text: 'adjusts his worn straw hat', weight: 3 },
         { text: 'stretches his back with a groan', weight: 2 },
+        { text: 'watches a chicken wander through the square', weight: 2 },
+        { text: 'gives Pete a suspicious look', weight: 1 },
       ],
       reactions: {
         player_enter: [
           { weight: 5, says: "Mornin'! Fine day, isn't it?" },
           { weight: 3, says: "Ah, the adventurer! How goes the monster hunting?" },
+          { weight: 1, says: "You ever think about settling down, growing turnips? No? Just me then." },
         ],
         time_change: [
           { weight: 5, action: 'stretches', says: "Sun's settin'. Best get home to the missus." },
+        ],
+        player_levelup: [
+          { weight: 4, says: "Getting stronger! My nephew wanted to be an adventurer too. He's a baker now." },
+          { weight: 1, action: 'chuckles', says: "Back in my day, we just hit things with farm tools. You kids have it easy." },
         ],
       },
     },
@@ -639,14 +788,22 @@ export const EASTHOLLOW_NPCS: Record<string, NPC> = {
         { text: 'leans against the well, trying to look casual', weight: 4 },
         { text: 'scratches behind his ear nervously', weight: 3 },
         { text: 'whistles tunelessly, avoiding eye contact', weight: 2 },
+        { text: "counts something on his fingers, mutters 'that can't be right', starts over", weight: 2 },
+        { text: "scribbles on a scrap of paper labeled 'DEFINITELY LEGITIMATE BUSINESS PLAN'", weight: 1 },
+        { text: "practices looking innocent in a puddle's reflection", weight: 1 },
       ],
       reactions: {
         player_enter: [
           { weight: 5, says: "Oh! Didn't see you there. Just... enjoying the square." },
           { weight: 3, says: 'Psst. Hey. You look like someone who appreciates a good deal.' },
+          { weight: 1, says: "You ever think about how much gold the rats in the sewer must have accumulated? No? Just me? Okay." },
         ],
         player_levelup: [
           { weight: 5, says: "Gettin' stronger, eh? Might have some work for someone with your... talents." },
+          { weight: 1, says: "You know, with your skills and my ideas, we could... no, no, forget I said anything." },
+        ],
+        time_change: [
+          { weight: 3, action: 'yawns dramatically', says: "Well, time to check on my 'investments'. Don't follow me." },
         ],
       },
     },
