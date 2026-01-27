@@ -49,9 +49,85 @@ interface TerminalLineProps {
 }
 
 /**
+ * Get CSS classes for simulation message based on subtype.
+ * - ambient: subtle/italic (background activity)
+ * - medium: normal prominence (conversations, world reactions)
+ * - prominent: stands out (player reactions, hot topics)
+ */
+function getSimulationClasses(simType?: OutputLine['simType']): string {
+  switch (simType) {
+    case 'ambient_action':
+    case 'ambient_speech':
+      return 'text-gray-500 italic';
+    case 'npc_conversation':
+    case 'reaction_to_world':
+      return 'text-gray-400';
+    case 'reaction_to_player':
+    case 'hot_topic':
+      return 'text-gray-200';
+    default:
+      return 'text-gray-400';
+  }
+}
+
+/**
+ * Render a single simulation line (NPC action and/or speech).
+ */
+function SimulationLineContent({
+  npcName,
+  action,
+  says,
+}: {
+  npcName?: string;
+  action?: string;
+  says?: string;
+}) {
+  return (
+    <>
+      {npcName && <span className="text-yellow-400 font-bold">{npcName}</span>}
+      {action && <span className="text-gray-500 italic"> *{action}*</span>}
+      {says && <span> says, "{says}"</span>}
+    </>
+  );
+}
+
+/**
  * Single line of terminal output with style-based coloring.
  */
 function TerminalLine({ line }: TerminalLineProps) {
+  // Handle simulation messages with special rendering
+  if (line.style === 'simulation') {
+    const simClasses = getSimulationClasses(line.simType);
+
+    // Multi-line conversation
+    if (line.simType === 'npc_conversation' && line.lines && line.lines.length > 0) {
+      return (
+        <div className={`${simClasses} whitespace-pre-wrap`}>
+          {line.lines.map((conversationLine, i) => (
+            <div key={i}>
+              <SimulationLineContent
+                npcName={conversationLine.npcName}
+                action={conversationLine.action}
+                says={conversationLine.says}
+              />
+            </div>
+          ))}
+        </div>
+      );
+    }
+
+    // Single NPC action/speech
+    return (
+      <div className={`${simClasses} whitespace-pre-wrap`}>
+        <SimulationLineContent
+          npcName={line.npcName}
+          action={line.action}
+          says={line.says}
+        />
+      </div>
+    );
+  }
+
   const styleClasses = getStyleClasses(line.style);
 
   // Handle timestamp if present
@@ -84,6 +160,9 @@ function getStyleClasses(style?: OutputLine['style']): string {
       return 'text-cyan-400';
     case 'whisper':
       return 'text-purple-400 italic';
+    case 'simulation':
+      // Handled separately in TerminalLine
+      return 'text-gray-400';
     case 'normal':
     default:
       return 'text-gray-200';

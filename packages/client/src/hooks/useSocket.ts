@@ -4,6 +4,7 @@ import {
   SERVER_EVENTS,
   CLIENT_EVENTS,
   type OutputMessage,
+  type OutputLine,
   type RoomMessage,
   type PlayerUpdateMessage,
   type TimeMessage,
@@ -11,6 +12,7 @@ import {
   type SyncMessage,
   type WelcomeMessage,
   type CharacterDeletedMessage,
+  type SimulationMessage,
   type ClassName,
 } from '@solo-mud/shared';
 import { useGameStore } from '../store/gameStore';
@@ -130,6 +132,25 @@ export function useSocket(): UseSocketReturn {
     // Character deleted confirmation
     socket.on(SERVER_EVENTS.CHARACTER_DELETED, (message: CharacterDeletedMessage) => {
       setSavedCharacters(message.characters, useGameStore.getState().maxCharacters);
+    });
+
+    // Simulation messages (NPC ambient actions, conversations, reactions)
+    socket.on(SERVER_EVENTS.SIMULATION, (message: SimulationMessage) => {
+      // Convert simulation message to OutputLine format for terminal display
+      const line: OutputLine = {
+        text: '', // Will be rendered specially by Terminal
+        style: 'simulation',
+        simType: message.subtype,
+        npcName: message.npcName,
+        action: message.action,
+        says: message.says,
+        lines: message.lines?.map((l) => ({
+          npcName: l.npcName,
+          action: l.action,
+          says: l.says,
+        })),
+      };
+      addLines([line]);
     });
 
     // Cleanup on unmount

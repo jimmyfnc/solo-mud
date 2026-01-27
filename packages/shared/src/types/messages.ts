@@ -72,8 +72,14 @@ export interface OutputMessage {
 /** A single line of output with optional styling */
 export interface OutputLine {
   text: string;
-  style?: 'normal' | 'error' | 'success' | 'combat' | 'system' | 'whisper';
+  style?: 'normal' | 'error' | 'success' | 'combat' | 'system' | 'whisper' | 'simulation';
   timestamp?: number;
+  // Simulation message fields (when style === 'simulation')
+  simType?: 'ambient_action' | 'ambient_speech' | 'npc_conversation' | 'reaction_to_player' | 'reaction_to_world' | 'hot_topic';
+  npcName?: string;
+  action?: string;
+  says?: string;
+  lines?: Array<{ npcName: string; action?: string; says?: string }>;
 }
 
 /** Server sends room/location update */
