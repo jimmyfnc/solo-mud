@@ -4,9 +4,10 @@
  */
 
 import type { Server as SocketServer, Socket } from 'socket.io';
-import type { Creature, OutputLine, World } from '@solo-mud/shared';
-import { createRng, CREATURE_TEMPLATES, CHASE_CHANCE, EVENLY_MATCHED_THRESHOLD } from '@solo-mud/shared';
+import type { Creature, NPC, OutputLine, World } from '@solo-mud/shared';
+import { createRng, CREATURE_TEMPLATES, CHASE_CHANCE, EVENLY_MATCHED_THRESHOLD, ZONE_ACTIVITY } from '@solo-mud/shared';
 import { sessionManager, type GameSession } from './session';
+import { SimulationEngine, getZoneType } from '../npc/simulation';
 import {
   getDistanceFromPlayer,
   findPreyInAdjacentLocations,
@@ -34,6 +35,12 @@ let ioServer: SocketServer | null = null;
 let worldLoopInterval: ReturnType<typeof setInterval> | null = null;
 let combatLoopInterval: ReturnType<typeof setInterval> | null = null;
 
+/** Simulation engine instance */
+let simulationEngine: SimulationEngine | null = null;
+
+/** Track last simulation tick per location */
+const lastSimulationTick: Map<string, number> = new Map();
+
 /**
  * Start the game loop.
  */
@@ -46,6 +53,20 @@ export function startGameLoop(io: SocketServer): void {
   if (combatLoopInterval) {
     clearInterval(combatLoopInterval);
   }
+
+  // Initialize simulation engine with message sender
+  simulationEngine = new SimulationEngine((playerId, message) => {
+    const session = sessionManager.getSession(playerId);
+    if (!session) return;
+
+    const socket = getSocketForSession(session);
+    if (socket) {
+      socket.emit('output', {
+        type: 'output',
+        lines: [formatSimulationMessage(message)],
+      });
+    }
+  });
 
   worldLoopInterval = setInterval(worldTick, WORLD_TICK_INTERVAL);
   combatLoopInterval = setInterval(combatTick, COMBAT_TICK_INTERVAL);
@@ -65,6 +86,8 @@ export function stopGameLoop(): void {
     clearInterval(combatLoopInterval);
     combatLoopInterval = null;
   }
+  simulationEngine = null;
+  lastSimulationTick.clear();
   console.log('Game loop stopped');
 }
 
@@ -80,6 +103,9 @@ function worldTick(): void {
     processHunting(session);
     processCreatureMovement(session);
   }
+
+  // Run NPC simulation tick
+  runSimulationTick();
 }
 
 /**
@@ -92,6 +118,124 @@ function combatTick(): void {
     processPlayerCombat(session);
     processCreatureVsCreatureCombat(session);
   }
+}
+
+/** Player info for simulation engine */
+interface PlayerInfo {
+  id: string;
+  name: string;
+  level: number;
+  hp: number;
+  maxHp: number;
+}
+
+/**
+ * Run the NPC simulation tick for all locations with players.
+ */
+function runSimulationTick(): void {
+  if (!simulationEngine) return;
+
+  const now = Date.now();
+  const sessions = sessionManager.getAllSessions();
+
+  // Group players by location
+  const playersByLocation = new Map<string, { players: PlayerInfo[]; session: GameSession }>();
+
+  for (const session of sessions) {
+    const locationId = session.player.locationId;
+
+    if (!playersByLocation.has(locationId)) {
+      playersByLocation.set(locationId, { players: [], session });
+    }
+
+    const entry = playersByLocation.get(locationId)!;
+    entry.players.push({
+      id: session.id,
+      name: session.player.name,
+      level: session.player.level,
+      hp: session.player.currentHp,
+      maxHp: session.player.maxHp,
+    });
+  }
+
+  // Run simulation for each location with players
+  for (const [locationId, { players, session }] of playersByLocation) {
+    const zoneType = getZoneType(locationId);
+    const config = ZONE_ACTIVITY[zoneType];
+
+    if (!config || !config.enabled) continue;
+
+    // Check if enough time has passed for this location
+    const lastTick = lastSimulationTick.get(locationId) || 0;
+    const interval = config.minInterval + Math.random() * (config.maxInterval - config.minInterval);
+
+    if (now - lastTick >= interval) {
+      const npcsAtLocation = getNpcsAtLocation(session.world, locationId);
+      simulationEngine.runTick(locationId, npcsAtLocation, players);
+      lastSimulationTick.set(locationId, now);
+    }
+  }
+}
+
+/**
+ * Get NPCs at a specific location from the world state.
+ */
+function getNpcsAtLocation(world: World, locationId: string): NPC[] {
+  const location = world.locations[locationId];
+  if (!location?.npcs) return [];
+
+  return location.npcs
+    .map(id => world.npcs[id])
+    .filter((npc): npc is NPC => npc !== undefined);
+}
+
+/**
+ * Format a simulation message as an OutputLine.
+ */
+function formatSimulationMessage(message: {
+  type: string;
+  subtype: string;
+  npcName?: string;
+  action?: string;
+  says?: string;
+  lines?: Array<{ npcName: string; action?: string; says?: string }>;
+}): OutputLine {
+  // Handle conversation messages
+  if (message.subtype === 'npc_conversation' && message.lines) {
+    const conversationText = message.lines
+      .map(line => {
+        if (line.action && line.says) {
+          return `${line.npcName} ${line.action}, "${line.says}"`;
+        } else if (line.says) {
+          return `${line.npcName} says, "${line.says}"`;
+        } else if (line.action) {
+          return `${line.npcName} ${line.action}`;
+        }
+        return '';
+      })
+      .filter(Boolean)
+      .join(' ');
+
+    return { text: conversationText, style: 'normal' };
+  }
+
+  // Handle ambient actions
+  if (message.action && !message.says) {
+    return { text: `${message.npcName} ${message.action}`, style: 'normal' };
+  }
+
+  // Handle ambient speech
+  if (message.says && !message.action) {
+    return { text: `${message.npcName} says, "${message.says}"`, style: 'normal' };
+  }
+
+  // Handle combined action + speech
+  if (message.action && message.says) {
+    return { text: `${message.npcName} ${message.action}, "${message.says}"`, style: 'normal' };
+  }
+
+  // Fallback
+  return { text: `${message.npcName} does something.`, style: 'normal' };
 }
 
 /**
