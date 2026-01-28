@@ -2,7 +2,7 @@
  * Command handlers - execute player commands.
  */
 
-import type { OutputLine, Exit, Item, EquipSlot, Creature, Corpse, Location, StatusEffect, Spell, Player } from '@solo-mud/shared';
+import type { OutputLine, Exit, Item, EquipSlot, Creature, Corpse, Container, Location, StatusEffect, Spell, Player } from '@solo-mud/shared';
 import { createRng, getWeaponDamage, CREATURE_TEMPLATES, TUTORIAL_STEPS, SHOP_ITEM_TEMPLATES, CONSUMABLE_EFFECTS, getDrunkLevel, checkDrunkStumble, getRandomStumbleText, xpForLevel, CLASSES, getNpcsAtLocation, getNpcActivity, SEWER_VALVE_ROOM, SPELLS, getClassSpells, getLearnableSpells, getFutureSpells, formatCurrency, addCopper, canAfford, spendCurrency, formatPrice } from '@solo-mud/shared';
 import { handleCreatureDeath } from '../game/ecosystem';
 import { handlePlayerDeath } from '../game/game-loop';
@@ -38,6 +38,8 @@ const handlers: Record<string, CommandHandler> = {
   get: handleTake,
   drop: handleDrop,
   equip: handleEquip,
+  wear: handleEquip,
+  wield: handleEquip,
   unequip: handleUnequip,
   equipment: handleEquipment,
   eq: handleEquipment,
@@ -60,6 +62,7 @@ const handlers: Record<string, CommandHandler> = {
   sell: handleSell,
   map: handleMap,
   cast: handleCast,
+  c: handleCast,
   spells: handleSpells,
   skills: handleSpells,
   abilities: handleSpells,
@@ -694,6 +697,23 @@ function handleUse(ctx: CommandContext): CommandResult {
     };
   }
 
+  // Check containers BEFORE props — containers are interactive objects that
+  // should take priority over decorative room descriptions
+  if (world.containers) {
+    const containers = Object.values(world.containers).filter(
+      (c) => c.locationId === player.locationId
+    );
+
+    const container = containers.find((c) =>
+      c.name.toLowerCase().includes(targetLower)
+    );
+
+    if (container) {
+      // Delegate to open command to handle the container
+      return handleOpen({ session, parsed: { ...parsed, command: 'open', target: container.name, args: [container.name], raw: parsed.raw } });
+    }
+  }
+
   // Check props in the room
   const prop = location.props.find(p => p.toLowerCase().includes(targetLower));
   if (prop) {
@@ -726,22 +746,6 @@ function handleUse(ctx: CommandContext): CommandResult {
     return {
       output: [{ text: `You interact with the ${prop}, but nothing special happens.`, style: 'normal' }],
     };
-  }
-
-  // Check if using a container (like a sconce or crate)
-  if (world.containers) {
-    const containers = Object.values(world.containers).filter(
-      (c) => c.locationId === player.locationId
-    );
-
-    const container = containers.find((c) =>
-      c.name.toLowerCase().includes(targetLower)
-    );
-
-    if (container) {
-      // Delegate to open command to handle the container
-      return handleOpen({ session, parsed: { ...parsed, command: 'open', target: container.name, args: [container.name], raw: parsed.raw } });
-    }
   }
 
   return {
@@ -1383,15 +1387,19 @@ function handleInventory(ctx: CommandContext): CommandResult {
 }
 
 /**
- * Handle the "take" command - pick up an item.
+ * Handle the "take" / "get" command.
+ * - take <item>           → pick up from ground only
+ * - take <item> from <source>  → take item from corpse/container (parser sets parsed.source)
+ * - take <item> <source>  → take item from corpse/container (suffix parsing)
+ * - take all <source>     → take everything from a source
  */
 function handleTake(ctx: CommandContext): CommandResult {
   const { session, parsed } = ctx;
   const { world, player } = session;
 
-  if (!parsed.target) {
+  if (!parsed.target && parsed.args.length === 0) {
     return {
-      output: [{ text: 'Take what?', style: 'system' }],
+      output: [{ text: 'Take what? Try "take <item>" or "take <item> <source>".', style: 'system' }],
     };
   }
 
@@ -1402,13 +1410,67 @@ function handleTake(ctx: CommandContext): CommandResult {
     };
   }
 
-  // Check if taking from a corpse
+  // --- "take X from Y" syntax (parser already split these) ---
   if (parsed.source) {
-    return handleTakeFromCorpse(ctx, location);
+    return takeFromSource(world, player, parsed.target!.toLowerCase(), parsed.source.toLowerCase());
   }
 
-  // Find item in room matching target
-  const targetLower = parsed.target.toLowerCase();
+  // --- Build the full input from args for suffix parsing ---
+  const input = parsed.args.join(' ').toLowerCase();
+
+  // --- "take all <source>" → take everything from a source ---
+  if (input.startsWith('all ') && input.length > 4) {
+    const sourceName = input.slice(4);
+    return takeAllFromSource(world, player, sourceName);
+  }
+
+  // --- Try suffix matching: "take <item> <source>" ---
+  // Gather sources: corpses + opened containers
+  const corpses = Object.values(world.corpses).filter(
+    (c) => c.locationId === player.locationId
+  );
+  const openContainers = world.containers
+    ? Object.values(world.containers).filter(
+        (c) => c.locationId === player.locationId && c.opened
+      )
+    : [];
+  const allContainers = world.containers
+    ? Object.values(world.containers).filter(
+        (c) => c.locationId === player.locationId
+      )
+    : [];
+
+  // Try splitting args at each word boundary to find a source suffix
+  const words = input.split(' ');
+  if (words.length >= 2) {
+    for (let split = 1; split < words.length; split++) {
+      const sourcePart = words.slice(split).join(' ');
+      const itemPart = words.slice(0, split).join(' ');
+
+      // Check corpses
+      const corpse = corpses.find((c) => c.name.toLowerCase().includes(sourcePart));
+      if (corpse) {
+        return takeItemFromContents(world, player, itemPart, corpse.name, corpse.loot, 'corpse', corpse);
+      }
+
+      // Check opened containers
+      const container = openContainers.find((c) => c.name.toLowerCase().includes(sourcePart));
+      if (container) {
+        return takeItemFromContents(world, player, itemPart, container.name, container.contents, 'container', container);
+      }
+
+      // Check closed containers (give helpful message)
+      const closedContainer = allContainers.find((c) => !c.opened && c.name.toLowerCase().includes(sourcePart));
+      if (closedContainer) {
+        return {
+          output: [{ text: `The ${closedContainer.name} is closed. Try "open ${closedContainer.name.toLowerCase()}" first.`, style: 'error' }],
+        };
+      }
+    }
+  }
+
+  // --- No source found: ground item pickup only ---
+  const targetLower = input;
   const itemIndex = location.items.findIndex(id => {
     const item = world.items[id];
     return item?.name.toLowerCase().includes(targetLower);
@@ -1416,7 +1478,7 @@ function handleTake(ctx: CommandContext): CommandResult {
 
   if (itemIndex === -1) {
     return {
-      output: [{ text: `You don't see any "${parsed.target}" here.`, style: 'error' }],
+      output: [{ text: `You don't see any "${parsed.args.join(' ')}" here to take.`, style: 'error' }],
     };
   }
 
@@ -1429,17 +1491,14 @@ function handleTake(ctx: CommandContext): CommandResult {
     };
   }
 
-  // Check inventory capacity
   if (player.inventory.length >= player.inventorySlots) {
     return {
       output: [{ text: 'Your inventory is full.', style: 'error' }],
     };
   }
 
-  // Remove from room
   location.items.splice(itemIndex, 1);
 
-  // Add to inventory (check if stackable)
   const existingSlot = player.inventory.find(slot => slot.itemId === itemId);
   if (existingSlot) {
     existingSlot.quantity++;
@@ -1455,133 +1514,203 @@ function handleTake(ctx: CommandContext): CommandResult {
 }
 
 /**
- * Handle taking items from a corpse.
+ * Take a specific item from a named source (corpse or container).
+ * Handles "take X from Y" syntax.
  */
-function handleTakeFromCorpse(ctx: CommandContext, _location: Location): CommandResult {
-  const { session, parsed } = ctx;
-  const { world, player } = session;
-  const sourceLower = parsed.source!.toLowerCase();
-  const targetLower = parsed.target!.toLowerCase();
-
-  // Find the corpse
+function takeFromSource(
+  world: GameSession['world'],
+  player: Player,
+  itemQuery: string,
+  sourceQuery: string
+): CommandResult {
   const corpses = Object.values(world.corpses).filter(
     (c) => c.locationId === player.locationId
   );
+  const containers = world.containers
+    ? Object.values(world.containers).filter(
+        (c) => c.locationId === player.locationId
+      )
+    : [];
 
+  // Handle "take all from <source>"
+  if (itemQuery === 'all') {
+    return takeAllFromSource(world, player, sourceQuery);
+  }
+
+  // Find source by name
   const corpse = corpses.find((c) =>
-    c.name.toLowerCase().includes(sourceLower) ||
-    sourceLower === 'corpse'
+    c.name.toLowerCase().includes(sourceQuery) || sourceQuery === 'corpse'
   );
-
-  if (!corpse) {
-    return {
-      output: [{ text: `You don't see a "${parsed.source}" to take from.`, style: 'error' }],
-    };
+  if (corpse) {
+    return takeItemFromContents(world, player, itemQuery, corpse.name, corpse.loot, 'corpse', corpse);
   }
 
-  if (corpse.loot.length === 0) {
-    return {
-      output: [{ text: `The ${corpse.name}'s corpse has nothing left.`, style: 'normal' }],
-    };
-  }
-
-  // Handle "take all from corpse"
-  if (targetLower === 'all') {
-    const taken: string[] = [];
-    for (const itemId of [...corpse.loot]) {
-      const item = world.items[itemId];
-      if (item && player.inventory.length < player.inventorySlots) {
-        player.inventory.push({ itemId, quantity: 1 });
-        taken.push(item.name);
-        const idx = corpse.loot.indexOf(itemId);
-        if (idx !== -1) corpse.loot.splice(idx, 1);
-      }
-    }
-
-    if (taken.length === 0) {
+  const container = containers.find((c) => c.name.toLowerCase().includes(sourceQuery));
+  if (container) {
+    if (!container.opened) {
       return {
-        output: [{ text: 'Your inventory is full.', style: 'error' }],
+        output: [{ text: `The ${container.name} is closed. Try "open ${container.name.toLowerCase()}" first.`, style: 'error' }],
       };
     }
-
-    // Mark corpse as looted
-    if (corpse.loot.length === 0) {
-      corpse.looted = true;
-      corpse.lootedAt = Date.now();
-    }
-
-    return {
-      output: [{ text: `You take ${taken.join(' and ')}.`, style: 'success' }],
-      updatePlayer: true,
-    };
+    return takeItemFromContents(world, player, itemQuery, container.name, container.contents, 'container', container);
   }
 
-  // Handle "take 1 from corpse" (by number)
-  const numMatch = targetLower.match(/^(\d+)$/);
-  if (numMatch) {
-    const index = parseInt(numMatch[1]!, 10) - 1;
-    if (index < 0 || index >= corpse.loot.length) {
-      return {
-        output: [{ text: `Invalid number. Use 1-${corpse.loot.length}.`, style: 'error' }],
-      };
-    }
+  return {
+    output: [{ text: `You don't see a "${sourceQuery}" here to take from.`, style: 'error' }],
+  };
+}
 
-    const itemId = corpse.loot[index]!;
-    const item = world.items[itemId];
+/**
+ * Take all items from a named source.
+ */
+function takeAllFromSource(
+  world: GameSession['world'],
+  player: Player,
+  sourceQuery: string
+): CommandResult {
+  const corpses = Object.values(world.corpses).filter(
+    (c) => c.locationId === player.locationId
+  );
+  const containers = world.containers
+    ? Object.values(world.containers).filter(
+        (c) => c.locationId === player.locationId
+      )
+    : [];
 
-    if (player.inventory.length >= player.inventorySlots) {
-      return {
-        output: [{ text: 'Your inventory is full.', style: 'error' }],
-      };
-    }
-
-    player.inventory.push({ itemId, quantity: 1 });
-    corpse.loot.splice(index, 1);
-
-    if (corpse.loot.length === 0) {
-      corpse.looted = true;
-      corpse.lootedAt = Date.now();
-    }
-
-    return {
-      output: [{ text: `You take the ${item?.name ?? 'item'}.`, style: 'success' }],
-      updatePlayer: true,
-    };
+  // Find source
+  const corpse = corpses.find((c) => c.name.toLowerCase().includes(sourceQuery));
+  if (corpse) {
+    return takeAllFromContents(world, player, corpse.name, corpse.loot, 'corpse', corpse);
   }
 
-  // Handle "take dagger from corpse" (by name)
-  const itemIndex = corpse.loot.findIndex((id) => {
+  const container = containers.find((c) => c.name.toLowerCase().includes(sourceQuery));
+  if (container) {
+    if (!container.opened) {
+      return {
+        output: [{ text: `The ${container.name} is closed. Try "open ${container.name.toLowerCase()}" first.`, style: 'error' }],
+      };
+    }
+    return takeAllFromContents(world, player, container.name, container.contents, 'container', container);
+  }
+
+  return {
+    output: [{ text: `You don't see a "${sourceQuery}" here to take from.`, style: 'error' }],
+  };
+}
+
+/**
+ * Take a specific item by name from a contents array (corpse loot or container).
+ */
+function takeItemFromContents(
+  world: GameSession['world'],
+  player: Player,
+  itemQuery: string,
+  sourceName: string,
+  contents: string[],
+  sourceType: 'corpse' | 'container',
+  sourceRef: Corpse | Container
+): CommandResult {
+  if (contents.length === 0) {
+    const msg = sourceType === 'corpse'
+      ? `The ${sourceName}'s corpse has nothing left.`
+      : `The ${sourceName} is empty.`;
+    return { output: [{ text: msg, style: 'normal' }] };
+  }
+
+  const itemIndex = contents.findIndex((id) => {
     const item = world.items[id];
-    return item?.name.toLowerCase().includes(targetLower);
+    return item?.name.toLowerCase().includes(itemQuery);
   });
 
   if (itemIndex === -1) {
+    const descriptor = sourceType === 'corpse' ? `${sourceName}'s corpse` : sourceName;
     return {
-      output: [{ text: `The corpse doesn't have a "${parsed.target}".`, style: 'error' }],
+      output: [{ text: `You don't see "${itemQuery}" in the ${descriptor}.`, style: 'error' }],
     };
   }
 
   if (player.inventory.length >= player.inventorySlots) {
-    return {
-      output: [{ text: 'Your inventory is full.', style: 'error' }],
-    };
+    return { output: [{ text: 'Your inventory is full.', style: 'error' }] };
   }
 
-  const itemId = corpse.loot[itemIndex]!;
+  const itemId = contents[itemIndex]!;
   const item = world.items[itemId];
-
   player.inventory.push({ itemId, quantity: 1 });
-  corpse.loot.splice(itemIndex, 1);
+  contents.splice(itemIndex, 1);
 
-  if (corpse.loot.length === 0) {
-    corpse.looted = true;
-    corpse.lootedAt = Date.now();
-  }
+  markSourceTaken(world, sourceType, sourceRef, contents);
 
   return {
     output: [{ text: `You take the ${item?.name ?? 'item'}.`, style: 'success' }],
     updatePlayer: true,
   };
+}
+
+/**
+ * Take all items from a contents array (corpse loot or container).
+ */
+function takeAllFromContents(
+  world: GameSession['world'],
+  player: Player,
+  sourceName: string,
+  contents: string[],
+  sourceType: 'corpse' | 'container',
+  sourceRef: Corpse | Container
+): CommandResult {
+  if (contents.length === 0) {
+    const msg = sourceType === 'corpse'
+      ? `The ${sourceName}'s corpse has nothing left.`
+      : `The ${sourceName} is empty.`;
+    return { output: [{ text: msg, style: 'normal' }] };
+  }
+
+  const taken: string[] = [];
+  for (const itemId of [...contents]) {
+    const item = world.items[itemId];
+    if (item && player.inventory.length < player.inventorySlots) {
+      player.inventory.push({ itemId, quantity: 1 });
+      taken.push(item.name);
+      const idx = contents.indexOf(itemId);
+      if (idx !== -1) contents.splice(idx, 1);
+    }
+  }
+
+  if (taken.length === 0) {
+    return { output: [{ text: 'Your inventory is full.', style: 'error' }] };
+  }
+
+  markSourceTaken(world, sourceType, sourceRef, contents);
+
+  return {
+    output: [{ text: `You take ${taken.join(', ')}.`, style: 'success' }],
+    updatePlayer: true,
+  };
+}
+
+/**
+ * Update source state after items are taken (corpse looted flag / container respawn timer).
+ */
+function markSourceTaken(
+  world: GameSession['world'],
+  sourceType: 'corpse' | 'container',
+  sourceRef: Corpse | Container,
+  contents: string[]
+): void {
+  if (sourceType === 'corpse') {
+    const corpse = sourceRef as Corpse;
+    if (contents.length === 0) {
+      corpse.looted = true;
+      corpse.lootedAt = Date.now();
+    }
+  } else {
+    const container = sourceRef as Container;
+    if (!container.originalContents && container.respawns) {
+      container.originalContents = [...container.contents];
+    }
+    if (container.respawns && container.lastOpened === undefined) {
+      container.lastOpened = world.time.totalMinutes;
+    }
+  }
 }
 
 /**
@@ -2653,8 +2782,8 @@ function handleFlee(ctx: CommandContext): CommandResult {
 }
 
 /**
- * Handle the "loot" command - examine a corpse or container for items or take loot directly.
- * Supports: loot, loot <target>, loot <target> all, loot <target> <number>
+ * Handle the "loot" command - inspect a corpse or container (never takes items).
+ * Supports: loot, loot <source>
  */
 function handleLoot(ctx: CommandContext): CommandResult {
   const { session, parsed } = ctx;
@@ -2667,230 +2796,105 @@ function handleLoot(ctx: CommandContext): CommandResult {
     };
   }
 
-  // Find corpses and containers in this location
+  // Gather inspectable sources: corpses + containers at this location
   const corpses = Object.values(world.corpses).filter(
     (c) => c.locationId === player.locationId
   );
-
-  const containers = world.containers
+  const allContainers = world.containers
     ? Object.values(world.containers).filter(
-        (c) => c.locationId === player.locationId && c.opened
+        (c) => c.locationId === player.locationId
       )
     : [];
 
-  if (corpses.length === 0 && containers.length === 0) {
+  const input = parsed.args.join(' ').toLowerCase();
+
+  // --- No args: if one source, inspect it; if multiple, list ---
+  if (!input) {
+    const total = corpses.length + allContainers.filter((c) => c.opened).length;
+    if (total === 0) {
+      return {
+        output: [{ text: 'There is nothing here to loot.', style: 'error' }],
+      };
+    }
+    if (total === 1) {
+      const corpse = corpses[0];
+      if (corpse) return showSourceContents(world, corpse.name, corpse.loot, 'corpse');
+      const container = allContainers.find((c) => c.opened);
+      if (container) return showSourceContents(world, container.name, container.contents, 'container');
+    }
+    const names = [
+      ...corpses.map((c) => `${c.name} (corpse)`),
+      ...allContainers.filter((c) => c.opened).map((c) => c.name),
+    ].join(', ');
     return {
-      output: [{ text: 'There is nothing here to loot.', style: 'error' }],
+      output: [
+        { text: 'Multiple lootable things here. Specify which one:', style: 'system' },
+        { text: `  ${names}`, style: 'normal' },
+      ],
     };
   }
 
-  // Parse the target - could be "rat", "rat all", "rat 1", "chest", etc.
-  // Use full args since target only contains the first argument
-  let targetName: string | undefined;
-  let action: string | undefined;
-
-  if (parsed.args.length > 0) {
-    targetName = parsed.args[0];
-    action = parsed.args.slice(1).join(' ').toLowerCase();
+  // --- loot <source>: find corpse or container by name ---
+  // Check corpses
+  const corpse = corpses.find((c) => c.name.toLowerCase().includes(input));
+  if (corpse) {
+    return showSourceContents(world, corpse.name, corpse.loot, 'corpse');
   }
 
-  // Try to find the target - could be a corpse or container
-  let targetCorpse: Corpse | undefined;
-  let targetContainer: { id: string; name: string; contents: string[]; type: 'container' } | undefined;
-  let targetType: 'corpse' | 'container' = 'corpse';
-
-  if (!targetName) {
-    // No target specified - use the only lootable thing or prompt
-    const total = corpses.length + containers.length;
-    if (total === 1) {
-      if (corpses.length === 1) {
-        targetCorpse = corpses[0];
-        targetType = 'corpse';
-      } else {
-        const c = containers[0]!;
-        targetContainer = { id: c.id, name: c.name, contents: c.contents, type: 'container' };
-        targetType = 'container';
-      }
-    } else {
-      const corpseNames = corpses.map((c) => `${c.name} (corpse)`);
-      const containerNames = containers.map((c) => `${c.name}`);
-      const names = [...corpseNames, ...containerNames].join(', ');
+  // Check containers (including closed ones — give helpful message)
+  const container = allContainers.find((c) => c.name.toLowerCase().includes(input));
+  if (container) {
+    if (!container.opened) {
       return {
-        output: [
-          { text: 'Multiple lootable things here. Specify which one:', style: 'system' },
-          { text: `  ${names}`, style: 'normal' },
-        ],
+        output: [{ text: `The ${container.name} is closed. Try "open ${container.name.toLowerCase()}" first.`, style: 'error' }],
       };
     }
-  } else {
-    const nameLower = targetName.toLowerCase();
-
-    // Check corpses first
-    targetCorpse = corpses.find((c) =>
-      c.name.toLowerCase().includes(nameLower)
-    );
-
-    if (targetCorpse) {
-      targetType = 'corpse';
-    } else {
-      // Check containers
-      const container = containers.find((c) =>
-        c.name.toLowerCase().includes(nameLower)
-      );
-      if (container) {
-        targetContainer = { id: container.id, name: container.name, contents: container.contents, type: 'container' };
-        targetType = 'container';
-      }
-    }
-  }
-
-  // Handle corpse looting
-  if (targetType === 'corpse' && targetCorpse) {
-    return handleLootFromSource(
-      world, player, targetCorpse.name, targetCorpse.loot, action,
-      (isEmpty) => {
-        if (isEmpty) {
-          targetCorpse!.looted = true;
-          targetCorpse!.lootedAt = Date.now();
-        }
-      },
-      'corpse'
-    );
-  }
-
-  // Handle container looting
-  if (targetType === 'container' && targetContainer) {
-    const container = world.containers![targetContainer.id]!;
-
-    // Save original contents for respawning (if not already saved)
-    if (!container.originalContents && container.respawns) {
-      container.originalContents = [...container.contents];
-    }
-
-    return handleLootFromSource(
-      world, player, container.name, container.contents, action,
-      () => {
-        // Track when container was looted for respawn timing
-        if (container.respawns && container.lastOpened === undefined) {
-          container.lastOpened = world.time.totalMinutes;
-        }
-      },
-      'container'
-    );
+    return showSourceContents(world, container.name, container.contents, 'container');
   }
 
   return {
-    output: [{ text: `You don't see a "${targetName}" here to loot.`, style: 'error' }],
+    output: [{ text: `You don't see "${parsed.args.join(' ')}" here to loot.`, style: 'error' }],
   };
 }
 
 /**
- * Helper to handle looting from a corpse or container.
+ * Show the contents of a loot source (inspect only, no taking).
  */
-function handleLootFromSource(
+function showSourceContents(
   world: { items: Record<string, Item> },
-  player: { inventory: { itemId: string; quantity: number }[]; inventorySlots: number },
   sourceName: string,
   contents: string[],
-  action: string | undefined,
-  onEmpty: (isEmpty: boolean) => void,
   sourceType: 'corpse' | 'container'
 ): CommandResult {
   const descriptor = sourceType === 'corpse' ? `${sourceName}'s corpse` : sourceName;
 
-  // Check if empty
   if (contents.length === 0) {
-    const emptyMsg = sourceType === 'corpse'
-      ? `The ${descriptor} has nothing left of value.`
+    const msg = sourceType === 'corpse'
+      ? `The ${descriptor} has nothing of value.`
       : `The ${sourceName} is empty.`;
-    return {
-      output: [{ text: emptyMsg, style: 'normal' }],
-    };
+    return { output: [{ text: msg, style: 'normal' }] };
   }
 
-  // Handle "loot <target> all" - take everything
-  if (action === 'all') {
-    const taken: string[] = [];
-    for (const itemId of [...contents]) {
-      const item = world.items[itemId];
-      if (item && player.inventory.length < player.inventorySlots) {
-        player.inventory.push({ itemId, quantity: 1 });
-        taken.push(item.name);
-        const idx = contents.indexOf(itemId);
-        if (idx !== -1) contents.splice(idx, 1);
-      }
-    }
-
-    if (taken.length === 0) {
-      return {
-        output: [{ text: 'Your inventory is full.', style: 'error' }],
-      };
-    }
-
-    onEmpty(contents.length === 0);
-
-    return {
-      output: [{ text: `You take ${taken.join(', ')}.`, style: 'success' }],
-      updatePlayer: true,
-    };
-  }
-
-  // Handle "loot <target> <number>" - take by number
-  const numMatch = action?.match(/^(\d+)$/);
-  if (numMatch) {
-    const index = parseInt(numMatch[1]!, 10) - 1;
-    if (index < 0 || index >= contents.length) {
-      return {
-        output: [{ text: `Invalid number. Use 1-${contents.length}.`, style: 'error' }],
-      };
-    }
-
-    const itemId = contents[index]!;
-    const item = world.items[itemId];
-
-    if (player.inventory.length >= player.inventorySlots) {
-      return {
-        output: [{ text: 'Your inventory is full.', style: 'error' }],
-      };
-    }
-
-    player.inventory.push({ itemId, quantity: 1 });
-    contents.splice(index, 1);
-
-    onEmpty(contents.length === 0);
-
-    // Show remaining loot if any
-    const output: OutputLine[] = [
-      { text: `You take the ${item?.name ?? 'item'}.`, style: 'success' },
-    ];
-
-    if (contents.length > 0) {
-      output.push({ text: `The ${descriptor} still contains:`, style: 'system' });
-      contents.forEach((id, idx) => {
-        const lootItem = world.items[id];
-        output.push({ text: `  ${idx + 1}. ${lootItem?.name ?? 'Unknown item'}`, style: 'normal' });
-      });
-    }
-
-    return { output, updatePlayer: true };
-  }
-
-  // No action specified - just show contents with options
   const output: OutputLine[] = [
     { text: `The ${descriptor} contains:`, style: 'system' },
   ];
 
-  contents.forEach((itemId, index) => {
-    const item = world.items[itemId];
-    const name = item?.name ?? 'Unknown item';
-    output.push({ text: `  ${index + 1}. ${name}`, style: 'normal' });
-  });
+  if (contents.length === 1) {
+    const item = world.items[contents[0]!];
+    output.push({ text: `  ${item?.name ?? 'Unknown item'}`, style: 'normal' });
+  } else {
+    contents.forEach((itemId, index) => {
+      const item = world.items[itemId];
+      output.push({ text: `  ${index + 1}. ${item?.name ?? 'Unknown item'}`, style: 'normal' });
+    });
+  }
 
   output.push({ text: '', style: 'normal' });
-  output.push({ text: `Use "loot ${sourceName.toLowerCase()} <#>" or "loot ${sourceName.toLowerCase()} all"`, style: 'system' });
+  output.push({ text: `Use "take <item> ${sourceName.toLowerCase()}" or "take all ${sourceName.toLowerCase()}"`, style: 'system' });
 
   return { output };
 }
+
 
 /**
  * Handle the "spells" command - list known spells.
@@ -4519,6 +4523,10 @@ function handleOpen(ctx: CommandContext): CommandResult {
 
       if (container.contents.length === 0) {
         output.push({ text: 'It is empty.', style: 'normal' });
+      } else if (container.contents.length === 1) {
+        const item = world.items[container.contents[0]!];
+        output.push({ text: `Inside you find: ${item?.name ?? 'an item'}.`, style: 'normal' });
+        output.push({ text: `Use "loot ${container.name.toLowerCase()}" to take it.`, style: 'system' });
       } else {
         output.push({ text: 'Inside you find:', style: 'system' });
         container.contents.forEach((itemId, index) => {
