@@ -81,6 +81,12 @@ function runMigrations(database: Database.Database): void {
     database.exec(`ALTER TABLE characters ADD COLUMN silver INTEGER DEFAULT 0`);
     console.log('Migration: Added silver column to characters table');
   }
+
+  // Migration: Add known_spells column for spell system
+  if (!columnNames.has('known_spells')) {
+    database.exec(`ALTER TABLE characters ADD COLUMN known_spells TEXT DEFAULT '[]'`);
+    console.log('Migration: Added known_spells column to characters table');
+  }
 }
 
 /**

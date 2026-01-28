@@ -316,8 +316,9 @@ export const EASTHOLLOW_LOCATIONS: Record<string, Location> = {
       'dim light filtering through the grate',
       'shallow murky water',
       'rat droppings everywhere',
-      'old torch sconce (empty)',
+      'iron torch sconce on the wall',
       'scratching echoes in the darkness',
+      'moldy crate in the corner',
     ],
     items: [],
     enemies: [],
@@ -2053,6 +2054,15 @@ export const SHOP_ITEM_TEMPLATES: Record<string, { name: string; tags: string[];
 
 // ============ Sewer Dungeon Items (pre-placed) ============
 export const SEWER_ITEMS = {
+  // Free health potion at sewer entrance for beginners
+  entrance_health_potion: {
+    id: 'sewer_entrance_health_potion',
+    baseId: 'health_potion',
+    name: 'Health Potion',
+    tags: ['potion', 'consumable', 'healing'],
+    rarity: 'common' as const,
+    affixes: [],
+  },
   // Key spawns in East Tunnel (drops from Large Rat or found in debris)
   rusty_key: {
     id: 'sewer_rusty_key',
@@ -2154,6 +2164,22 @@ export const TEMPLE_ITEMS: Record<string, Item> = {
     baseId: 'rope',
     name: 'Rope',
     tags: ['tool', 'utility'],
+    rarity: 'common' as const,
+    affixes: [],
+  },
+  crate_health_potion: {
+    id: 'crate_health_potion',
+    baseId: 'health_potion',
+    name: 'Health Potion',
+    tags: ['potion', 'consumable', 'healing'],
+    rarity: 'common' as const,
+    affixes: [],
+  },
+  sconce_torch: {
+    id: 'sconce_torch',
+    baseId: 'torch',
+    name: 'Torch',
+    tags: ['light', 'tool'],
     rarity: 'common' as const,
     affixes: [],
   },
@@ -2485,10 +2511,21 @@ export const EASTHOLLOW_CONTAINERS: Record<string, Container> = {
     name: 'Moldy Crate',
     description: 'A waterlogged crate that somehow survived the damp. Something rattles inside.',
     locationId: SEWER_ENTRANCE,
-    contents: ['crate_torch', 'crate_rope'],
+    contents: ['crate_health_potion'],
     locked: false,
     opened: false,
     respawns: true,
-    respawnTime: 120, // 2 hours
+    respawnTime: 120, // 2 hours (real minutes)
+  },
+  container_sewer_sconce: {
+    id: 'container_sewer_sconce',
+    name: 'Torch Sconce',
+    description: 'An old iron sconce bolted to the wall. A torch flickers dimly within.',
+    locationId: SEWER_ENTRANCE,
+    contents: ['sconce_torch'],
+    locked: false,
+    opened: false,
+    respawns: true,
+    respawnTime: 30, // 30 minutes
   },
 };

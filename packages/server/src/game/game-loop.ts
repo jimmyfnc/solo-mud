@@ -125,9 +125,37 @@ function combatTick(): void {
   const sessions = sessionManager.getAllSessions();
 
   for (const session of sessions) {
+    processCooldowns(session);
     processTrappedCreatures(session);
     processPlayerCombat(session);
     processCreatureVsCreatureCombat(session);
+  }
+}
+
+/**
+ * Process ability cooldowns and GCD for a session.
+ * Decrements all active cooldowns by the combat tick interval.
+ */
+function processCooldowns(session: GameSession): void {
+  const { player } = session;
+  const deltaMs = COMBAT_TICK_INTERVAL;
+
+  // Decrement GCD
+  if (player.globalCooldown > 0) {
+    player.globalCooldown = Math.max(0, player.globalCooldown - deltaMs);
+  }
+
+  // Decrement ability cooldowns
+  for (const spellId of Object.keys(player.abilityCooldowns)) {
+    const remaining = player.abilityCooldowns[spellId] ?? 0;
+    if (remaining > 0) {
+      const newRemaining = Math.max(0, remaining - deltaMs);
+      if (newRemaining > 0) {
+        player.abilityCooldowns[spellId] = newRemaining;
+      } else {
+        delete player.abilityCooldowns[spellId];
+      }
+    }
   }
 }
 
@@ -551,6 +579,7 @@ function processPlayerCombat(session: GameSession): void {
         player.targetId = undefined;
 
         sendNotifications(socket, output);
+        sendPlayerUpdate(socket, session); // Immediate UI update for XP/level changes
         return;
       } else {
         // Show creature HP

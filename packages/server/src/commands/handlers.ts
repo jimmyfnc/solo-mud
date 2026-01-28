@@ -48,6 +48,10 @@ const handlers: Record<string, CommandHandler> = {
   flee: handleFlee,
   loot: handleLoot,
   open: handleOpen,
+  close: handleClose,
+  shut: handleClose,
+  leave: handleLeave,
+  exit: handleLeave,
   talk: handleTalk,
   say: handleSay,
   tutorial: handleTutorial,
@@ -722,6 +726,22 @@ function handleUse(ctx: CommandContext): CommandResult {
     return {
       output: [{ text: `You interact with the ${prop}, but nothing special happens.`, style: 'normal' }],
     };
+  }
+
+  // Check if using a container (like a sconce or crate)
+  if (world.containers) {
+    const containers = Object.values(world.containers).filter(
+      (c) => c.locationId === player.locationId
+    );
+
+    const container = containers.find((c) =>
+      c.name.toLowerCase().includes(targetLower)
+    );
+
+    if (container) {
+      // Delegate to open command to handle the container
+      return handleOpen({ session, parsed: { ...parsed, command: 'open', target: container.name, args: [container.name], raw: parsed.raw } });
+    }
   }
 
   return {
@@ -2900,9 +2920,10 @@ function handleSpells(ctx: CommandContext): CommandResult {
 
     const slotIndex = player.spells.slots.indexOf(spellId);
     const slotText = slotIndex >= 0 ? ` [Slot ${slotIndex + 1}]` : '';
+    const aliasText = spell.alias ? ` [${spell.alias}]` : '';
 
     output.push({
-      text: `  ${spell.name}${slotText}${cooldownText} - ${spell.manaCost} MP`,
+      text: `  ${spell.name}${aliasText}${slotText}${cooldownText} - ${spell.manaCost} MP`,
       style: 'normal'
     });
     output.push({
@@ -2920,8 +2941,9 @@ function handleSpells(ctx: CommandContext): CommandResult {
     output.push({ text: '', style: 'normal' });
     output.push({ text: 'Spells available to learn from trainers:', style: 'system' });
     for (const spell of learnable) {
+      const aliasText = spell.alias ? ` [${spell.alias}]` : '';
       output.push({
-        text: `  ${spell.name} (Level ${spell.levelRequired}) - ${spell.learnCost} gold`,
+        text: `  ${spell.name}${aliasText} (Level ${spell.levelRequired}) - ${spell.learnCost} gold`,
         style: 'normal'
       });
     }
@@ -3235,13 +3257,39 @@ function handleCast(ctx: CommandContext): CommandResult {
     spellName = slotSpell.name.toLowerCase();
   }
 
-  // Find the spell by name or ID
+  // Find the spell by name, alias, or ID with prioritized matching
+  // Priority: exact ID/alias > exact name > starts with > contains
   let spell: Spell | undefined;
+  let bestMatchType = 0; // 0=none, 1=contains, 2=starts, 3=exact name, 4=exact ID/alias
+
   for (const spellId of player.spells.known) {
     const s = SPELLS[spellId];
-    if (s && (s.id === spellName || s.name.toLowerCase().includes(spellName))) {
+    if (!s) continue;
+
+    const sName = s.name.toLowerCase();
+    const sAlias = s.alias?.toLowerCase();
+
+    // Exact ID or alias match (highest priority)
+    if (s.id === spellName || sAlias === spellName) {
       spell = s;
+      bestMatchType = 4;
       break;
+    }
+
+    // Exact name match
+    if (sName === spellName && bestMatchType < 3) {
+      spell = s;
+      bestMatchType = 3;
+    }
+    // Starts with match
+    else if (sName.startsWith(spellName) && bestMatchType < 2) {
+      spell = s;
+      bestMatchType = 2;
+    }
+    // Contains match (lowest priority)
+    else if (sName.includes(spellName) && bestMatchType < 1) {
+      spell = s;
+      bestMatchType = 1;
     }
   }
 
@@ -4503,6 +4551,108 @@ function handleOpen(ctx: CommandContext): CommandResult {
   return {
     output: [{ text: `You don't see a "${parsed.target}" here to open.`, style: 'error' }],
   };
+}
+
+/**
+ * Handle the "close" command - close a container or door.
+ */
+function handleClose(ctx: CommandContext): CommandResult {
+  const { session, parsed } = ctx;
+  const { world, player } = session;
+
+  if (!parsed.target) {
+    return {
+      output: [{ text: 'Close what? Try "close <container>".', style: 'error' }],
+    };
+  }
+
+  const location = world.locations[player.locationId];
+  if (!location) {
+    return {
+      output: [{ text: 'You are nowhere.', style: 'error' }],
+    };
+  }
+
+  const targetLower = parsed.target.toLowerCase();
+
+  // Check containers in location
+  if (world.containers) {
+    const containers = Object.values(world.containers).filter(
+      (c) => c.locationId === player.locationId
+    );
+
+    const container = containers.find((c) =>
+      c.name.toLowerCase().includes(targetLower)
+    );
+
+    if (container) {
+      if (!container.opened) {
+        return {
+          output: [{ text: `The ${container.name} is already closed.`, style: 'normal' }],
+        };
+      }
+
+      container.opened = false;
+      return {
+        output: [{ text: `You close the ${container.name}.`, style: 'normal' }],
+      };
+    }
+  }
+
+  return {
+    output: [{ text: `You don't see a "${parsed.target}" here to close.`, style: 'error' }],
+  };
+}
+
+/**
+ * Handle the "leave" command - leave the current room.
+ * If only one exit exists, automatically use it.
+ * If multiple exits exist, show the available options.
+ */
+function handleLeave(ctx: CommandContext): CommandResult {
+  const { session, parsed } = ctx;
+  const { world, player } = session;
+
+  const location = world.locations[player.locationId];
+  if (!location) {
+    return {
+      output: [{ text: 'You are nowhere.', style: 'error' }],
+    };
+  }
+
+  // Get all exits from current location
+  const exitIds = world.adjacency[player.locationId] ?? [];
+  const exits = exitIds.map(id => world.exits[id]).filter(Boolean) as Exit[];
+
+  if (exits.length === 0) {
+    return {
+      output: [{ text: 'There are no exits here. You are trapped!', style: 'error' }],
+    };
+  }
+
+  // If only one exit, automatically use it
+  if (exits.length === 1) {
+    const exit = exits[0]!;
+    // Reuse the movement handler with the exit's label
+    return handleMove({
+      session,
+      parsed: { ...parsed, command: exit.label.toLowerCase(), target: undefined },
+    });
+  }
+
+  // Multiple exits - show the list of options
+  const output: OutputLine[] = [
+    { text: 'Which way would you like to leave? Available exits:', style: 'system' },
+  ];
+
+  for (const exit of exits) {
+    const destLocation = world.locations[exit.to];
+    const destName = destLocation?.name ?? 'Unknown';
+    const lockIndicator = exit.type === 'locked' ? ' [LOCKED]' : '';
+    output.push({ text: `  ${exit.label} - ${destName}${lockIndicator}`, style: 'normal' });
+  }
+
+  return { output };
 }
 
 /**

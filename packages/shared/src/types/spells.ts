@@ -17,6 +17,8 @@ export type DamageType = 'physical' | 'fire' | 'ice' | 'lightning' | 'holy' | 's
 export interface Spell {
   id: string;
   name: string;
+  /** Short alias for quick casting (e.g., "lheal" for Light Heal) */
+  alias?: string;
   description: string;
   /** Classes that can learn this spell */
   classes: ClassName[];

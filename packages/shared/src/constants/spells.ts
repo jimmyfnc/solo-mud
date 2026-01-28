@@ -10,6 +10,7 @@ import type { Spell } from '../types/spells';
 export const BATTLE_SHOUT: Spell = {
   id: 'battle_shout',
   name: 'Battle Shout',
+  alias: 'bshout',
   description: 'Let out a mighty war cry, increasing your attack power.',
   classes: ['warrior'],
   levelRequired: 1,
@@ -29,6 +30,7 @@ export const BATTLE_SHOUT: Spell = {
 export const HEROIC_STRIKE: Spell = {
   id: 'heroic_strike',
   name: 'Heroic Strike',
+  alias: 'hstrike',
   description: 'A powerful melee strike that deals bonus damage.',
   classes: ['warrior'],
   levelRequired: 2,
@@ -49,6 +51,7 @@ export const HEROIC_STRIKE: Spell = {
 export const SHIELD_BASH: Spell = {
   id: 'shield_bash',
   name: 'Shield Bash',
+  alias: 'sbash',
   description: 'Bash your enemy with your shield, dealing damage and stunning briefly.',
   classes: ['warrior'],
   levelRequired: 4,
@@ -71,6 +74,7 @@ export const SHIELD_BASH: Spell = {
 export const BACKSTAB: Spell = {
   id: 'backstab',
   name: 'Backstab',
+  alias: 'bs',
   description: 'A vicious attack from the shadows dealing heavy damage.',
   classes: ['rogue'],
   levelRequired: 1,
@@ -91,6 +95,7 @@ export const BACKSTAB: Spell = {
 export const POISON_BLADE: Spell = {
   id: 'poison_blade',
   name: 'Poison Blade',
+  alias: 'pb',
   description: 'Coat your weapon in poison, dealing damage over time.',
   classes: ['rogue'],
   levelRequired: 2,
@@ -111,6 +116,7 @@ export const POISON_BLADE: Spell = {
 export const EVASION: Spell = {
   id: 'evasion',
   name: 'Evasion',
+  alias: 'ev',
   description: 'Heighten your reflexes, greatly increasing dodge chance.',
   classes: ['rogue'],
   levelRequired: 4,
@@ -132,6 +138,7 @@ export const EVASION: Spell = {
 export const FIRE_BOLT: Spell = {
   id: 'fire_bolt',
   name: 'Fire Bolt',
+  alias: 'fb',
   description: 'Launch a small bolt of fire at your enemy.',
   classes: ['mage'],
   levelRequired: 1,
@@ -152,6 +159,7 @@ export const FIRE_BOLT: Spell = {
 export const FIREBALL: Spell = {
   id: 'fireball',
   name: 'Fireball',
+  alias: 'fball',
   description: 'Hurl a ball of fire at your enemy, dealing heavy fire damage.',
   classes: ['mage'],
   levelRequired: 4,
@@ -172,6 +180,7 @@ export const FIREBALL: Spell = {
 export const FROST_BOLT: Spell = {
   id: 'frost_bolt',
   name: 'Frost Bolt',
+  alias: 'frostb',
   description: 'Launch a bolt of ice, dealing damage and slowing the target.',
   classes: ['mage'],
   levelRequired: 2,
@@ -192,6 +201,7 @@ export const FROST_BOLT: Spell = {
 export const ARCANE_MISSILE: Spell = {
   id: 'arcane_missile',
   name: 'Arcane Missile',
+  alias: 'am',
   description: 'Fire a quick burst of arcane energy. Instant cast.',
   classes: ['mage'],
   levelRequired: 3,
@@ -214,6 +224,7 @@ export const ARCANE_MISSILE: Spell = {
 export const LIGHT_HEAL: Spell = {
   id: 'light_heal',
   name: 'Light Heal',
+  alias: 'lheal',
   description: 'Channel a small amount of divine light to restore health.',
   classes: ['cleric'],
   levelRequired: 1,
@@ -254,6 +265,7 @@ export const HEAL: Spell = {
 export const SMITE: Spell = {
   id: 'smite',
   name: 'Smite',
+  alias: 'sm',
   description: 'Call down holy wrath upon your enemy.',
   classes: ['cleric'],
   levelRequired: 2,
@@ -274,6 +286,7 @@ export const SMITE: Spell = {
 export const BLESSING: Spell = {
   id: 'blessing',
   name: 'Blessing',
+  alias: 'bless',
   description: 'Bestow a holy blessing, increasing defense.',
   classes: ['cleric'],
   levelRequired: 3,
@@ -296,6 +309,7 @@ export const BLESSING: Spell = {
 export const HUNTERS_MARK: Spell = {
   id: 'hunters_mark',
   name: "Hunter's Mark",
+  alias: 'hm',
   description: 'Mark your prey, increasing damage dealt to them.',
   classes: ['ranger'],
   levelRequired: 1,
@@ -316,6 +330,7 @@ export const HUNTERS_MARK: Spell = {
 export const SERPENT_STING: Spell = {
   id: 'serpent_sting',
   name: 'Serpent Sting',
+  alias: 'ss',
   description: 'Sting your target with nature venom, dealing damage over time.',
   classes: ['ranger'],
   levelRequired: 2,
@@ -336,6 +351,7 @@ export const SERPENT_STING: Spell = {
 export const RAPID_SHOT: Spell = {
   id: 'rapid_shot',
   name: 'Rapid Shot',
+  alias: 'rs',
   description: 'Fire a quick volley of arrows at your target.',
   classes: ['ranger'],
   levelRequired: 3,
@@ -376,6 +392,7 @@ export const TRACK: Spell = {
 export const SET_TRAP: Spell = {
   id: 'set_trap',
   name: 'Set Trap',
+  alias: 'trap',
   description: 'Place a hidden trap in your current location. When triggered, it deals damage and roots the creature, preventing escape. Effectiveness depends on creature size and level.',
   classes: ['ranger'],
   levelRequired: 10,
