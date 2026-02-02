@@ -3,3 +3,4 @@
  */
 
 export * from './bot-player';
+export * from './bot-session';
