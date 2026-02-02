@@ -17,6 +17,7 @@ export const TOWN_TEMPLE = 'town_temple';
 export const TOWN_EAST_ROAD = 'town_east_road'; // Street connecting Inn and Temple
 export const TOWN_OUTSIDE_WALLS = 'town_outside_walls'; // Just outside the town gate
 export const TOWN_NORTH_ALLEY = 'town_north_alley'; // Alley north of square with sewer entrance
+export const TOWN_BANK = 'town_bank';
 
 // ============ Sewer Location IDs ============
 export const SEWER_ENTRANCE = 'sewer_entrance';
@@ -303,6 +304,28 @@ export const EASTHOLLOW_LOCATIONS: Record<string, Location> = {
     depth: 0,
     isSafeZone: true,
     npcs: [],
+  },
+  [TOWN_BANK]: {
+    id: TOWN_BANK,
+    name: 'Easthollow Vault',
+    biome: { plains: 1 },
+    props: [
+      'reinforced iron door',
+      'heavy stone walls',
+      'rows of lockboxes along the walls',
+      'sturdy oak counter',
+      'weighing scales for coins',
+      'thick ledger book',
+      'iron-barred window',
+      'vault door in the back',
+    ],
+    items: [],
+    enemies: [],
+    creatures: [],
+    visitState: { visitCount: 0 },
+    depth: 0,
+    isSafeZone: true,
+    npcs: ['npc_banker_thaddeus'],
   },
   // ============ Sewer Locations ============
   [SEWER_ENTRANCE]: {
@@ -690,6 +713,35 @@ export const EASTHOLLOW_EXITS: Record<string, Exit> = {
     label: 'out',
     type: 'open',
   },
+  // Bank (east of Alchemist on Market)
+  exit_alchemist_bank: {
+    id: 'exit_alchemist_bank',
+    from: TOWN_ALCHEMIST,
+    to: TOWN_BANK,
+    label: 'east',
+    type: 'open',
+  },
+  exit_bank_alchemist: {
+    id: 'exit_bank_alchemist',
+    from: TOWN_BANK,
+    to: TOWN_ALCHEMIST,
+    label: 'west',
+    type: 'open',
+  },
+  exit_bank_out: {
+    id: 'exit_bank_out',
+    from: TOWN_BANK,
+    to: TOWN_MARKET,
+    label: 'out',
+    type: 'open',
+  },
+  exit_market_bank: {
+    id: 'exit_market_bank',
+    from: TOWN_MARKET,
+    to: TOWN_BANK,
+    label: 'bank',
+    type: 'open',
+  },
   // General Store (south end of Market)
   exit_market_general: {
     id: 'exit_market_general',
@@ -886,6 +938,7 @@ export const EASTHOLLOW_ADJACENCY: Record<string, string[]> = {
     'exit_market_blacksmith', 'exit_market_blacksmith_named', // west / blacksmith
     'exit_market_alchemist', 'exit_market_alchemist_named',   // east / alchemist
     'exit_market_general', 'exit_market_general_named',       // south / general
+    'exit_market_bank',                                        // bank
   ],
   [TOWN_GATE]: ['exit_gate_square', 'exit_gate_outside'],
   [TOWN_OUTSIDE_WALLS]: ['exit_outside_gate'], // Wilderness connections added dynamically
@@ -894,8 +947,9 @@ export const EASTHOLLOW_ADJACENCY: Record<string, string[]> = {
   [TOWN_INN]: ['exit_inn_out'],
   [TOWN_TEMPLE]: ['exit_temple_out'],
   [TOWN_BLACKSMITH]: ['exit_blacksmith_out'],
-  [TOWN_ALCHEMIST]: ['exit_alchemist_out'],
+  [TOWN_ALCHEMIST]: ['exit_alchemist_out', 'exit_alchemist_bank'],
   [TOWN_GENERAL]: ['exit_general_out'],
+  [TOWN_BANK]: ['exit_bank_alchemist', 'exit_bank_out'],
   // Sewer locations
   [SEWER_ENTRANCE]: ['exit_sewer_alley', 'exit_entrance_junction'],
   [SEWER_JUNCTION]: ['exit_junction_entrance', 'exit_junction_west', 'exit_junction_east', 'exit_junction_drainage'],
@@ -1263,6 +1317,7 @@ export const EASTHOLLOW_NPCS: Record<string, NPC> = {
         { baseId: 'rope', basePrice: 10 },
         { baseId: 'empty_flask', basePrice: 5 },
         { baseId: 'bandage', basePrice: 8 },
+        { baseId: 'coin', basePrice: 1 },
       ],
       buyMultiplier: 1.0,
       sellMultiplier: 0.5,
@@ -2271,22 +2326,70 @@ export const EASTHOLLOW_NPCS: Record<string, NPC> = {
       },
     ],
   },
+  npc_banker_thaddeus: {
+    id: 'npc_banker_thaddeus',
+    name: 'Thaddeus',
+    title: 'Vault Keeper',
+    locationId: TOWN_BANK,
+    role: 'citizen',
+    dialogue: [
+      {
+        id: 'greeting',
+        prompt: 'Tell me about the vault',
+        response: "Welcome to the Easthollow Vault. Your valuables are safe with us. You may deposit items for safekeeping, or withdraw them when needed. We also offer shared storage accessible by all your characters.",
+      },
+      {
+        id: 'vault',
+        prompt: 'How secure is this place?',
+        response: "The vault is protected by the finest dwarven locks. Not even the Thieves' Guild could breach it... not that they haven't tried.",
+      },
+      {
+        id: 'deposit',
+        prompt: 'I want to deposit something',
+        response: "Simply tell me what you wish to deposit, and I shall secure it.",
+      },
+      {
+        id: 'withdraw',
+        prompt: 'I want to withdraw something',
+        response: "Tell me what you need, and I shall retrieve it from your storage.",
+      },
+    ],
+    simulation: {
+      personality: 'stern',
+      topics: ['money', 'security', 'trade'],
+      topicInterest: { money: 10, security: 9, trade: 7 },
+      ambientActions: [
+        { text: 'adjusts his spectacles while examining a ledger', weight: 5 },
+        { text: 'counts a stack of coins with practiced precision', weight: 4 },
+        { text: 'glances suspiciously at the vault door', weight: 3 },
+        { text: 'dips his quill and makes a note in the ledger', weight: 4 },
+        { text: 'polishes the weighing scales with a cloth', weight: 2 },
+      ],
+      reactions: {
+        player_enter: [
+          { weight: 5, says: 'Welcome to the Easthollow Vault. Your valuables are safe with us.' },
+          { weight: 3, says: 'Ah, a customer. How may I assist you today?' },
+        ],
+      },
+    },
+  },
 };
 
 // ============ Shop Items (templates for items NPCs sell) ============
 export const SHOP_ITEM_TEMPLATES: Record<string, { name: string; tags: string[]; description: string; sellValue: number }> = {
   // General supplies (sellValue is what merchant pays for item in copper)
-  torch: { name: 'Torch', tags: ['light', 'consumable'], description: 'A wooden torch that provides light.', sellValue: 2 },
+  torch: { name: 'Torch', tags: ['light', 'consumable', 'lightable'], description: 'A wooden torch that provides light.', sellValue: 2 },
   rations: { name: 'Rations', tags: ['food', 'consumable'], description: 'Dried meat and hardtack.', sellValue: 3 },
   rope: { name: 'Rope', tags: ['tool'], description: '50 feet of sturdy hemp rope.', sellValue: 5 },
   empty_flask: { name: 'Empty Flask', tags: ['container'], description: 'A glass flask for holding liquids.', sellValue: 2 },
   bandage: { name: 'Bandage', tags: ['healing', 'consumable'], description: 'Clean cloth bandages.', sellValue: 3 },
+  coin: { name: 'Copper Coin', tags: ['currency', 'tossable'], description: 'A simple copper coin. Good for tipping, wishing wells, or small purchases.', sellValue: 1 },
   // Inn supplies
   ale: { name: 'Mug of Ale', tags: ['drink', 'consumable'], description: 'A frothy mug of the house ale.', sellValue: 1 },
   wine: { name: 'Bottle of Wine', tags: ['drink', 'consumable'], description: 'A decent vintage from the southern vineyards.', sellValue: 8 },
   bread: { name: 'Fresh Bread', tags: ['food', 'consumable'], description: 'A warm loaf, still steaming.', sellValue: 1 },
   cheese_wedge: { name: 'Cheese Wedge', tags: ['food', 'consumable'], description: 'Sharp yellow cheese from local farms.', sellValue: 2 },
-  waterskin: { name: 'Waterskin', tags: ['drink', 'container'], description: 'A leather waterskin, filled with fresh water.', sellValue: 3 },
+  waterskin: { name: 'Waterskin', tags: ['drink', 'container', 'fillable'], description: 'A leather waterskin, filled with fresh water.', sellValue: 3 },
   travelers_map: { name: "Traveler's Map", tags: ['tool', 'rare'], description: 'A hand-drawn map of the local wilderness.', sellValue: 25 },
   // Weapons
   iron_sword: { name: 'Iron Sword', tags: ['weapon', 'sword', 'melee'], description: 'A well-forged iron blade.', sellValue: 50 },
@@ -2408,7 +2511,7 @@ export const TEMPLE_ITEMS: Record<string, Item> = {
     id: 'crate_torch',
     baseId: 'torch',
     name: 'Torch',
-    tags: ['light', 'tool'],
+    tags: ['light', 'tool', 'lightable'],
     rarity: 'common' as const,
     affixes: [],
   },
@@ -2432,7 +2535,7 @@ export const TEMPLE_ITEMS: Record<string, Item> = {
     id: 'sconce_torch',
     baseId: 'torch',
     name: 'Torch',
-    tags: ['light', 'tool'],
+    tags: ['light', 'tool', 'lightable'],
     rarity: 'common' as const,
     affixes: [],
   },
