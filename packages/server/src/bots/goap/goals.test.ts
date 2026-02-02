@@ -68,6 +68,85 @@ describe('Goal System', () => {
       const priority = calculateGoalPriority('get_richer', bot);
       expect(priority).toBeGreaterThan(50);
     });
+
+    it('should increase survive priority if died recently', () => {
+      const bot = createBotPlayer({
+        id: 'test',
+        name: 'Test',
+        className: 'warrior',
+        startLocationId: 'town_inn',
+        isNamed: false,
+      });
+
+      // Bot at moderate HP
+      bot.currentHp = 60;
+      bot.maxHp = 100;
+
+      const normalPriority = calculateGoalPriority('survive', bot);
+
+      // Add recent death to memory
+      bot.botProfile.memory.deaths.push({
+        timestamp: Date.now() - 60000, // 1 minute ago
+        location: 'sewer',
+        killedBy: 'rat_king',
+        hadHelp: false,
+        lostItems: [],
+      });
+
+      const postDeathPriority = calculateGoalPriority('survive', bot);
+
+      // Priority should be higher after recent death
+      expect(postDeathPriority).toBeGreaterThan(normalPriority);
+    });
+
+    it('should increase explore priority for explorers who havent explored recently', () => {
+      const explorerBot = createBotPlayer({
+        id: 'explorer',
+        name: 'Explorer',
+        className: 'ranger',
+        startLocationId: 'town_inn',
+        isNamed: false,
+      });
+      explorerBot.botProfile.personality.preferredActivities = ['exploration'];
+      // Clear recent events (no recent exploration)
+      explorerBot.botProfile.memory.recentEvents = [];
+
+      const neverExploredPriority = calculateGoalPriority('explore', explorerBot);
+
+      // Add a recent exploration event
+      explorerBot.botProfile.memory.recentEvents.push({
+        type: 'explored_location',
+        timestamp: Date.now() - 10000, // 10 seconds ago
+        data: { location: 'town_square' },
+      });
+
+      const recentlyExploredPriority = calculateGoalPriority('explore', explorerBot);
+
+      // Priority should be higher when haven't explored recently
+      expect(neverExploredPriority).toBeGreaterThan(recentlyExploredPriority);
+    });
+
+    it('should increase socialize priority for lonely social bots', () => {
+      const socialBot = createBotPlayer({
+        id: 'social',
+        name: 'Social',
+        className: 'cleric',
+        startLocationId: 'town_inn',
+        isNamed: false,
+      });
+      socialBot.botProfile.personality.sociability = 80;
+
+      // Recent social interaction
+      socialBot.botProfile.memory.lastSocialInteraction = Date.now() - 30000; // 30 seconds ago
+      const recentPriority = calculateGoalPriority('socialize', socialBot);
+
+      // Long time since social interaction
+      socialBot.botProfile.memory.lastSocialInteraction = Date.now() - 600000; // 10 minutes ago
+      const lonelyPriority = calculateGoalPriority('socialize', socialBot);
+
+      // Priority should be higher when feeling lonely
+      expect(lonelyPriority).toBeGreaterThan(recentPriority);
+    });
   });
 
   describe('isGoalComplete', () => {

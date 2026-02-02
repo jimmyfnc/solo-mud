@@ -20,6 +20,10 @@ describe('BotExecutor', () => {
       bot.targetId = 'enemy_1';
       bot.currentHp = 80;
       bot.maxHp = 100;
+      // Set personality to prefer combat (ensures level_up goal is selected)
+      bot.botProfile.personality.patience = 80; // High patience -> high level_up priority
+      bot.botProfile.personality.sociability = 10; // Low sociability -> low socialize priority
+      bot.botProfile.personality.greed = 10; // Low greed -> low get_richer priority
 
       const session = createBotSession(bot);
       const executor = new BotExecutor();

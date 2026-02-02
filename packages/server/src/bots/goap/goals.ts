@@ -21,19 +21,29 @@ export const GOALS: Record<string, Goal> = {
     description: 'Stay alive - flee, heal, or find safety',
     getPriority: (bot) => {
       const hpPercent = (bot.currentHp / bot.maxHp) * 100;
-      // High priority when HP is low, modified by bravery
+      let priority = 10; // Base
+
+      // HP-based priority
       if (hpPercent < 30) {
         // Brave bots have lower survive priority (fight longer)
         const braveryMod = bot.botProfile.personality.bravery / 100;
-        return Math.max(10, 100 - (braveryMod * 30));
+        priority = Math.max(10, 100 - braveryMod * 30);
+      } else if (hpPercent < 50) {
+        priority = 50 - bot.botProfile.personality.bravery / 5;
       }
-      if (hpPercent < 50) {
-        return 50 - (bot.botProfile.personality.bravery / 5);
+
+      // Recent death modifier - more cautious after dying
+      const recentDeath = bot.botProfile.memory.deaths.find(
+        (d) => Date.now() - d.timestamp < 300000 // 5 minutes
+      );
+      if (recentDeath) {
+        priority += 15; // More survival-focused after death
       }
-      return 10;
+
+      return priority;
     },
     isComplete: (bot) => {
-      return (bot.currentHp / bot.maxHp) >= 0.5;
+      return bot.currentHp / bot.maxHp >= 0.5;
     },
   },
 
@@ -90,13 +100,21 @@ export const GOALS: Record<string, Goal> = {
     getPriority: (bot) => {
       // Social bots have higher priority
       const socialMod = bot.botProfile.personality.sociability / 100;
-      const baseP = 20 + (socialMod * 30);
+      const baseP = 20 + socialMod * 30;
 
       // Lower priority if recently socialized
       const timeSince = Date.now() - bot.botProfile.memory.lastSocialInteraction;
-      if (timeSince < 60000) { // Less than 1 minute
+      if (timeSince < 60000) {
+        // Less than 1 minute
         return baseP * 0.5;
       }
+
+      // Higher priority if haven't socialized in a while (lonely!)
+      if (timeSince > 300000) {
+        // More than 5 minutes - social bots seek company
+        return baseP + socialMod * 10;
+      }
+
       return baseP;
     },
     isComplete: (bot) => {
@@ -111,11 +129,25 @@ export const GOALS: Record<string, Goal> = {
     category: 'progression',
     description: 'Discover new locations',
     getPriority: (bot) => {
+      let priority = 25; // Base
+
       // Higher if exploration is preferred activity
       if (bot.botProfile.personality.preferredActivities.includes('exploration')) {
-        return 45;
+        priority = 45;
       }
-      return 25;
+
+      // Increase priority if haven't explored recently
+      const lastExplore = bot.botProfile.memory.recentEvents.find(
+        (e) => e.type === 'explored_location'
+      );
+      if (!lastExplore || Date.now() - lastExplore.timestamp > 180000) {
+        // Haven't explored in 3 minutes - explorers get antsy
+        if (bot.botProfile.personality.preferredActivities.includes('exploration')) {
+          priority += 10;
+        }
+      }
+
+      return priority;
     },
     isComplete: (_bot) => {
       // Never complete - always more to explore

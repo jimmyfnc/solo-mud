@@ -134,5 +134,85 @@ describe('Action System', () => {
 
       expect(braveCost).toBeGreaterThan(cowardCost);
     });
+
+    it('should have lower explore cost for exploration-focused bots', () => {
+      const explorerBot = createBotPlayer({
+        id: 'explorer',
+        name: 'Explorer',
+        className: 'ranger',
+        startLocationId: 'town_inn',
+        isNamed: false,
+      });
+      explorerBot.botProfile.personality.preferredActivities = ['exploration'];
+
+      const fighterBot = createBotPlayer({
+        id: 'fighter',
+        name: 'Fighter',
+        className: 'warrior',
+        startLocationId: 'town_inn',
+        isNamed: false,
+      });
+      fighterBot.botProfile.personality.preferredActivities = ['combat'];
+
+      const explorerCost = getActionCost('explore', explorerBot);
+      const fighterCost = getActionCost('explore', fighterBot);
+
+      expect(explorerCost).toBeLessThan(fighterCost);
+    });
+
+    it('should have lower flee cost after recent death', () => {
+      const bot = createBotPlayer({
+        id: 'test',
+        name: 'Test',
+        className: 'warrior',
+        startLocationId: 'town_inn',
+        isNamed: false,
+      });
+      bot.botProfile.personality.bravery = 50;
+
+      const normalCost = getActionCost('flee', bot);
+
+      // Add recent death to memory
+      bot.botProfile.memory.deaths.push({
+        timestamp: Date.now() - 60000, // 1 minute ago
+        location: 'sewer',
+        killedBy: 'rat_king',
+        hadHelp: false,
+        lostItems: [],
+      });
+
+      const postDeathCost = getActionCost('flee', bot);
+
+      // Fleeing should be cheaper after recent death (learned caution)
+      expect(postDeathCost).toBeLessThan(normalCost);
+    });
+
+    it('should have lower explore cost when havent explored recently', () => {
+      const bot = createBotPlayer({
+        id: 'test',
+        name: 'Test',
+        className: 'warrior',
+        startLocationId: 'town_inn',
+        isNamed: false,
+      });
+      bot.botProfile.personality.preferredActivities = ['exploration'];
+
+      // Recent exploration
+      bot.botProfile.memory.recentEvents.push({
+        type: 'explored_location',
+        timestamp: Date.now() - 10000, // 10 seconds ago
+        data: { location: 'town_square' },
+      });
+
+      const recentCost = getActionCost('explore', bot);
+
+      // Clear recent events (no recent exploration)
+      bot.botProfile.memory.recentEvents = [];
+
+      const notRecentCost = getActionCost('explore', bot);
+
+      // Should be cheaper when haven't explored recently
+      expect(notRecentCost).toBeLessThan(recentCost);
+    });
   });
 });

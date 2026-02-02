@@ -36,8 +36,19 @@ export const ACTIONS: Record<string, Action> = {
     preconditions: [{ type: 'in_combat', value: true }],
     effects: ['exit_combat'],
     getCost: (bot) => {
-      // Brave bots find fleeing costly
-      return 20 + bot.botProfile.personality.bravery / 5;
+      // Base cost modified by bravery - brave bots find fleeing costly
+      let cost = 20 + bot.botProfile.personality.bravery / 5;
+
+      // Recent death makes fleeing more acceptable (learned caution)
+      const recentDeath = bot.botProfile.memory.deaths.find(
+        (d) => Date.now() - d.timestamp < 300000 // 5 minutes
+      );
+      if (recentDeath) {
+        // Reduce fleeing cost after recent death (trauma makes survival instinct stronger)
+        cost -= 10;
+      }
+
+      return Math.max(5, cost);
     },
     getCommand: () => 'flee',
   },
@@ -76,7 +87,20 @@ export const ACTIONS: Record<string, Action> = {
     description: 'Travel to a known location',
     preconditions: [{ type: 'not_in_combat' }],
     effects: ['change_location'],
-    getCost: () => 10,
+    getCost: (bot) => {
+      let cost = 10; // Base cost
+
+      // Lower cost if destination is in preferred zones (known safe)
+      // This is evaluated at planning time when context.destination is set
+      // For now, just base on familiarity with locations
+      const knownLocationCount = bot.botProfile.memory.knownLocations.length;
+      if (knownLocationCount > 10) {
+        // Experienced travelers move more efficiently
+        cost -= 2;
+      }
+
+      return Math.max(5, cost);
+    },
     getCommand: (_bot, context) => {
       if (context?.direction) {
         return context.direction;
@@ -92,11 +116,22 @@ export const ACTIONS: Record<string, Action> = {
     preconditions: [{ type: 'not_in_combat' }],
     effects: ['discover_location'],
     getCost: (bot) => {
+      let cost = 15; // Base cost
+
       // Explorers find this cheaper
       if (bot.botProfile.personality.preferredActivities.includes('exploration')) {
-        return 5;
+        cost = 5;
       }
-      return 15;
+
+      // Even cheaper if haven't explored recently
+      const lastExplore = bot.botProfile.memory.recentEvents.find(
+        (e) => e.type === 'explored_location'
+      );
+      if (!lastExplore || Date.now() - lastExplore.timestamp > 120000) {
+        cost -= 3; // Haven't explored in 2 minutes
+      }
+
+      return Math.max(1, cost); // Minimum cost of 1
     },
     getCommand: (_bot, context) => {
       if (context?.direction) {
