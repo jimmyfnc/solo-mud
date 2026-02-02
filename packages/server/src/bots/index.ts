@@ -5,3 +5,4 @@
 export * from './bot-player';
 export * from './bot-session';
 export * from './bot-factory';
+export * from './bot-manager';
