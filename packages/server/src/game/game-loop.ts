@@ -4,9 +4,10 @@
  */
 
 import type { Server as SocketServer, Socket } from 'socket.io';
-import type { Creature, NPC, OutputLine, World, Player } from '@solo-mud/shared';
-import { createRng, CREATURE_TEMPLATES, CHASE_CHANCE, EVENLY_MATCHED_THRESHOLD, ZONE_ACTIVITY, getWeaponDamage, xpForLevel, CLASSES, type Item, addCopper, formatPrice, getTotalCopper, currencyFromCopper } from '@solo-mud/shared';
+import type { Creature, NPC, OutputLine, World, Player, DamageType } from '@solo-mud/shared';
+import { createRng, CREATURE_TEMPLATES, CHASE_CHANCE, EVENLY_MATCHED_THRESHOLD, ZONE_ACTIVITY, getWeaponDamage, xpForLevel, calculateXpGain, CLASSES, type Item, addCopper, formatPrice, getTotalCopper, currencyFromCopper, getResistanceForDamageType, applyResistance } from '@solo-mud/shared';
 import { generateSewerLoot, SEWER_LOOT_TABLES } from '../loot/sewer-loot';
+import { generateWildernessLoot, WILDERNESS_LOOT_TABLES } from '../loot/wilderness-loot';
 import { sessionManager, type GameSession } from './session';
 import { SimulationEngine, getZoneType } from '../npc/simulation';
 import {
@@ -20,12 +21,23 @@ import {
   resolveInstantCombat,
 } from './ecosystem';
 import { tickIncursion, createIncursionState } from './incursion';
+import { selectNpcAction, applyNpcAction, tickNpcCooldowns, regenNpcMana } from './npc-combat';
+import { saveCharacterState } from '../socket';
+import { getLevelHitModifier, getLevelDamageModifier } from '../character';
+import { getCombatNpcsAtLocation } from '@solo-mud/shared';
+import type { BotManager } from '../bots';
 
 /** How often the world ticks (creature movement, etc.) in ms */
 const WORLD_TICK_INTERVAL = 30000; // 30 seconds
 
 /** How often combat ticks (creature attacks) in ms */
 const COMBAT_TICK_INTERVAL = 5000; // 5 seconds
+
+/** How often to auto-save all sessions (in world ticks). 2 ticks = 60s */
+const AUTO_SAVE_INTERVAL_TICKS = 2;
+
+/** AFK timeout in ms. Default 15 minutes. Override via AFK_TIMEOUT_MS env var. */
+const AFK_TIMEOUT_MS = parseInt(process.env['AFK_TIMEOUT_MS'] ?? '900000', 10);
 
 /** Chance for a roaming creature to move each tick */
 const ROAM_CHANCE = 0.3;
@@ -42,6 +54,9 @@ let simulationEngine: SimulationEngine | null = null;
 
 /** Track last simulation tick per location */
 const lastSimulationTick: Map<string, number> = new Map();
+
+/** Bot manager for AI-controlled players */
+let botManager: BotManager | undefined;
 
 /**
  * Start the game loop.
@@ -93,22 +108,38 @@ export function stopGameLoop(): void {
   console.log('Game loop stopped');
 }
 
+/**
+ * Set the bot manager for AI ticks.
+ */
+export function setBotManager(manager: BotManager): void {
+  botManager = manager;
+}
+
+/**
+ * Get the current bot manager.
+ */
+export function getBotManager(): BotManager | undefined {
+  return botManager;
+}
+
 /** Track tick count for incursion timing */
 let tickCount = 0;
 
 /**
  * World tick - handles creature movement, respawns, etc.
  */
-function worldTick(): void {
+async function worldTick(): Promise<void> {
   const sessions = sessionManager.getAllSessions();
   tickCount++;
 
   for (const session of sessions) {
+    checkAfkTimeout(session);
     processCorpses(session);
     processRespawns(session);
     processHunting(session);
     processCreatureMovement(session);
     processIncursions(session, tickCount);
+    processTownDefense(session);
     processRegeneration(session);
     processLightSources(session);
     processContainerRespawns(session);
@@ -116,6 +147,59 @@ function worldTick(): void {
 
   // Run NPC simulation tick
   runSimulationTick();
+
+  // Bot AI tick
+  if (botManager) {
+    const gameTime = sessions[0]?.world.time.totalMinutes ?? 0;
+    await botManager.tick(gameTime);
+  }
+
+  // Periodic auto-save (every AUTO_SAVE_INTERVAL_TICKS world ticks)
+  if (tickCount % AUTO_SAVE_INTERVAL_TICKS === 0) {
+    autoSaveAllSessions(sessions);
+  }
+}
+
+/**
+ * Auto-save all active sessions to protect against crashes.
+ */
+function autoSaveAllSessions(sessions: GameSession[]): void {
+  for (const session of sessions) {
+    if (session.characterId) {
+      try {
+        saveCharacterState(session);
+      } catch (err) {
+        console.error(`Auto-save failed for character ${session.characterId}:`, err);
+      }
+    }
+  }
+}
+
+/**
+ * Check if a session has been idle too long and disconnect if so.
+ */
+function checkAfkTimeout(session: GameSession): void {
+  if (Date.now() - session.lastActivity < AFK_TIMEOUT_MS) return;
+
+  const socket = getSocketForSession(session);
+  if (!socket) return;
+
+  // Save before disconnecting
+  if (session.characterId) {
+    try {
+      saveCharacterState(session);
+    } catch (err) {
+      console.error(`AFK save failed for character ${session.characterId}:`, err);
+    }
+  }
+
+  sendNotification(socket, {
+    text: 'You have been disconnected due to inactivity.',
+    style: 'system',
+  });
+
+  sessionManager.removeSession(session.id);
+  socket.disconnect(true);
 }
 
 /**
@@ -127,8 +211,10 @@ function combatTick(): void {
   for (const session of sessions) {
     processCooldowns(session);
     processTrappedCreatures(session);
+    processCreatureAggression(session);
     processPlayerCombat(session);
     processCreatureVsCreatureCombat(session);
+    processCreatureVsNpcCombat(session);
   }
 }
 
@@ -323,8 +409,28 @@ function processTrappedCreatures(session: GameSession): void {
         });
         creature.trapped = undefined;
 
-        // Grant XP to player
-        const xpGain = creature.level * 15;
+        // Handle creature death with loot
+        const template = CREATURE_TEMPLATES[creature.templateId];
+        const tier = template?.tier ?? 'common';
+
+        // Generate loot for trap DOT kills
+        let lootItems: Item[] = [];
+        const lootRng = createRng(`trap-dot-loot-${Date.now()}`);
+        if (SEWER_LOOT_TABLES[creature.templateId]) {
+          lootItems = generateSewerLoot(creature.templateId, creature.level, lootRng);
+        } else if (WILDERNESS_LOOT_TABLES[creature.templateId]) {
+          lootItems = generateWildernessLoot(creature.templateId, creature.level, lootRng);
+        }
+        const loot: string[] = [];
+        for (const item of lootItems) {
+          world.items[item.id] = item;
+          loot.push(item.id);
+        }
+
+        handleCreatureDeath(world, creature, 'player', tier, loot);
+
+        // Grant XP to player (with level difference penalty)
+        const xpGain = calculateXpGain(player.level, creature.level);
         player.xp += xpGain;
         output.push({ text: `You gain ${xpGain} XP.`, style: 'success' });
 
@@ -343,10 +449,10 @@ function processTrappedCreatures(session: GameSession): void {
           });
         }
 
-        // Handle creature death
-        const template = CREATURE_TEMPLATES[creature.templateId];
-        const tier = template?.tier ?? 'common';
-        handleCreatureDeath(world, creature, 'player', tier, []);
+        output.push({
+          text: `Use "loot ${creature.name.toLowerCase()}" to check the corpse.`,
+          style: 'system',
+        });
 
         // Exit combat if this was target
         if (player.targetId === creature.id) {
@@ -429,13 +535,18 @@ function processPlayerCombat(session: GameSession): void {
     // Calculate player damage
     const weaponDamage = weapon ? getWeaponDamage(weapon) : { min: 1, max: 2 };
 
-    // Roll to hit (85% base + DEX bonus)
-    const hitChance = 0.85 + (combatStats.hitChance / 100) * 0.15;
+    // Level-based hit modifier (harder to hit higher level enemies)
+    const levelHitMod = getLevelHitModifier(player.level, creature.level);
+
+    // Roll to hit (85% base + DEX bonus, modified by level difference)
+    const baseHitChance = 0.85 + (combatStats.hitChance / 100) * 0.15;
+    const hitChance = baseHitChance * levelHitMod;
     const playerHits = rng.next() < hitChance;
 
     if (!playerHits) {
+      const missReason = levelHitMod < 1.0 ? ` (Level ${creature.level} enemy)` : '';
       output.push({
-        text: `You swing your ${weaponName} at the ${creature.name} but miss!`,
+        text: `You swing your ${weaponName} at the ${creature.name} but miss!${missReason}`,
         style: 'combat',
       });
     } else {
@@ -448,7 +559,10 @@ function processPlayerCombat(session: GameSession): void {
       const isCrit = rng.next() < critChance;
       const critMultiplier = isCrit ? 2 : 1;
 
-      const damage = Math.max(1, (baseDamage + attackBonus) * critMultiplier);
+      // Level-based damage modifier (deal less damage to higher level enemies)
+      const levelDmgMod = getLevelDamageModifier(player.level, creature.level);
+      const rawDamage = (baseDamage + attackBonus) * critMultiplier;
+      const damage = Math.max(1, Math.floor(rawDamage * levelDmgMod));
 
       // Apply damage
       creature.currentHp -= damage;
@@ -480,6 +594,8 @@ function processPlayerCombat(session: GameSession): void {
         let lootItems: Item[] = [];
         if (SEWER_LOOT_TABLES[creature.templateId]) {
           lootItems = generateSewerLoot(creature.templateId, creature.level, rng);
+        } else if (WILDERNESS_LOOT_TABLES[creature.templateId]) {
+          lootItems = generateWildernessLoot(creature.templateId, creature.level, rng);
         }
 
         // Add loot to world
@@ -573,10 +689,30 @@ function processPlayerCombat(session: GameSession): void {
           style: 'system',
         });
 
-        // End combat
+        // End combat, then check chain aggro
         player.inCombat = false;
         player.autoAttack = false;
         player.targetId = undefined;
+
+        // Chain aggro: next aggressive creature in the room engages
+        const location = world.locations[player.locationId];
+        if (location) {
+          const nextAggressor = location.creatures
+            .map((id) => world.creatures[id])
+            .find((c): c is Creature =>
+              !!c && c.behavior === 'aggressive' && c.currentHp > 0 && !c.inCombat
+            );
+
+          if (nextAggressor) {
+            player.inCombat = true;
+            player.autoAttack = true;
+            player.targetId = nextAggressor.id;
+            nextAggressor.inCombat = true;
+            nextAggressor.targetId = player.id;
+            output.push({ text: '', style: 'normal' });
+            output.push({ text: `The ${nextAggressor.name} attacks!`, style: 'combat' });
+          }
+        }
 
         sendNotifications(socket, output);
         sendPlayerUpdate(socket, session); // Immediate UI update for XP/level changes
@@ -606,33 +742,44 @@ function processPlayerCombat(session: GameSession): void {
     } else {
       const minDmg = Math.max(1, creature.level);
       const maxDmg = Math.max(2, creature.level * 2 + 2);
-      let damage = minDmg + Math.floor(rng.next() * (maxDmg - minDmg + 1));
+      const rawDamage = minDmg + Math.floor(rng.next() * (maxDmg - minDmg + 1));
 
-      // Apply defense reduction
-      const defenseReduction = Math.floor(combatStats.defense / 20);
-      damage = Math.max(1, damage - defenseReduction);
+      // Get creature's damage type from template (default to physical)
+      const creatureTemplate = CREATURE_TEMPLATES[creature.templateId];
+      const creatureDamageType: DamageType = creatureTemplate?.damageType ?? 'physical';
 
-      player.currentHp -= damage;
+      // Apply percentage-based resistance
+      const resistance = getResistanceForDamageType(combatStats, creatureDamageType);
+      const damage = applyResistance(rawDamage, resistance);
 
-      output.push({
-        text: `The ${creature.name} attacks you for ${damage} damage!`,
-        style: 'combat',
-      });
+      if (session.invincible) {
+        output.push({
+          text: `The ${creature.name} attacks you for ${damage} damage! [GOD: blocked]`,
+          style: 'system',
+        });
+      } else {
+        player.currentHp -= damage;
 
-      const hpPercent = Math.floor((player.currentHp / player.maxHp) * 100);
-      output.push({
-        text: `Your HP: ${player.currentHp}/${player.maxHp} (${hpPercent}%)`,
-        style: player.currentHp < player.maxHp * 0.3 ? 'error' : 'system',
-      });
+        output.push({
+          text: `The ${creature.name} attacks you for ${damage} damage!`,
+          style: 'combat',
+        });
 
-      if (player.currentHp <= 0) {
-        // Handle player death and respawn
-        const deathOutput = handlePlayerDeath(session);
-        output.push(...deathOutput);
+        const hpPercent = Math.floor((player.currentHp / player.maxHp) * 100);
+        output.push({
+          text: `Your HP: ${player.currentHp}/${player.maxHp} (${hpPercent}%)`,
+          style: player.currentHp < player.maxHp * 0.3 ? 'error' : 'system',
+        });
 
-        // Clear creature's combat state too
-        creature.inCombat = false;
-        creature.targetId = undefined;
+        if (player.currentHp <= 0) {
+          // Handle player death and respawn
+          const deathOutput = handlePlayerDeath(session);
+          output.push(...deathOutput);
+
+          // Clear creature's combat state too
+          creature.inCombat = false;
+          creature.targetId = undefined;
+        }
       }
     }
   }
@@ -1609,6 +1756,122 @@ function triggerTrapIfPresent(
 }
 
 /**
+ * Process creature aggression - aggressive creatures attack players or NPCs.
+ * This runs every combat tick (5 seconds) to catch creatures that spawn in or
+ * were already present when the player arrived.
+ */
+function processCreatureAggression(session: GameSession): void {
+  const { world, player } = session;
+
+  // Skip if player already in combat
+  if (player.inCombat) return;
+
+  const location = world.locations[player.locationId];
+  if (!location) return;
+
+  // Find aggressive creatures at player's location that aren't in combat
+  const aggressiveCreatures = location.creatures
+    .map(id => world.creatures[id])
+    .filter((c): c is Creature =>
+      c !== undefined &&
+      c.currentHp > 0 &&
+      c.behavior === 'aggressive' &&
+      !c.inCombat &&
+      !c.trapped
+    );
+
+  if (aggressiveCreatures.length === 0) return;
+
+  // The first aggressive creature attacks the player
+  const attacker = aggressiveCreatures[0]!;
+  const socket = getSocketForSession(session);
+  if (socket) {
+    initiateCreatureAggro(session, attacker, socket);
+  }
+}
+
+/**
+ * Process creature vs NPC combat in town locations.
+ * Aggressive creatures that aren't fighting players will attack NPCs.
+ */
+function processCreatureVsNpcCombat(session: GameSession): void {
+  const { world, player } = session;
+  const socket = getSocketForSession(session);
+  const rng = createRng(`creature-vs-npc-${Date.now()}`);
+
+  // Check all town locations for hostile creatures not in combat
+  for (const [locationId, location] of Object.entries(world.locations)) {
+    // Only process town locations
+    if (!locationId.startsWith('town_')) continue;
+
+    // Get hostile creatures not already in combat
+    const hostileCreatures = location.creatures
+      .map(id => world.creatures[id])
+      .filter((c): c is Creature =>
+        c !== undefined &&
+        c.currentHp > 0 &&
+        c.behavior === 'aggressive' &&
+        !c.inCombat &&
+        !c.trapped
+      );
+
+    if (hostileCreatures.length === 0) continue;
+
+    // Get NPCs at this location
+    const npcsAtLocation = (location.npcs ?? [])
+      .map(id => world.npcs[id])
+      .filter((npc): npc is NPC => npc !== undefined);
+
+    if (npcsAtLocation.length === 0) continue;
+
+    // Each hostile creature attacks an NPC (if player isn't there)
+    for (const creature of hostileCreatures) {
+      // If player is at this location and not in combat, creature should target player
+      // (handled by processCreatureAggression)
+      if (player.locationId === locationId && !player.inCombat) continue;
+
+      // Pick a random NPC to attack
+      const targetNpc = npcsAtLocation[Math.floor(rng.next() * npcsAtLocation.length)];
+      if (!targetNpc) continue;
+
+      // Calculate damage
+      const damage = Math.floor(creature.level * 2 * (0.7 + rng.next() * 0.6));
+
+      // NPCs with combat stats take damage to their combat HP
+      if (targetNpc.combat) {
+        targetNpc.combat.currentHp -= damage;
+
+        // NPCs don't die, they just get badly wounded
+        if (targetNpc.combat.currentHp <= 0) {
+          targetNpc.combat.currentHp = 1;
+        }
+      }
+
+      // Notify player if nearby
+      const isPlayerHere = player.locationId === locationId;
+      const canHearFromGate = player.locationId.startsWith('town_') && locationId === 'town_gate';
+
+      if (socket && (isPlayerHere || canHearFromGate)) {
+        // Add location context for distant combat
+        const locationPrefix = isPlayerHere ? '' : 'From the town gate: ';
+
+        sendNotification(socket, {
+          text: `${locationPrefix}The ${creature.name} attacks ${targetNpc.name}!`,
+          style: 'combat',
+        });
+
+        if (targetNpc.combat && targetNpc.combat.currentHp <= 10) {
+          sendNotification(socket, {
+            text: `${locationPrefix}${targetNpc.name} cries out for help!`,
+            style: 'combat',
+          });
+        }
+      }
+    }
+  }
+}
+
+/**
  * Initiate combat when an aggressive creature enters a player's location.
  */
 function initiateCreatureAggro(
@@ -1659,29 +1922,40 @@ function initiateCreatureAggro(
   } else {
     const minDmg = Math.max(1, creature.level);
     const maxDmg = Math.max(2, creature.level * 2 + 2);
-    let damage = minDmg + Math.floor(rng.next() * (maxDmg - minDmg + 1));
+    const rawDamage = minDmg + Math.floor(rng.next() * (maxDmg - minDmg + 1));
 
-    // Apply defense reduction
-    const defenseReduction = Math.floor(combatStats.defense / 20);
-    damage = Math.max(1, damage - defenseReduction);
+    // Get creature's damage type from template (default to physical)
+    const creatureTemplate = CREATURE_TEMPLATES[creature.templateId];
+    const creatureDamageType: DamageType = creatureTemplate?.damageType ?? 'physical';
 
-    player.currentHp -= damage;
+    // Apply percentage-based resistance
+    const resistance = getResistanceForDamageType(combatStats, creatureDamageType);
+    const damage = applyResistance(rawDamage, resistance);
 
-    output.push({
-      text: `The ${creature.name} hits you for ${damage} damage!`,
-      style: 'combat',
-    });
+    if (session.invincible) {
+      output.push({
+        text: `The ${creature.name} hits you for ${damage} damage! [GOD: blocked]`,
+        style: 'system',
+      });
+    } else {
+      player.currentHp -= damage;
 
-    const hpPercent = Math.floor((player.currentHp / player.maxHp) * 100);
-    output.push({
-      text: `Your HP: ${player.currentHp}/${player.maxHp} (${hpPercent}%)`,
-      style: player.currentHp < player.maxHp * 0.3 ? 'error' : 'system',
-    });
+      output.push({
+        text: `The ${creature.name} hits you for ${damage} damage!`,
+        style: 'combat',
+      });
 
-    if (player.currentHp <= 0) {
-      // Handle player death and respawn
-      const deathOutput = handlePlayerDeath(session);
-      output.push(...deathOutput);
+      const hpPercent = Math.floor((player.currentHp / player.maxHp) * 100);
+      output.push({
+        text: `Your HP: ${player.currentHp}/${player.maxHp} (${hpPercent}%)`,
+        style: player.currentHp < player.maxHp * 0.3 ? 'error' : 'system',
+      });
+
+      if (player.currentHp <= 0) {
+        // Handle player death and respawn
+        const deathOutput = handlePlayerDeath(session);
+        output.push(...deathOutput);
+      }
     }
   }
 
@@ -1726,6 +2000,161 @@ function processIncursions(session: GameSession, currentTick: number): void {
             text: 'You hear shouts from the town gate!',
             style: 'combat',
           });
+        }
+      }
+    }
+  }
+}
+
+/**
+ * Process town defense - NPCs fight hostile creatures in town locations.
+ * Unlike incursions, this handles ANY hostile creature in town areas.
+ */
+function processTownDefense(session: GameSession): void {
+  const { world, player } = session;
+  const socket = getSocketForSession(session);
+  const rng = createRng(`town-defense-${Date.now()}`);
+
+  // Check all town locations for hostile creatures
+  for (const [locationId, location] of Object.entries(world.locations)) {
+    // Only process town locations
+    if (!locationId.startsWith('town_')) continue;
+
+    // Get hostile creatures at this location
+    const hostileCreatures = location.creatures
+      .map(id => world.creatures[id])
+      .filter((c): c is Creature =>
+        c !== undefined &&
+        c.currentHp > 0 &&
+        (c.behavior === 'aggressive' || c.behavior === 'territorial')
+      );
+
+    if (hostileCreatures.length === 0) continue;
+
+    // Get combat-capable NPCs at this location
+    const defenders = getCombatNpcsAtLocation(
+      world.npcs,
+      location.npcs ?? [],
+      locationId,
+      world.time.timeOfDay
+    ).filter(npc => npc.combat && npc.combat.currentHp > 0);
+
+    if (defenders.length === 0) {
+      // No defenders - creatures might attack any NPC present
+      continue;
+    }
+
+    // Each defender attacks a hostile creature
+    for (const defender of defenders) {
+      if (!defender.combat) continue;
+
+      // Pick a target (prioritize aggressive over territorial)
+      const target = hostileCreatures.find(c => c.behavior === 'aggressive') ?? hostileCreatures[0];
+      if (!target || target.currentHp <= 0) continue;
+
+      // Tick cooldowns and regen for this NPC
+      defender.combat = tickNpcCooldowns(defender.combat, 30); // 30 second tick
+      defender.combat = regenNpcMana(defender.combat, 30);
+
+      // NPC selects and executes action
+      const action = selectNpcAction({
+        npc: defender,
+        combat: defender.combat,
+        target,
+        allies: defenders.filter(d => d.id !== defender.id),
+        rng,
+      });
+
+      defender.combat = applyNpcAction(defender.combat, action, world.time.totalMinutes);
+
+      // Apply damage to creature
+      if (action.damage && action.damage > 0) {
+        target.currentHp -= action.damage;
+      }
+
+      // Notify player if nearby
+      const isPlayerHere = player.locationId === locationId;
+      const canHearFromGate = player.locationId.startsWith('town_') && locationId === 'town_gate';
+      const shouldNotify = isPlayerHere || canHearFromGate;
+      const locationPrefix = isPlayerHere ? '' : 'From the town gate: ';
+
+      if (socket && shouldNotify) {
+        const prefixedMessage = isPlayerHere ? action.message : `${locationPrefix}${action.message}`;
+        sendNotification(socket, { text: prefixedMessage, style: 'combat' });
+      }
+
+      // Check if creature died
+      if (target.currentHp <= 0) {
+        // Handle creature death
+        const template = CREATURE_TEMPLATES[target.templateId];
+        const tier = template?.tier ?? 'common';
+
+        // Generate loot
+        let lootItems: Item[] = [];
+        const lootRng = createRng(`town-defense-loot-${Date.now()}`);
+        if (SEWER_LOOT_TABLES[target.templateId]) {
+          lootItems = generateSewerLoot(target.templateId, target.level, lootRng);
+        } else if (WILDERNESS_LOOT_TABLES[target.templateId]) {
+          lootItems = generateWildernessLoot(target.templateId, target.level, lootRng);
+        }
+        const loot: string[] = [];
+        for (const item of lootItems) {
+          world.items[item.id] = item;
+          loot.push(item.id);
+        }
+
+        handleCreatureDeath(world, target, 'player', tier, loot);
+
+        if (socket && shouldNotify) {
+          sendNotification(socket, {
+            text: `${locationPrefix}The ${target.name} has been slain by the town defenders!`,
+            style: 'success'
+          });
+          // Only mention looting if player is at the location
+          if (isPlayerHere && loot.length > 0) {
+            sendNotification(socket, {
+              text: `The ${target.name}'s corpse can be looted.`,
+              style: 'system',
+            });
+          }
+        }
+
+        // Remove from our local list to avoid double-processing
+        const idx = hostileCreatures.indexOf(target);
+        if (idx !== -1) hostileCreatures.splice(idx, 1);
+      } else {
+        // Creature counter-attacks the NPC
+        const creatureDamage = Math.floor(target.level * 3 * (0.7 + rng.next() * 0.6));
+        defender.combat.currentHp -= creatureDamage;
+
+        if (socket && shouldNotify) {
+          sendNotification(socket, {
+            text: `${locationPrefix}The ${target.name} strikes ${defender.name} for ${creatureDamage} damage!`,
+            style: 'combat',
+          });
+        }
+
+        // NPCs don't die from creature attacks, they just get injured
+        if (defender.combat.currentHp <= 0) {
+          defender.combat.currentHp = 1;
+          if (socket && shouldNotify) {
+            sendNotification(socket, {
+              text: `${locationPrefix}${defender.name} is badly wounded but continues fighting!`,
+              style: 'combat',
+            });
+          }
+        }
+      }
+    }
+
+    // Heal defenders after combat ends (if no more hostiles)
+    if (hostileCreatures.filter(c => c.currentHp > 0).length === 0) {
+      for (const defender of defenders) {
+        if (defender.combat && defender.combat.currentHp < defender.combat.maxHp) {
+          defender.combat.currentHp = Math.min(
+            defender.combat.maxHp,
+            defender.combat.currentHp + Math.floor(defender.combat.maxHp * 0.25)
+          );
         }
       }
     }
