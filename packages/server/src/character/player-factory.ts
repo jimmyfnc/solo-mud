@@ -69,7 +69,8 @@ export function createPlayer(options: CreatePlayerOptions): Player {
 
     equipment: {},
     inventory: [],
-    inventorySlots: 20,
+    inventorySlots: 40,
+    keyring: [],
     carryWeight: 0,
     maxCarryWeight,
 
@@ -108,5 +109,8 @@ export function createPlayer(options: CreatePlayerOptions): Player {
       known: getStarterSpellId(className) ? [getStarterSpellId(className)!] : [],
       slots: [getStarterSpellId(className) ?? null, null, null, null],
     },
+
+    // Prop interaction cooldowns
+    propCooldowns: {},
   };
 }

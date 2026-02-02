@@ -122,6 +122,7 @@ export interface Player {
   equipment: Equipment;
   inventory: InventorySlot[];
   inventorySlots: number;
+  keyring: string[]; // Item IDs of keys (unlimited, no duplicates)
   carryWeight: number;
   maxCarryWeight: number;
 
@@ -168,6 +169,12 @@ export interface Player {
 
   /** Trap placed by ranger (only one at a time) */
   placedTrap?: PlacedTrap;
+
+  /** Infamy from attacking/killing NPCs */
+  infamy?: PlayerInfamy;
+
+  /** Prop interaction cooldowns - prop ID → game time when usable again */
+  propCooldowns: Record<string, number>;
 }
 
 /** Status effect on a player */
@@ -180,6 +187,21 @@ export interface StatusEffect {
   stacks: number;
   /** When the effect was applied (game time in minutes) */
   appliedAt: number;
+}
+
+/** Infamy level for players who attack NPCs */
+export type InfamyLevel = 'none' | 'suspect' | 'criminal' | 'murderer';
+
+/** Player infamy state (from attacking/killing NPCs) */
+export interface PlayerInfamy {
+  /** Current infamy level */
+  level: InfamyLevel;
+  /** Town where player is infamous */
+  townId: string;
+  /** When infamy decays to next lower tier (game time in minutes) */
+  decayAt?: number;
+  /** Bounty in copper (guards may attack on sight) */
+  bounty: number;
 }
 
 /** A trap placed by a ranger in a location */
@@ -204,11 +226,44 @@ export interface PlacedTrap {
 export interface CombatStats {
   attackPower: number;
   spellPower: number;
-  defense: number;
-  magicResist: number;
+  defense: number; // Physical damage reduction (percentage-based)
+  fireResist: number; // Fire damage reduction
+  iceResist: number; // Ice damage reduction
+  lightningResist: number; // Lightning damage reduction
+  poisonResist: number; // Poison damage reduction
   hitChance: number;
   dodgeChance: number;
   critChance: number;
   critDamage: number;
   attackSpeed: number; // ticks between attacks
+}
+
+/**
+ * Get resistance value for a damage type.
+ * Uses DamageType from spells.ts - holy/shadow/nature have no resistance (return 0).
+ */
+export function getResistanceForDamageType(
+  stats: CombatStats,
+  damageType: 'physical' | 'fire' | 'ice' | 'lightning' | 'holy' | 'shadow' | 'nature' | 'poison' | 'arcane'
+): number {
+  switch (damageType) {
+    case 'physical': return stats.defense;
+    case 'fire': return stats.fireResist;
+    case 'ice': return stats.iceResist;
+    case 'lightning': return stats.lightningResist;
+    case 'poison': return stats.poisonResist;
+    case 'holy':
+    case 'shadow':
+    case 'nature':
+    case 'arcane':
+    default:
+      return 0; // No resistance for these damage types (yet)
+  }
+}
+
+/** Calculate damage after resistance (percentage-based, capped at 75%) */
+export function applyResistance(baseDamage: number, resistance: number): number {
+  const cappedResist = Math.min(75, resistance);
+  const reduction = cappedResist / 100;
+  return Math.max(1, Math.floor(baseDamage * (1 - reduction)));
 }
