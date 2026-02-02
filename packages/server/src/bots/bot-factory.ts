@@ -2,7 +2,7 @@
  * Bot factory - creates bot players and sessions.
  */
 
-import type { ClassName, BotPersonality, BotMemory, BotProfile, World } from '@solo-mud/shared';
+import type { ClassName, BotPersonality, BotMemory, BotProfile, World, NamedBotDefinition, BotRelationship } from '@solo-mud/shared';
 import { CLASSES, xpForLevel, getStarterSpellId, generateStarterGear } from '@solo-mud/shared';
 import { calculateMaxHp, calculateMaxMp, calculateMaxCarryWeight } from '../character/player-factory';
 import { calculateCombatStats } from '../character/stats';
@@ -267,5 +267,126 @@ export function createBotSession(bot: BotPlayer, existingWorld?: World): BotSess
     createdAt: now,
     lastActivity: now,
     isBot: true,
+  };
+}
+
+/**
+ * Create a named bot from a NamedBotDefinition.
+ * Named bots are hand-crafted characters with unique personalities and backstories.
+ */
+export function createNamedBot(definition: NamedBotDefinition, startLocationId: string): BotPlayer {
+  const classDef = CLASSES[definition.class];
+  const level = definition.startingLevel;
+
+  // Calculate XP for the given level (sum of XP from level 1 to level-1)
+  let xp = 0;
+  for (let lvl = 1; lvl < level; lvl++) {
+    xp += xpForLevel(lvl + 1);
+  }
+
+  const maxHp = calculateMaxHp(classDef, level);
+  const maxMp = calculateMaxMp(classDef, level);
+  const maxCarryWeight = calculateMaxCarryWeight(classDef.baseStats.str);
+
+  // Build initial relationships from definition
+  const opinions: Record<string, BotRelationship> = {};
+  if (definition.initialRelationships) {
+    for (const [entityId, opinionValue] of Object.entries(definition.initialRelationships)) {
+      opinions[entityId] = {
+        entityId,
+        entityName: entityId, // Name can be resolved later
+        isPlayer: false,
+        opinion: opinionValue,
+        history: [],
+      };
+    }
+  }
+
+  // Convert aspirations to IDs
+  const aspirationIds = definition.aspirations.map((a) => a.id);
+
+  // Create bot profile with definition's personality directly
+  const botProfile: BotProfile = {
+    isNamed: true,
+    personality: definition.personality,
+    relationships: {
+      opinions,
+      faction: definition.faction,
+      factionRole: definition.factionRole,
+      blocked: [],
+    },
+    memory: createDefaultMemory(),
+    backstory: definition.backstory,
+    aspirations: aspirationIds,
+  };
+
+  return {
+    id: definition.id,
+    name: definition.name,
+    class: definition.class,
+    level,
+    xp,
+    xpToNextLevel: xpForLevel(level + 1),
+
+    baseStats: { ...classDef.baseStats },
+    currentHp: maxHp,
+    maxHp,
+    currentMp: maxMp,
+    maxMp,
+
+    subclass: undefined,
+    talentPointsAvailable: 0,
+
+    equipment: {},
+    inventory: [],
+    inventorySlots: 40,
+    keyring: [],
+    carryWeight: 0,
+    maxCarryWeight,
+
+    itemSlots: [null, null, null, null],
+    abilitySlots: [null, null, null, null],
+
+    locationId: startLocationId,
+    boundTownId: startLocationId,
+
+    inCombat: false,
+    autoAttack: false,
+    targetId: undefined,
+    globalCooldown: 0,
+    abilityCooldowns: {},
+
+    currency: { copper: 0, silver: 0, gold: 0 },
+
+    // Tutorial - bots skip it
+    tutorial: {
+      skipped: true,
+      complete: true,
+      completedSteps: [],
+    },
+
+    corpseLocationId: undefined,
+    corpseItems: undefined,
+
+    // Status effects
+    statusEffects: [],
+
+    // Quest/progress flags
+    questFlags: [],
+
+    // Spells - start with class-specific starter spell
+    spells: {
+      known: getStarterSpellId(definition.class) ? [getStarterSpellId(definition.class)!] : [],
+      slots: [getStarterSpellId(definition.class) ?? null, null, null, null],
+    },
+
+    // Prop interaction cooldowns
+    propCooldowns: {},
+
+    // Bot-specific fields
+    isBot: true,
+    botProfile,
+    lastAiTick: 0,
+    namedBotId: definition.id,
   };
 }
