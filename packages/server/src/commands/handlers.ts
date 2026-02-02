@@ -2,14 +2,21 @@
  * Command handlers - execute player commands.
  */
 
-import type { OutputLine, Exit, Item, EquipSlot, Creature, Corpse, Container, Location, StatusEffect, Spell, Player } from '@solo-mud/shared';
-import { createRng, getWeaponDamage, CREATURE_TEMPLATES, TUTORIAL_STEPS, SHOP_ITEM_TEMPLATES, CONSUMABLE_EFFECTS, getDrunkLevel, checkDrunkStumble, getRandomStumbleText, xpForLevel, CLASSES, getNpcsAtLocation, getNpcActivity, SEWER_VALVE_ROOM, SPELLS, getClassSpells, getLearnableSpells, getFutureSpells, formatCurrency, addCopper, canAfford, spendCurrency, formatPrice } from '@solo-mud/shared';
+import type { OutputLine, Exit, Item, EquipSlot, Creature, Corpse, Container, Location, StatusEffect, Spell, Player, Rng, NPC, PropDefinition } from '@solo-mud/shared';
+import { createRng, getWeaponDamage, CREATURE_TEMPLATES, TUTORIAL_STEPS, SHOP_ITEM_TEMPLATES, CONSUMABLE_EFFECTS, getDrunkLevel, checkDrunkStumble, getRandomStumbleText, xpForLevel, calculateXpGain, CLASSES, getNpcsAtLocation, getNpcActivity, SEWER_VALVE_ROOM, SPELLS, getClassSpells, getLearnableSpells, getFutureSpells, formatCurrency, addCopper, canAfford, spendCurrency, formatPrice, getCombatNpcsAtLocation, findPropByName, TAG_INTERACTIONS } from '@solo-mud/shared';
 import { handleCreatureDeath } from '../game/ecosystem';
 import { handlePlayerDeath } from '../game/game-loop';
-import { generateSewerLoot, SEWER_LOOT_TABLES } from '../loot/sewer-loot';
+import { generateSewerLoot, SEWER_LOOT_TABLES, SEWER_ITEM_TEMPLATES } from '../loot/sewer-loot';
+import { generateWildernessLoot, WILDERNESS_LOOT_TABLES } from '../loot/wilderness-loot';
+import { generateNpcLoot, calculateNpcGoldDrop } from '../loot/npc-loot';
+import { addAssaultBounty, addMurderBounty, getInfamyDisplay } from '../game/infamy';
+import { selectNpcAction, applyNpcAction } from '../game/npc-combat';
 import type { GameSession } from '../game/session';
-import { parseCommand, getDirection, type ParsedCommand } from './parser';
+import { parseCommand, getDirection, isPropVerb, type ParsedCommand } from './parser';
+import { isPropOnCooldown, setPropCooldown, formatCooldownMessage, applyPropRewards, pickRandomText, getRemainingCooldown } from './prop-helpers';
 import { generateDescription, generateExitProse, generateCreatureProse, type Biome, type Weather, type ExitInfo } from '../descriptions';
+import { adminHandlers } from './admin-handlers';
+import { calculateCombatStats, getEffectiveStats, getLevelHitModifier, getLevelDamageModifier } from '../character';
 
 export interface CommandContext {
   session: GameSession;
@@ -34,6 +41,8 @@ const handlers: Record<string, CommandHandler> = {
   help: handleHelp,
   inventory: handleInventory,
   i: handleInventory,
+  keyring: handleKeyring,
+  keys: handleKeyring,
   take: handleTake,
   get: handleTake,
   drop: handleDrop,
@@ -44,12 +53,15 @@ const handlers: Record<string, CommandHandler> = {
   equipment: handleEquipment,
   eq: handleEquipment,
   use: handleUse,
+  drink: handleDrink,
+  quaff: handleDrink,
   debug: handleDebug,
   attack: handleAttack,
   kill: handleAttack,
   flee: handleFlee,
   loot: handleLoot,
   open: handleOpen,
+  unlock: handleUnlock,
   close: handleClose,
   shut: handleClose,
   leave: handleLeave,
@@ -100,6 +112,25 @@ const handlers: Record<string, CommandHandler> = {
  * Execute a command and return the result.
  */
 export function executeCommand(session: GameSession, input: string): CommandResult {
+  const trimmed = input.trim();
+
+  // Admin commands: prefixed with "/"
+  if (trimmed.startsWith('/')) {
+    const adminInput = trimmed.slice(1);
+    const adminParsed = parseCommand(adminInput);
+
+    if (!adminParsed.command) {
+      return { output: [{ text: 'Type /help for admin commands.', style: 'system' }] };
+    }
+
+    const adminHandler = adminHandlers[adminParsed.command];
+    if (!adminHandler) {
+      return { output: [{ text: `Unknown admin command: /${adminParsed.command}. Type /help for a list.`, style: 'error' }] };
+    }
+
+    return adminHandler({ session, parsed: adminParsed });
+  }
+
   const parsed = parseCommand(input);
 
   if (!parsed.command) {
@@ -115,6 +146,13 @@ export function executeCommand(session: GameSession, input: string): CommandResu
 
   const handler = handlers[parsed.command];
   if (!handler) {
+    // Check if this is a prop interaction verb before giving up
+    if (isPropVerb(parsed.command) && parsed.target) {
+      const propResult = handlePropInteraction({ session, parsed });
+      if (propResult) {
+        return propResult;
+      }
+    }
     return {
       output: [{ text: `Unknown command: ${parsed.command}`, style: 'error' }],
     };
@@ -131,10 +169,96 @@ export function executeCommand(session: GameSession, input: string): CommandResu
  */
 /**
  * Check if the player has an active light source.
+ * Checks both consumable lightSource and light status effect.
  */
 function hasLight(player: Player, gameTime: number): boolean {
-  if (!player.lightSource) return false;
-  return player.lightSource.expiresAt > gameTime;
+  // Check consumable light source (lantern, etc.)
+  if (player.lightSource && player.lightSource.expiresAt > gameTime) {
+    return true;
+  }
+  // Check light status effect (from torch use)
+  const lightEffect = player.statusEffects.find(e => e.id === 'light');
+  if (lightEffect && lightEffect.appliedAt + lightEffect.duration > gameTime) {
+    return true;
+  }
+  return false;
+}
+
+/**
+ * Tags that indicate an item should stack in inventory.
+ * Equipment (weapons, armor) and unique/quest items should NOT stack.
+ */
+const STACKABLE_TAGS = new Set([
+  'consumable', 'potion', 'food', 'drink', 'beverage',
+  'material', 'crafting',
+  'currency', 'junk', 'trophy',
+  'healing', 'container',
+]);
+
+/**
+ * Tags that explicitly prevent stacking even if other stackable tags are present.
+ */
+const NON_STACKABLE_TAGS = new Set([
+  'weapon', 'armor', 'unique', 'key', 'quest',
+  'head', 'chest', 'legs', 'feet', 'hands', 'ring', 'neck',
+]);
+
+/**
+ * Check if an item should stack with others of the same baseId.
+ */
+export function isStackable(item: Item): boolean {
+  // If any non-stackable tag is present, don't stack
+  if (item.tags.some(tag => NON_STACKABLE_TAGS.has(tag.toLowerCase()))) {
+    return false;
+  }
+  // If any stackable tag is present, stack it
+  return item.tags.some(tag => STACKABLE_TAGS.has(tag.toLowerCase()));
+}
+
+/**
+ * Add an item to the player's inventory with proper stacking.
+ * For stackable items (consumables, materials), stacks by baseId.
+ * For non-stackable items (weapons, armor), creates a new slot.
+ * Returns true if added successfully, false if inventory is full.
+ */
+export function addToInventory(player: Player, world: GameSession['world'], itemId: string): boolean {
+  const item = world.items[itemId];
+  if (!item) return false;
+
+  // Keys go to keyring automatically (no duplicates by baseId)
+  if (item.tags.includes('key')) {
+    // Check if we already have this key type on the keyring
+    const alreadyHasKey = player.keyring.some(keyId => {
+      const existingKey = world.items[keyId];
+      return existingKey && existingKey.baseId === item.baseId;
+    });
+    if (alreadyHasKey) {
+      return false; // Don't pick up duplicate keys
+    }
+    player.keyring.push(itemId);
+    return true;
+  }
+
+  if (isStackable(item)) {
+    // For stackable items, find existing stack by baseId
+    const existingSlot = player.inventory.find(slot => {
+      const slotItem = world.items[slot.itemId];
+      return slotItem && slotItem.baseId === item.baseId;
+    });
+
+    if (existingSlot) {
+      existingSlot.quantity++;
+      return true;
+    }
+  }
+
+  // No existing stack or non-stackable: create new slot if space available
+  if (player.inventory.length >= player.inventorySlots) {
+    return false;
+  }
+
+  player.inventory.push({ itemId, quantity: 1 });
+  return true;
 }
 
 function generateRoomOutput(
@@ -316,6 +440,15 @@ function generateRoomOutput(
       // Use 'combat' style for aggressive/territorial, 'normal' for passive
       const hasHostile = creatures.some(c => c.behavior !== 'passive');
       output.push({ text: `Creatures: ${creatureList}`, style: hasHostile ? 'combat' : 'normal' });
+    }
+
+    // Corpses that can be looted
+    const corpses = Object.values(world.corpses).filter(
+      (c) => c.locationId === player.locationId
+    );
+    if (corpses.length > 0) {
+      const corpseList = corpses.map(c => `${c.name}'s corpse`).join(', ');
+      output.push({ text: `Corpses: ${corpseList}`, style: 'normal' });
     }
   }
 
@@ -754,6 +887,51 @@ function handleUse(ctx: CommandContext): CommandResult {
 }
 
 /**
+ * Get a description of what a status effect does.
+ * Looks up spell data for buff effects, or returns hardcoded descriptions for others.
+ */
+function getEffectDescription(effectId: string): string | null {
+  // Check if it's a spell-based effect (buff spells use their spell ID as the effect ID)
+  const spell = SPELLS[effectId];
+  if (spell && spell.effect === 'buff') {
+    // Generate description based on spell properties
+    if (spell.baseValue) {
+      switch (effectId) {
+        case 'blessing':
+          return `+${spell.baseValue} Defense`;
+        case 'battle_shout':
+          return `+${spell.baseValue} Attack`;
+        case 'evasion':
+          return `+${spell.baseValue}% Dodge`;
+        case 'haste':
+          return `+${spell.baseValue}% Attack Speed`;
+        default:
+          return `+${spell.baseValue} (buff)`;
+      }
+    }
+  }
+
+  // Hardcoded descriptions for non-spell effects
+  switch (effectId) {
+    case 'light':
+      return 'Illuminates dark areas';
+    case 'drunk':
+      return 'May stumble when moving';
+    case 'poison':
+    case 'poisoned':
+      return 'Taking damage over time';
+    case 'bleed':
+      return 'Bleeding, taking damage over time';
+    case 'hunters_mark':
+      return 'Marked target takes +50% damage';
+    case 'trapped':
+      return 'Movement restricted';
+    default:
+      return null;
+  }
+}
+
+/**
  * Apply a status effect to the player, stacking if already present.
  */
 function applyStatusEffect(
@@ -801,6 +979,55 @@ function applyStatusEffect(
   }
 
   return output;
+}
+
+/**
+ * Handle the "drink" command - drink potions, wine, ale, etc.
+ * Delegates to handleUse after verifying the item is drinkable.
+ */
+function handleDrink(ctx: CommandContext): CommandResult {
+  const { session, parsed } = ctx;
+  const { world, player } = session;
+
+  if (!parsed.target) {
+    return {
+      output: [{ text: 'Drink what? Try "drink <potion>" or "drink wine".', style: 'system' }],
+    };
+  }
+
+  const targetLower = parsed.target.toLowerCase();
+
+  // Find item in inventory
+  const inventorySlot = player.inventory.find(slot => {
+    const item = world.items[slot.itemId];
+    return item?.name.toLowerCase().includes(targetLower);
+  });
+
+  if (!inventorySlot) {
+    return {
+      output: [{ text: `You don't have any "${parsed.target}" to drink.`, style: 'error' }],
+    };
+  }
+
+  const item = world.items[inventorySlot.itemId];
+  if (!item) {
+    return {
+      output: [{ text: 'That item seems corrupted.', style: 'error' }],
+    };
+  }
+
+  // Check if item is drinkable
+  const drinkableTags = ['potion', 'drink', 'consumable', 'wine', 'ale', 'beverage', 'elixir'];
+  const isDrinkable = item.tags.some(tag => drinkableTags.includes(tag.toLowerCase()));
+
+  if (!isDrinkable) {
+    return {
+      output: [{ text: `You can't drink the ${item.name}. That's not a beverage!`, style: 'error' }],
+    };
+  }
+
+  // Delegate to handleUse for the actual consumption
+  return handleUse(ctx);
 }
 
 /**
@@ -1033,12 +1260,14 @@ function handleHelp(_ctx: CommandContext): CommandResult {
       { text: '  look (l) - Examine your surroundings', style: 'normal' },
       { text: '  examine <target> - Look at something closely', style: 'normal' },
       { text: '  use <item/object> - Use an item or interact with something', style: 'normal' },
+      { text: '  drink <potion/beverage> - Drink a potion or beverage', style: 'normal' },
       { text: '  go <direction> - Move in a direction', style: 'normal' },
       { text: '  go <exit> to <destination> - Disambiguate multiple exits', style: 'normal' },
       { text: '  north/south/east/west (n/s/e/w) - Move directly', style: 'normal' },
       { text: '  up/down (u/d) - Move vertically', style: 'normal' },
-      { text: '  take <item> - Pick up an item', style: 'normal' },
-      { text: '  take <item> from <corpse> - Loot an item from a corpse', style: 'normal' },
+      { text: '  take <item> - Pick up an item from the ground', style: 'normal' },
+      { text: '  take <item> <source> - Take item from corpse/container', style: 'normal' },
+      { text: '  take all <source> - Take everything from a source', style: 'normal' },
       { text: '  drop <item> - Drop an item', style: 'normal' },
       { text: '  inventory (i) - Check your inventory', style: 'normal' },
       { text: '  equipment (eq) - View equipped items', style: 'normal' },
@@ -1054,6 +1283,7 @@ function handleHelp(_ctx: CommandContext): CommandResult {
       { text: '  unassign <slot> - Clear a quick slot', style: 'normal' },
       { text: '  loot [corpse/container] [#|all] - Loot items (# to take item, all for everything)', style: 'normal' },
       { text: '  open <container> - Open a chest or container', style: 'normal' },
+      { text: '  unlock <direction> - Unlock a locked door/passage', style: 'normal' },
       { text: '  status (stats) - View your stats and active effects', style: 'normal' },
       { text: '  talk <npc> - Talk to someone', style: 'normal' },
       { text: '  say <number> - Respond in conversation', style: 'normal' },
@@ -1344,6 +1574,31 @@ function handleDebug(ctx: CommandContext): CommandResult {
     output.push({ text: '', style: 'normal' });
   }
 
+  // Show corpses at this location
+  const corpses = Object.values(world.corpses).filter(c => c.locationId === player.locationId);
+  output.push({ text: '--- CORPSES HERE ---', style: 'system' });
+  if (corpses.length === 0) {
+    output.push({ text: '  (none)', style: 'normal' });
+  } else {
+    for (const corpse of corpses) {
+      output.push({ text: `  ${corpse.id}: ${corpse.name}`, style: 'normal' });
+      output.push({ text: `    Location: ${corpse.locationId} | Loot: ${corpse.loot.length} items`, style: 'normal' });
+    }
+  }
+  output.push({ text: '', style: 'normal' });
+
+  // Show all corpses in world
+  const allCorpses = Object.values(world.corpses);
+  output.push({ text: '--- ALL CORPSES ---', style: 'system' });
+  output.push({ text: `  Total: ${allCorpses.length}`, style: 'normal' });
+  for (const corpse of allCorpses.slice(0, 5)) {
+    output.push({ text: `  ${corpse.name} at ${corpse.locationId}`, style: 'normal' });
+  }
+  if (allCorpses.length > 5) {
+    output.push({ text: `  ... and ${allCorpses.length - 5} more`, style: 'normal' });
+  }
+  output.push({ text: '', style: 'normal' });
+
   // Show adjacent locations summary
   output.push({ text: '--- ADJACENT LOCATIONS ---', style: 'system' });
   const exitIds = world.adjacency[player.locationId] ?? [];
@@ -1380,8 +1635,49 @@ function handleInventory(ctx: CommandContext): CommandResult {
     }
   }
 
+  // Show keyring if player has keys
+  if (player.keyring && player.keyring.length > 0) {
+    output.push({ text: '', style: 'normal' });
+    output.push({ text: '=== Keyring ===', style: 'system' });
+    for (const keyId of player.keyring) {
+      const key = world.items[keyId];
+      if (key) {
+        output.push({ text: `  ${key.name}`, style: 'normal' });
+      }
+    }
+  }
+
+  output.push({ text: '', style: 'normal' });
+  output.push({ text: `Slots: ${player.inventory.length}/${player.inventorySlots}`, style: 'normal' });
   output.push({ text: `Currency: ${formatCurrency(player.currency)}`, style: 'success' });
   output.push({ text: `Weight: ${player.carryWeight}/${player.maxCarryWeight}`, style: 'normal' });
+
+  return { output };
+}
+
+/**
+ * Handle the "keyring" command - view collected keys.
+ */
+function handleKeyring(ctx: CommandContext): CommandResult {
+  const { session } = ctx;
+  const { player, world } = session;
+  const output: OutputLine[] = [
+    { text: '=== Keyring ===', style: 'system' },
+  ];
+
+  if (!player.keyring || player.keyring.length === 0) {
+    output.push({ text: 'Your keyring is empty.', style: 'normal' });
+  } else {
+    for (const keyId of player.keyring) {
+      const key = world.items[keyId];
+      if (key) {
+        output.push({ text: `  ${key.name}`, style: 'normal' });
+      }
+    }
+  }
+
+  output.push({ text: '', style: 'normal' });
+  output.push({ text: 'Keys are stored here automatically and never take inventory space.', style: 'system' });
 
   return { output };
 }
@@ -1418,9 +1714,13 @@ function handleTake(ctx: CommandContext): CommandResult {
   // --- Build the full input from args for suffix parsing ---
   const input = parsed.args.join(' ').toLowerCase();
 
-  // --- "take all <source>" → take everything from a source ---
+  // --- "take all <source>" or "take <source> all" → take everything from a source ---
   if (input.startsWith('all ') && input.length > 4) {
     const sourceName = input.slice(4);
+    return takeAllFromSource(world, player, sourceName);
+  }
+  if (input.endsWith(' all') && input.length > 4) {
+    const sourceName = input.slice(0, -4);
     return takeAllFromSource(world, player, sourceName);
   }
 
@@ -1491,23 +1791,28 @@ function handleTake(ctx: CommandContext): CommandResult {
     };
   }
 
-  if (player.inventory.length >= player.inventorySlots) {
+  location.items.splice(itemIndex, 1);
+
+  // Check if it's a key (will go to keyring)
+  const isKey = item.tags.includes('key');
+
+  if (!addToInventory(player, world, itemId)) {
+    // Couldn't add - put item back
+    location.items.push(itemId);
+    const errorMsg = isKey
+      ? 'You already have that key on your keyring.'
+      : 'Your inventory is full.';
     return {
-      output: [{ text: 'Your inventory is full.', style: 'error' }],
+      output: [{ text: errorMsg, style: 'error' }],
     };
   }
 
-  location.items.splice(itemIndex, 1);
-
-  const existingSlot = player.inventory.find(slot => slot.itemId === itemId);
-  if (existingSlot) {
-    existingSlot.quantity++;
-  } else {
-    player.inventory.push({ itemId, quantity: 1 });
-  }
+  const successMsg = isKey
+    ? `You pick up the ${item.name} and add it to your keyring.`
+    : `You pick up the ${item.name}.`;
 
   return {
-    output: [{ text: `You pick up the ${item.name}.`, style: 'success' }],
+    output: [{ text: successMsg, style: 'success' }],
     updateRoom: true,
     updatePlayer: true,
   };
@@ -1629,15 +1934,14 @@ function takeItemFromContents(
     };
   }
 
-  if (player.inventory.length >= player.inventorySlots) {
+  const itemId = contents[itemIndex]!;
+  const item = world.items[itemId];
+
+  if (!addToInventory(player, world, itemId)) {
     return { output: [{ text: 'Your inventory is full.', style: 'error' }] };
   }
 
-  const itemId = contents[itemIndex]!;
-  const item = world.items[itemId];
-  player.inventory.push({ itemId, quantity: 1 });
   contents.splice(itemIndex, 1);
-
   markSourceTaken(world, sourceType, sourceRef, contents);
 
   return {
@@ -1667,8 +1971,7 @@ function takeAllFromContents(
   const taken: string[] = [];
   for (const itemId of [...contents]) {
     const item = world.items[itemId];
-    if (item && player.inventory.length < player.inventorySlots) {
-      player.inventory.push({ itemId, quantity: 1 });
+    if (item && addToInventory(player, world, itemId)) {
       taken.push(item.name);
       const idx = contents.indexOf(itemId);
       if (idx !== -1) contents.splice(idx, 1);
@@ -1866,20 +2169,30 @@ function handleMove(ctx: CommandContext): CommandResult {
   }
 
   // Check if locked
-  let usedKeyMessage: OutputLine | null = null;
   if (exit.type === 'locked') {
     if (exit.requirement?.kind === 'item') {
-      const keySlot = player.inventory.find(slot => slot.itemId === exit.requirement?.value);
-      if (!keySlot) {
-        const keyItem = world.items[exit.requirement.value as string];
-        const keyName = keyItem?.name ?? 'a key';
+      // Door requires a key - tell player to unlock it first
+      const requiredKey = exit.requirement.value as string;
+      const keyItem = world.items[requiredKey];
+      const keyName = keyItem?.name ?? 'a key';
+
+      // Check if player has the key to give a helpful hint
+      const keySlot = player.inventory.find(slot => {
+        const item = world.items[slot.itemId];
+        return slot.itemId === requiredKey || item?.baseId === requiredKey || item?.id === requiredKey;
+      });
+
+      if (keySlot) {
         return {
-          output: [{ text: `The way ${direction} is locked. You need ${keyName}.`, style: 'error' }],
+          output: [
+            { text: `The way ${direction} is locked.`, style: 'error' },
+            { text: `You have a key that might fit. Try "unlock ${direction}".`, style: 'system' },
+          ],
         };
       }
-      // Has key - unlock and proceed
-      const keyItem = world.items[keySlot.itemId];
-      usedKeyMessage = { text: `You use the ${keyItem?.name ?? 'key'} to unlock the way.`, style: 'success' };
+      return {
+        output: [{ text: `The way ${direction} is locked. You need ${keyName}.`, style: 'error' }],
+      };
     } else if (exit.requirement?.kind === 'quest') {
       // Check if player has completed the required quest/puzzle
       const questFlag = exit.requirement.value as string;
@@ -1941,7 +2254,38 @@ function handleMove(ctx: CommandContext): CommandResult {
   const nowInSewer = exit.to.startsWith('sewer_');
 
   // Move player
+  const previousLocationId = player.locationId;
   player.locationId = exit.to;
+
+  // If player is in combat, the creature pursues them
+  let pursuitMessage: OutputLine | null = null;
+  if (player.inCombat && player.targetId) {
+    const creature = world.creatures[player.targetId];
+    if (creature && creature.currentHp > 0) {
+      // Remove creature from old location
+      const oldLocation = world.locations[previousLocationId];
+      if (oldLocation) {
+        const idx = oldLocation.creatures.indexOf(creature.id);
+        if (idx !== -1) {
+          oldLocation.creatures.splice(idx, 1);
+        }
+      }
+
+      // Add creature to new location
+      const newLocation = world.locations[exit.to];
+      if (newLocation && !newLocation.creatures.includes(creature.id)) {
+        newLocation.creatures.push(creature.id);
+      }
+
+      // Update creature's location
+      creature.locationId = exit.to;
+
+      pursuitMessage = {
+        text: `The ${creature.name} follows you, refusing to let you escape!`,
+        style: 'combat',
+      };
+    }
+  }
 
   // Reset sewer gate when leaving the sewer area (makes it repeatable)
   if (wasInSewer && !nowInSewer && session.sewerGateOpen) {
@@ -1957,9 +2301,6 @@ function handleMove(ctx: CommandContext): CommandResult {
   if (stumbleText) {
     output.push(stumbleText);
   }
-  if (usedKeyMessage) {
-    output.push(usedKeyMessage);
-  }
   // Show actual direction traveled (may differ from intended if stumbled)
   const actualDirection = exit.label;
   if (stumbled) {
@@ -1968,6 +2309,11 @@ function handleMove(ctx: CommandContext): CommandResult {
     output.push({ text: `You go ${actualDirection}.`, style: 'normal' });
   }
   output.push(...roomOutput);
+
+  // Show pursuit message if creature followed
+  if (pursuitMessage) {
+    output.push(pursuitMessage);
+  }
 
   // Check for aggressive creatures (aggro on sight)
   const aggroOutput = checkAggro(session);
@@ -2244,13 +2590,8 @@ function handleEquip(ctx: CommandContext): CommandResult {
   // Unequip existing item in that slot
   const existingItemId = player.equipment[targetSlot];
   if (existingItemId) {
-    // Add to inventory
-    const existingSlot = player.inventory.find(s => s.itemId === existingItemId);
-    if (existingSlot) {
-      existingSlot.quantity++;
-    } else {
-      player.inventory.push({ itemId: existingItemId, quantity: 1 });
-    }
+    // Add to inventory (equipment is non-stackable, so this creates a new slot)
+    addToInventory(player, world, existingItemId);
   }
 
   // Remove from inventory
@@ -2338,22 +2679,16 @@ function handleUnequip(ctx: CommandContext): CommandResult {
     };
   }
 
-  // Check inventory space
-  if (player.inventory.length >= player.inventorySlots) {
-    return {
-      output: [{ text: 'Your inventory is full. Drop something first.', style: 'error' }],
-    };
-  }
-
   // Remove from equipment
   delete player.equipment[targetSlot];
 
-  // Add to inventory
-  const existingSlot = player.inventory.find(s => s.itemId === itemId);
-  if (existingSlot) {
-    existingSlot.quantity++;
-  } else {
-    player.inventory.push({ itemId, quantity: 1 });
+  // Add to inventory (equipment is non-stackable, so this creates a new slot)
+  if (!addToInventory(player, world, itemId)) {
+    // Re-equip if inventory is full (shouldn't happen, but safety check)
+    player.equipment[targetSlot] = itemId;
+    return {
+      output: [{ text: 'Your inventory is full. Drop something first.', style: 'error' }],
+    };
   }
 
   return {
@@ -2363,7 +2698,9 @@ function handleUnequip(ctx: CommandContext): CommandResult {
 }
 
 /**
- * Handle the "attack" command - attack a creature.
+ * Handle the "attack" / "kill" command - initiate combat with a creature.
+ * First use triggers one immediate combat round. Subsequent uses while
+ * already fighting the same target are blocked (no spam damage).
  */
 function handleAttack(ctx: CommandContext): CommandResult {
   const { session, parsed } = ctx;
@@ -2395,40 +2732,70 @@ function handleAttack(ctx: CommandContext): CommandResult {
   }
 
   if (!targetCreature) {
+    // Check for NPC targets
+    const timeOfDay = world.time.timeOfDay;
+    const npcsHere = getNpcsAtLocation(world.npcs, location.npcs ?? [], location.id, timeOfDay);
+    const targetNpc = npcsHere.find(n => n.name.toLowerCase().includes(targetLower));
+
+    if (targetNpc) {
+      return handleNpcAttack(ctx, targetNpc);
+    }
+
     return {
       output: [{ text: `You don't see any "${parsed.target}" here to attack.`, style: 'error' }],
     };
   }
 
-  // Check if creature is already dead
   if (targetCreature.currentHp <= 0) {
     return {
       output: [{ text: `The ${targetCreature.name} is already dead.`, style: 'error' }],
     };
   }
 
+  // --- Already fighting same target: block spam ---
+  if (player.inCombat && player.targetId === targetCreature.id) {
+    return {
+      output: [{ text: `You are already fighting the ${targetCreature.name}.`, style: 'system' }],
+    };
+  }
+
+  // --- Already fighting different target: switch ---
+  if (player.inCombat && player.targetId !== targetCreature.id) {
+    // Disengage old target
+    const oldCreature = world.creatures[player.targetId!];
+    if (oldCreature) {
+      oldCreature.inCombat = false;
+      oldCreature.targetId = undefined;
+    }
+
+    player.targetId = targetCreature.id;
+    targetCreature.inCombat = true;
+    targetCreature.targetId = player.id;
+
+    return {
+      output: [{ text: `You turn to attack the ${targetCreature.name}!`, style: 'combat' }],
+      updatePlayer: true,
+    };
+  }
+
+  // --- New combat: initiate and run one immediate round ---
   const output: OutputLine[] = [];
 
-  // Darkness ambush: if player is in dark without light and not already in combat,
-  // the creature gets a surprise attack with +50% damage
+  // Darkness ambush: creature gets a surprise hit in the dark
   const isDarkHere = location.isDark && !hasLight(player, world.time.totalMinutes);
-  const isNewCombat = !player.inCombat;
 
-  if (isDarkHere && isNewCombat && targetCreature.behavior !== 'passive') {
+  if (isDarkHere && targetCreature.behavior !== 'passive') {
     output.push({
       text: 'Something lurks in the darkness... it strikes before you can react!',
       style: 'combat',
     });
 
     const ambushRng = createRng(`${world.seed}-ambush-${Date.now()}`);
-
-    // Ambush always hits
     const minDmg = Math.max(1, targetCreature.level);
     const maxDmg = Math.max(2, targetCreature.level * 2 + 2);
     const baseDmg = minDmg + Math.floor(ambushRng.next() * (maxDmg - minDmg + 1));
-    const ambushDmg = Math.floor(baseDmg * 1.5); // +50% damage for ambush
+    const ambushDmg = Math.floor(baseDmg * 1.5);
 
-    // Apply damage to player
     player.currentHp -= ambushDmg;
 
     output.push({
@@ -2440,18 +2807,14 @@ function handleAttack(ctx: CommandContext): CommandResult {
       style: player.currentHp <= player.maxHp * 0.25 ? 'error' : 'system',
     });
 
-    // Check if player died from ambush
     if (player.currentHp <= 0) {
       output.push({ text: '', style: 'normal' });
       output.push({
         text: 'You collapse in the darkness, never seeing what killed you...',
         style: 'error',
       });
-
-      // Handle player death
       const deathOutput = handlePlayerDeath(session);
       output.push(...deathOutput);
-
       return { output, updatePlayer: true, updateRoom: true };
     }
 
@@ -2459,18 +2822,36 @@ function handleAttack(ctx: CommandContext): CommandResult {
     output.push({ text: 'You recover and prepare to fight back!', style: 'normal' });
   }
 
-  // Check for ranger trap triggering when player initiates combat
-  if (isNewCombat && player.placedTrap && player.placedTrap.locationId === player.locationId) {
+  // Check for ranger trap
+  if (player.placedTrap && player.placedTrap.locationId === player.locationId) {
     const trapResult = triggerRangerTrap(player, targetCreature, createRng(`trap-${Date.now()}`));
     output.push(...trapResult.output);
 
     if (trapResult.creatureKilled) {
-      // Grant XP
-      const xpGain = targetCreature.level * 15;
+      const template = CREATURE_TEMPLATES[targetCreature.templateId];
+      const tier = template?.tier ?? 'common';
+
+      // Generate loot for trap kills
+      let lootItems: Item[] = [];
+      const lootRng = createRng(`trap-loot-${Date.now()}`);
+      if (SEWER_LOOT_TABLES[targetCreature.templateId]) {
+        lootItems = generateSewerLoot(targetCreature.templateId, targetCreature.level, lootRng);
+      } else if (WILDERNESS_LOOT_TABLES[targetCreature.templateId]) {
+        lootItems = generateWildernessLoot(targetCreature.templateId, targetCreature.level, lootRng);
+      }
+      const loot: string[] = [];
+      for (const item of lootItems) {
+        world.items[item.id] = item;
+        loot.push(item.id);
+      }
+
+      handleCreatureDeath(world, targetCreature, 'player', tier, loot);
+
+      // XP reward (with level difference penalty)
+      const xpGain = calculateXpGain(player.level, targetCreature.level);
       player.xp += xpGain;
       output.push({ text: `You gain ${xpGain} XP.`, style: 'success' });
 
-      // Check level up
       while (player.xp >= player.xpToNextLevel) {
         player.level++;
         player.xpToNextLevel = xpForLevel(player.level + 1);
@@ -2485,50 +2866,56 @@ function handleAttack(ctx: CommandContext): CommandResult {
         });
       }
 
-      // Handle creature death
-      const template = CREATURE_TEMPLATES[targetCreature.templateId];
-      handleCreatureDeath(world, targetCreature, 'player', template?.tier ?? 'common', []);
-
       output.push({
         text: `Use "loot ${targetCreature.name.toLowerCase()}" to check the corpse.`,
         style: 'system',
       });
 
+      // Chain aggro: check for next hostile creature
+      const chainOutput = checkChainAggro(world, player, location);
+      if (chainOutput) output.push(...chainOutput);
+
       return { output, updateRoom: true, updatePlayer: true };
     }
   }
 
-  // Get player's weapon
+  // --- Set up combat state ---
+  player.inCombat = true;
+  player.autoAttack = true;
+  player.targetId = targetCreature.id;
+  targetCreature.inCombat = true;
+  targetCreature.targetId = player.id;
+
+  // --- First combat round: player attacks ---
   const weaponId = player.equipment.weapon;
   const weapon = weaponId ? world.items[weaponId] : undefined;
   const weaponName = weapon?.name ?? 'bare hands';
-
-  // Calculate player damage
   const weaponDamage = weapon ? getWeaponDamage(weapon) : { min: 1, max: 2 };
   const rng = createRng(`${world.seed}-combat-${Date.now()}`);
 
-  // Roll to hit (85% base + DEX bonus)
-  const hitChance = 0.85 + (combatStats.hitChance / 100) * 0.15;
+  // Level-based hit modifier (harder to hit higher level enemies)
+  const levelHitMod = getLevelHitModifier(player.level, targetCreature.level);
+  const baseHitChance = 0.85 + (combatStats.hitChance / 100) * 0.15;
+  const hitChance = baseHitChance * levelHitMod;
   const playerHits = rng.next() < hitChance;
 
   if (!playerHits) {
+    const missReason = levelHitMod < 1.0 ? ` (Level ${targetCreature.level} enemy)` : '';
     output.push({
-      text: `You swing your ${weaponName} at the ${targetCreature.name} but miss!`,
+      text: `You swing your ${weaponName} at the ${targetCreature.name} but miss!${missReason}`,
       style: 'combat',
     });
   } else {
-    // Calculate damage
     const baseDamage = weaponDamage.min + Math.floor(rng.next() * (weaponDamage.max - weaponDamage.min + 1));
     const attackBonus = Math.floor(combatStats.attackPower / 10);
-
-    // Check for crit
     const critChance = combatStats.critChance / 100;
     const isCrit = rng.next() < critChance;
-    const critMultiplier = isCrit ? 2 : 1;
 
-    const damage = Math.max(1, (baseDamage + attackBonus) * critMultiplier);
+    // Level-based damage modifier (deal less damage to higher level enemies)
+    const levelDmgMod = getLevelDamageModifier(player.level, targetCreature.level);
+    const rawDamage = (baseDamage + attackBonus) * (isCrit ? 2 : 1);
+    const damage = Math.max(1, Math.floor(rawDamage * levelDmgMod));
 
-    // Apply damage
     targetCreature.currentHp -= damage;
 
     if (isCrit) {
@@ -2538,169 +2925,44 @@ function handleAttack(ctx: CommandContext): CommandResult {
       });
     } else {
       output.push({
-        text: `You hit the ${targetCreature.name} with your ${weaponName} for ${damage} damage.`,
+        text: `You hit the ${targetCreature.name} for ${damage} damage.`,
         style: 'combat',
       });
     }
 
-    // Special handling for training dummy - reset HP and complete tutorial
+    // Training dummy: reset HP, don't kill
     if (targetCreature.templateId === 'training_dummy') {
-      targetCreature.currentHp = targetCreature.maxHp; // Reset HP
-
+      targetCreature.currentHp = targetCreature.maxHp;
       if (!player.tutorial.completedSteps.includes('hit_dummy')) {
         player.tutorial.completedSteps.push('hit_dummy');
         output.push({ text: '', style: 'normal' });
         output.push({ text: '[Tutorial] Combat practice complete!', style: 'success' });
       }
-
       output.push({ text: 'The training dummy wobbles but stays upright, ready for more.', style: 'normal' });
-
-      return {
-        output,
-        updatePlayer: true,
-      };
-    }
-
-    // Check if creature died
-    if (targetCreature.currentHp <= 0) {
-      output.push({
-        text: `The ${targetCreature.name} collapses and dies!`,
-        style: 'success',
-      });
-
-      // Get template for tier
-      const template = CREATURE_TEMPLATES[targetCreature.templateId];
-      const tier = template?.tier ?? 'common';
-
-      // Generate loot based on creature template
-      let lootItems: Item[] = [];
-
-      // Check if this creature has a sewer loot table
-      if (SEWER_LOOT_TABLES[targetCreature.templateId]) {
-        lootItems = generateSewerLoot(targetCreature.templateId, targetCreature.level, rng);
-      }
-
-      // Add generated items to world and collect IDs for corpse
-      const loot: string[] = [];
-      for (const item of lootItems) {
-        world.items[item.id] = item;
-        loot.push(item.id);
-      }
-
-      // Use ecosystem death handler
-      handleCreatureDeath(world, targetCreature, 'player', tier, loot);
-
-      // Calculate XP reward based on level, tier, and behavior
-      // Base: level * 10, modified by tier and behavior
-      const tierMultiplier = tier === 'apex' ? 3.0 : tier === 'dangerous' ? 2.0 : tier === 'common' ? 1.5 : 1.0;
-      const behaviorMultiplier = targetCreature.behavior === 'aggressive' ? 1.2 :
-                                  targetCreature.behavior === 'territorial' ? 1.1 : 0.5;
-      const baseXp = targetCreature.level * 10;
-      const xpReward = Math.floor(baseXp * tierMultiplier * behaviorMultiplier);
-
-      // Copper reward (no coins from passive creatures)
-      const copperReward = targetCreature.behavior === 'passive' ? 0 : Math.floor(targetCreature.level * (2 + rng.next() * 3));
-
-      player.xp += xpReward;
-      if (copperReward > 0) {
-        player.currency = addCopper(player.currency, copperReward);
-      }
-
-      output.push({
-        text: `You gain ${xpReward} XP${copperReward > 0 ? ` and ${formatPrice(copperReward)}` : ''}.`,
-        style: 'success',
-      });
-
-      // Note about looting
-      output.push({
-        text: `Use "loot ${targetCreature.name.toLowerCase()}" to check the corpse.`,
-        style: 'system',
-      });
-
-      // Check for level up (can level multiple times if XP is high)
-      while (player.xp >= player.xpToNextLevel) {
-        player.level++;
-        player.xpToNextLevel = xpForLevel(player.level + 1);
-
-        // Get class definition for stat increases
-        const classDef = CLASSES[player.class];
-        const hpGain = classDef.hpPerLevel;
-        const mpGain = classDef.mpPerLevel;
-
-        // Increase max HP/MP
-        player.maxHp += hpGain;
-        player.maxMp += mpGain;
-
-        // Heal to full on level up (reward!)
-        player.currentHp = player.maxHp;
-        player.currentMp = player.maxMp;
-
-        // Calculate carry weight increase (STR might increase at certain levels)
-        player.maxCarryWeight = 50 + (player.baseStats.str * 5);
-
-        output.push({ text: '', style: 'normal' });
-        output.push({
-          text: '╔═══════════════════════════════════════╗',
-          style: 'success',
-        });
-        output.push({
-          text: `║       ⭐ LEVEL UP! Level ${player.level}! ⭐        ║`,
-          style: 'success',
-        });
-        output.push({
-          text: '╠═══════════════════════════════════════╣',
-          style: 'success',
-        });
-        output.push({
-          text: `║  HP: +${hpGain} (now ${player.maxHp})`.padEnd(40) + '║',
-          style: 'normal',
-        });
-        output.push({
-          text: `║  MP: +${mpGain} (now ${player.maxMp})`.padEnd(40) + '║',
-          style: 'normal',
-        });
-        output.push({
-          text: `║  Health & Mana fully restored!`.padEnd(40) + '║',
-          style: 'normal',
-        });
-        output.push({
-          text: `║  Next level: ${player.xpToNextLevel} XP`.padEnd(40) + '║',
-          style: 'normal',
-        });
-        output.push({
-          text: '╚═══════════════════════════════════════╝',
-          style: 'success',
-        });
-      }
-
-      // Mark player not in combat
       player.inCombat = false;
+      player.autoAttack = false;
       player.targetId = undefined;
-
-      return { output, updateRoom: true, updatePlayer: true };
-    } else {
-      // Show creature HP
-      const hpPercent = Math.floor((targetCreature.currentHp / targetCreature.maxHp) * 100);
-      output.push({
-        text: `${targetCreature.name}: ${targetCreature.currentHp}/${targetCreature.maxHp} HP (${hpPercent}%)`,
-        style: 'system',
-      });
+      targetCreature.inCombat = false;
+      targetCreature.targetId = undefined;
+      return { output, updatePlayer: true };
     }
+
+    // Check if creature died from first hit
+    if (targetCreature.currentHp <= 0) {
+      return handleCreatureKill(session, targetCreature, rng, output);
+    }
+
+    // Show creature HP
+    const hpPercent = Math.floor((targetCreature.currentHp / targetCreature.maxHp) * 100);
+    output.push({
+      text: `${targetCreature.name}: ${targetCreature.currentHp}/${targetCreature.maxHp} HP (${hpPercent}%)`,
+      style: 'system',
+    });
   }
 
-  // Set player in combat with auto-attack enabled
-  player.inCombat = true;
-  player.autoAttack = true;
-  player.targetId = targetCreature.id;
-  targetCreature.inCombat = true;
-  targetCreature.targetId = player.id;
-
-  // Creature counter-attacks (if not dead and not passive)
-  // Passive creatures don't fight back - they just bleat sadly
+  // --- First combat round: creature counter-attacks ---
   if (targetCreature.currentHp > 0 && targetCreature.behavior !== 'passive') {
-    // Creature hit chance
-    const creatureHitChance = 0.75;
-    const creatureHits = rng.next() < creatureHitChance;
+    const creatureHits = rng.next() < 0.75;
 
     if (!creatureHits) {
       output.push({
@@ -2708,12 +2970,9 @@ function handleAttack(ctx: CommandContext): CommandResult {
         style: 'combat',
       });
     } else {
-      // Creature damage scales with level
       const minDmg = Math.max(1, targetCreature.level);
       const maxDmg = Math.max(2, targetCreature.level * 2 + 2);
       let creatureDamage = minDmg + Math.floor(rng.next() * (maxDmg - minDmg + 1));
-
-      // Apply defense reduction
       const defenseReduction = Math.floor(combatStats.defense / 20);
       creatureDamage = Math.max(1, creatureDamage - defenseReduction);
 
@@ -2724,23 +2983,19 @@ function handleAttack(ctx: CommandContext): CommandResult {
         style: 'combat',
       });
 
-      // Show player HP
       const hpPercent = Math.floor((player.currentHp / player.maxHp) * 100);
       output.push({
         text: `Your HP: ${player.currentHp}/${player.maxHp} (${hpPercent}%)`,
         style: player.currentHp < player.maxHp * 0.3 ? 'error' : 'system',
       });
 
-      // Check if player died
       if (player.currentHp <= 0) {
-        // Handle player death and respawn
         const deathOutput = handlePlayerDeath(session);
         output.push(...deathOutput);
         return { output, updateRoom: true, updatePlayer: true };
       }
     }
   } else if (targetCreature.currentHp > 0 && targetCreature.behavior === 'passive') {
-    // Passive creature reaction
     output.push({
       text: `The ${targetCreature.name} bleats in fear but doesn't fight back.`,
       style: 'normal',
@@ -2748,6 +3003,424 @@ function handleAttack(ctx: CommandContext): CommandResult {
   }
 
   return { output, updateRoom: true, updatePlayer: true };
+}
+
+/**
+ * Handle creature death during combat: loot, XP, level-up, chain aggro.
+ * Shared by handleAttack (first hit kill) and processPlayerCombat (tick kill).
+ */
+function handleCreatureKill(
+  session: GameSession,
+  creature: Creature,
+  rng: Rng,
+  output: OutputLine[]
+): CommandResult {
+  const { world, player } = session;
+  const location = world.locations[player.locationId];
+
+  output.push({
+    text: `The ${creature.name} collapses and dies!`,
+    style: 'success',
+  });
+
+  const template = CREATURE_TEMPLATES[creature.templateId];
+  const tier = template?.tier ?? 'common';
+
+  // Generate loot
+  let lootItems: Item[] = [];
+  if (SEWER_LOOT_TABLES[creature.templateId]) {
+    lootItems = generateSewerLoot(creature.templateId, creature.level, rng);
+  } else if (WILDERNESS_LOOT_TABLES[creature.templateId]) {
+    lootItems = generateWildernessLoot(creature.templateId, creature.level, rng);
+  }
+  const loot: string[] = [];
+  for (const item of lootItems) {
+    world.items[item.id] = item;
+    loot.push(item.id);
+  }
+
+  handleCreatureDeath(world, creature, 'player', tier, loot);
+
+  // XP reward
+  const tierMultiplier = tier === 'apex' ? 3.0 : tier === 'dangerous' ? 2.0 : tier === 'common' ? 1.5 : 1.0;
+  const behaviorMultiplier = creature.behavior === 'aggressive' ? 1.2 :
+                              creature.behavior === 'territorial' ? 1.1 : 0.5;
+  const baseXp = creature.level * 10;
+  const xpReward = Math.floor(baseXp * tierMultiplier * behaviorMultiplier);
+
+  const copperReward = creature.behavior === 'passive' ? 0 : Math.floor(creature.level * (2 + rng.next() * 3));
+
+  player.xp += xpReward;
+  if (copperReward > 0) {
+    player.currency = addCopper(player.currency, copperReward);
+  }
+
+  output.push({
+    text: `You gain ${xpReward} XP${copperReward > 0 ? ` and ${formatPrice(copperReward)}` : ''}.`,
+    style: 'success',
+  });
+
+  // Level up
+  while (player.xp >= player.xpToNextLevel) {
+    player.level++;
+    player.xpToNextLevel = xpForLevel(player.level + 1);
+    const classDef = CLASSES[player.class];
+    const hpGain = classDef.hpPerLevel;
+    const mpGain = classDef.mpPerLevel;
+    player.maxHp += hpGain;
+    player.maxMp += mpGain;
+    player.currentHp = player.maxHp;
+    player.currentMp = player.maxMp;
+    player.maxCarryWeight = 50 + (player.baseStats.str * 5);
+
+    output.push({ text: '', style: 'normal' });
+    output.push({ text: '╔═══════════════════════════════════════╗', style: 'success' });
+    output.push({ text: `║       ⭐ LEVEL UP! Level ${player.level}! ⭐        ║`, style: 'success' });
+    output.push({ text: '╠═══════════════════════════════════════╣', style: 'success' });
+    output.push({ text: `║  HP: +${hpGain} (now ${player.maxHp})`.padEnd(40) + '║', style: 'normal' });
+    output.push({ text: `║  MP: +${mpGain} (now ${player.maxMp})`.padEnd(40) + '║', style: 'normal' });
+    output.push({ text: '║  Health & Mana fully restored!'.padEnd(40) + '║', style: 'normal' });
+    output.push({ text: `║  Next level: ${player.xpToNextLevel} XP`.padEnd(40) + '║', style: 'normal' });
+    output.push({ text: '╚═══════════════════════════════════════╝', style: 'success' });
+  }
+
+  output.push({
+    text: `Use "loot ${creature.name.toLowerCase()}" to check the corpse.`,
+    style: 'system',
+  });
+
+  // End combat, then check chain aggro
+  player.inCombat = false;
+  player.autoAttack = false;
+  player.targetId = undefined;
+
+  if (location) {
+    const chainOutput = checkChainAggro(world, player, location);
+    if (chainOutput) output.push(...chainOutput);
+  }
+
+  return { output, updateRoom: true, updatePlayer: true };
+}
+
+/**
+ * Check for chain aggro: after killing a creature, engage the next
+ * aggressive creature in the room. No free ambush hit — combat just continues.
+ */
+function checkChainAggro(
+  world: GameSession['world'],
+  player: Player,
+  location: Location
+): OutputLine[] | null {
+  const nextAggressor = location.creatures
+    .map((id) => world.creatures[id])
+    .find((c): c is Creature =>
+      !!c && c.behavior === 'aggressive' && c.currentHp > 0 && !c.inCombat
+    );
+
+  if (!nextAggressor) return null;
+
+  player.inCombat = true;
+  player.autoAttack = true;
+  player.targetId = nextAggressor.id;
+  nextAggressor.inCombat = true;
+  nextAggressor.targetId = player.id;
+
+  return [
+    { text: '', style: 'normal' as const },
+    { text: `The ${nextAggressor.name} attacks!`, style: 'combat' as const },
+  ];
+}
+
+/**
+ * Handle attacking an NPC - applies infamy and triggers retaliation.
+ * NPCs with combat stats will fight back; all NPCs can be killed.
+ */
+function handleNpcAttack(ctx: CommandContext, npc: NPC): CommandResult {
+  const { session } = ctx;
+  const { world, player, combatStats } = session;
+  const output: OutputLine[] = [];
+
+  // Check if NPC is already dead (via combat field)
+  if (npc.combat && npc.combat.currentHp <= 0) {
+    return {
+      output: [{ text: `${npc.name} is already dead.`, style: 'error' }],
+    };
+  }
+
+  // Warn about attacking town NPCs
+  output.push({ text: '', style: 'normal' });
+  output.push({ text: '⚠️ WARNING: Attacking town residents has consequences!', style: 'error' });
+
+  // Get town ID from location (assume locations starting with 'town_' are in a town)
+  const townId = player.locationId.startsWith('town_') ? 'easthollow' : 'unknown';
+
+  // Apply assault infamy
+  player.infamy = addAssaultBounty(player, townId, world.time.totalMinutes);
+
+  const infamyDisplay = getInfamyDisplay(player.infamy);
+  if (infamyDisplay) {
+    output.push({ text: `Infamy: ${infamyDisplay}`, style: 'error' });
+  }
+
+  // Calculate player attack
+  const weaponId = player.equipment.weapon;
+  const weapon = weaponId ? world.items[weaponId] : undefined;
+  const weaponName = weapon?.name ?? 'bare hands';
+  const weaponDamage = weapon ? getWeaponDamage(weapon) : { min: 1, max: 2 };
+  const rng = createRng(`${world.seed}-npc-combat-${Date.now()}`);
+
+  // Player attacks NPC
+  const baseDamage = weaponDamage.min + Math.floor(rng.next() * (weaponDamage.max - weaponDamage.min + 1));
+  const attackBonus = Math.floor(combatStats.attackPower / 10);
+  const critChance = combatStats.critChance / 100;
+  const isCrit = rng.next() < critChance;
+  const damage = (baseDamage + attackBonus) * (isCrit ? 2 : 1);
+
+  if (isCrit) {
+    output.push({
+      text: `CRITICAL HIT! You strike ${npc.name} with your ${weaponName} for ${damage} damage!`,
+      style: 'combat',
+    });
+  } else {
+    output.push({
+      text: `You attack ${npc.name} for ${damage} damage!`,
+      style: 'combat',
+    });
+  }
+
+  // Check if NPC has combat stats
+  if (npc.combat) {
+    npc.combat.currentHp -= damage;
+
+    // Check if NPC died
+    if (npc.combat.currentHp <= 0) {
+      return handleNpcDeath(ctx, npc, rng, output, townId);
+    }
+
+    // Show NPC HP
+    const hpPercent = Math.floor((npc.combat.currentHp / npc.combat.maxHp) * 100);
+    output.push({
+      text: `${npc.name}: ${npc.combat.currentHp}/${npc.combat.maxHp} HP (${hpPercent}%)`,
+      style: 'system',
+    });
+
+    // NPC retaliates using AI
+    const npcAction = selectNpcAction({
+      npc,
+      combat: npc.combat,
+      target: {
+        id: player.id,
+        name: player.name,
+        currentHp: player.currentHp,
+        maxHp: player.maxHp,
+        level: player.level,
+        templateId: 'player',
+        behavior: 'aggressive',
+        mobility: 'static',
+        locationId: player.locationId,
+        homeLocationId: player.locationId,
+        spawnLocationId: player.locationId,
+        inCombat: true,
+        description: 'A player',
+      },
+      allies: [],
+      rng,
+    });
+
+    npc.combat = applyNpcAction(npc.combat, npcAction, world.time.totalMinutes);
+
+    output.push({ text: npcAction.message, style: 'combat' });
+
+    // Apply NPC damage to player
+    if (npcAction.damage && npcAction.damage > 0) {
+      const defenseReduction = Math.floor(combatStats.defense / 20);
+      const actualDamage = Math.max(1, npcAction.damage - defenseReduction);
+      player.currentHp -= actualDamage;
+
+      output.push({
+        text: `Your HP: ${player.currentHp}/${player.maxHp}`,
+        style: player.currentHp < player.maxHp * 0.3 ? 'error' : 'system',
+      });
+
+      if (player.currentHp <= 0) {
+        const deathOutput = handlePlayerDeath(session);
+        output.push(...deathOutput);
+        return { output, updateRoom: true, updatePlayer: true };
+      }
+    }
+  } else {
+    // NPC without combat stats (citizen) - dies immediately
+    return handleNpcDeath(ctx, npc, rng, output, townId);
+  }
+
+  // Alert nearby guards
+  const guardAlert = alertNearbyGuards(ctx, npc, output);
+  if (guardAlert) {
+    output.push(...guardAlert);
+  }
+
+  return { output, updateRoom: true, updatePlayer: true };
+}
+
+/**
+ * Handle an NPC being killed.
+ */
+function handleNpcDeath(
+  ctx: CommandContext,
+  npc: NPC,
+  rng: Rng,
+  output: OutputLine[],
+  townId: string
+): CommandResult {
+  const { session } = ctx;
+  const { world, player } = session;
+  const location = world.locations[player.locationId];
+
+  // Apply murder infamy
+  const npcLevel = npc.combat?.level ?? 10;
+  player.infamy = addMurderBounty(player, townId, npcLevel, world.time.totalMinutes);
+
+  output.push({ text: '', style: 'normal' });
+  output.push({ text: `You have murdered ${npc.name}!`, style: 'error' });
+
+  const infamyDisplay = getInfamyDisplay(player.infamy);
+  if (infamyDisplay) {
+    output.push({ text: `Infamy: ${infamyDisplay}`, style: 'error' });
+  }
+
+  // Generate loot
+  const role = npc.role ?? 'citizen';
+  const lootItems = generateNpcLoot(role, npcLevel, rng);
+  const goldDrop = calculateNpcGoldDrop(role, npcLevel, rng);
+
+  // Add gold to currency
+  player.currency = addCopper(player.currency, goldDrop);
+  // Format copper as currency string
+  const goldCoins = Math.floor(goldDrop / 100);
+  const silverCoins = Math.floor((goldDrop % 100) / 10);
+  const copperCoins = goldDrop % 10;
+  let goldStr = '';
+  if (goldCoins > 0) goldStr += `${goldCoins}g `;
+  if (silverCoins > 0) goldStr += `${silverCoins}s `;
+  if (copperCoins > 0 || goldStr === '') goldStr += `${copperCoins}c`;
+  output.push({ text: `You find ${goldStr.trim()} on the body.`, style: 'success' });
+
+  // Create corpse
+  const corpseId = `corpse_npc_${npc.id}_${Date.now()}`;
+  const loot: string[] = [];
+  for (const item of lootItems) {
+    world.items[item.id] = item;
+    loot.push(item.id);
+  }
+
+  const corpse: Corpse = {
+    id: corpseId,
+    creatureId: npc.id,
+    templateId: npc.role ?? 'citizen',
+    name: `corpse of ${npc.name}`,
+    locationId: player.locationId,
+    createdAt: world.time.totalMinutes,
+    killedBy: 'player',
+    looted: false,
+    loot,
+    decayAt: world.time.totalMinutes + 30, // 30 game minutes to decay
+    isNpc: true,
+  };
+
+  world.corpses[corpseId] = corpse;
+
+  // Mark NPC as dead (set HP to 0)
+  if (npc.combat) {
+    npc.combat.currentHp = 0;
+  }
+
+  // Remove NPC from location (they're now a corpse)
+  if (location?.npcs) {
+    const idx = location.npcs.indexOf(npc.id);
+    if (idx !== -1) {
+      location.npcs.splice(idx, 1);
+    }
+  }
+
+  // XP reward (reduced for NPCs - they're not monsters)
+  const xpGain = Math.floor(npcLevel * 5);
+  player.xp += xpGain;
+  output.push({ text: `You gain ${xpGain} XP.`, style: 'success' });
+
+  // Check level up
+  while (player.xp >= player.xpToNextLevel) {
+    player.level++;
+    player.xpToNextLevel = xpForLevel(player.level + 1);
+    const classDef = CLASSES[player.class];
+    player.maxHp += classDef.hpPerLevel;
+    player.maxMp += classDef.mpPerLevel;
+    player.currentHp = player.maxHp;
+    player.currentMp = player.maxMp;
+    output.push({
+      text: `★ LEVEL UP! You are now level ${player.level}!`,
+      style: 'success',
+    });
+  }
+
+  if (loot.length > 0) {
+    output.push({
+      text: `Use "loot corpse" to search ${npc.name}'s body.`,
+      style: 'system',
+    });
+  }
+
+  // Alert guards
+  const guardAlert = alertNearbyGuards(ctx, npc, output);
+  if (guardAlert) {
+    output.push(...guardAlert);
+  }
+
+  return { output, updateRoom: true, updatePlayer: true };
+}
+
+/**
+ * Alert nearby guards when player attacks/kills an NPC.
+ */
+function alertNearbyGuards(
+  ctx: CommandContext,
+  _targetNpc: NPC,
+  _output: OutputLine[]
+): OutputLine[] | null {
+  const { session } = ctx;
+  const { world, player } = session;
+  const location = world.locations[player.locationId];
+
+  if (!location) return null;
+
+  // Find guards at this location
+  const guards = getCombatNpcsAtLocation(
+    world.npcs,
+    location.npcs ?? [],
+    player.locationId,
+    world.time.timeOfDay
+  ).filter(n => n.role === 'guard' && n.combat && n.combat.currentHp > 0);
+
+  if (guards.length === 0) return null;
+
+  const alertOutput: OutputLine[] = [];
+  alertOutput.push({ text: '', style: 'normal' });
+  alertOutput.push({ text: '🚨 GUARDS ALERTED!', style: 'error' });
+
+  for (const guard of guards) {
+    alertOutput.push({
+      text: `${guard.name} shouts: "Criminal! You'll pay for this!"`,
+      style: 'combat',
+    });
+  }
+
+  // Guards will attack player on their next action (handled in game loop)
+  // For now, just set up the alert message
+  alertOutput.push({
+    text: 'The guards move to attack you!',
+    style: 'combat',
+  });
+
+  return alertOutput;
 }
 
 /**
@@ -2835,7 +3508,29 @@ function handleLoot(ctx: CommandContext): CommandResult {
   }
 
   // --- loot <source>: find corpse or container by name ---
-  // Check corpses
+
+  // Handle "loot corpse" keyword - matches any corpse in the room
+  if (input === 'corpse' || input === 'body') {
+    if (corpses.length === 0) {
+      return {
+        output: [{ text: 'There are no corpses here to loot.', style: 'error' }],
+      };
+    }
+    if (corpses.length === 1) {
+      const c = corpses[0]!;
+      return showSourceContents(world, c.name, c.loot, 'corpse');
+    }
+    // Multiple corpses - list them
+    const names = corpses.map((c) => c.name).join(', ');
+    return {
+      output: [
+        { text: 'Multiple corpses here. Specify which one:', style: 'system' },
+        { text: `  ${names}`, style: 'normal' },
+      ],
+    };
+  }
+
+  // Check corpses by name
   const corpse = corpses.find((c) => c.name.toLowerCase().includes(input));
   if (corpse) {
     return showSourceContents(world, corpse.name, corpse.loot, 'corpse');
@@ -3400,6 +4095,8 @@ function handleCast(ctx: CommandContext): CommandResult {
         const rng = createRng(Date.now().toString());
         if (SEWER_LOOT_TABLES[targetCreature.templateId]) {
           lootItems = generateSewerLoot(targetCreature.templateId, targetCreature.level, rng);
+        } else if (WILDERNESS_LOOT_TABLES[targetCreature.templateId]) {
+          lootItems = generateWildernessLoot(targetCreature.templateId, targetCreature.level, rng);
         }
 
         // Add items to world
@@ -3412,8 +4109,8 @@ function handleCast(ctx: CommandContext): CommandResult {
         handleCreatureDeath(world, targetCreature, 'player', tier, loot);
         output.push({ text: `${targetCreature.name} has been slain!`, style: 'success' });
 
-        // Give XP
-        const xpGain = targetCreature.level * 15;
+        // Give XP (with level difference penalty)
+        const xpGain = calculateXpGain(player.level, targetCreature.level);
         const xpResult = grantXp(player, xpGain);
         output.push(...xpResult);
 
@@ -3496,6 +4193,8 @@ function handleCast(ctx: CommandContext): CommandResult {
         const rng = createRng(Date.now().toString());
         if (SEWER_LOOT_TABLES[targetCreature.templateId]) {
           lootItems = generateSewerLoot(targetCreature.templateId, targetCreature.level, rng);
+        } else if (WILDERNESS_LOOT_TABLES[targetCreature.templateId]) {
+          lootItems = generateWildernessLoot(targetCreature.templateId, targetCreature.level, rng);
         }
 
         // Add items to world
@@ -3508,8 +4207,8 @@ function handleCast(ctx: CommandContext): CommandResult {
         handleCreatureDeath(world, targetCreature, 'player', tier, loot);
         output.push({ text: `${targetCreature.name} has been slain!`, style: 'success' });
 
-        // Give XP
-        const xpGain = targetCreature.level * 15;
+        // Give XP (with level difference penalty)
+        const xpGain = calculateXpGain(player.level, targetCreature.level);
         const xpResult = grantXp(player, xpGain);
         output.push(...xpResult);
 
@@ -4282,7 +4981,18 @@ function handleBuy(ctx: CommandContext): CommandResult {
     shopItem.stock--;
   }
   world.items[newItem.id] = newItem;
-  player.inventory.push({ itemId: newItem.id, quantity: 1 });
+
+  if (!addToInventory(player, world, newItem.id)) {
+    // Refund if inventory full (shouldn't happen, but safety check)
+    player.currency = addCopper(player.currency, price);
+    if (shopItem.stock !== undefined) {
+      shopItem.stock++;
+    }
+    delete world.items[newItem.id];
+    return {
+      output: [{ text: 'Your inventory is full.', style: 'error' }],
+    };
+  }
 
   return {
     output: [{ text: `You buy ${newItem.name} for ${formatPrice(price)}.`, style: 'success' }],
@@ -4299,7 +5009,7 @@ function handleSell(ctx: CommandContext): CommandResult {
 
   if (!parsed.target) {
     return {
-      output: [{ text: 'Sell what? Try "sell <item>".', style: 'error' }],
+      output: [{ text: 'Sell what? Try "sell <item>" or "sell <item> all".', style: 'error' }],
     };
   }
 
@@ -4321,7 +5031,25 @@ function handleSell(ctx: CommandContext): CommandResult {
     };
   }
 
-  const targetLower = parsed.target.toLowerCase();
+  // Check for "sell <item> all" syntax
+  const args = parsed.args.join(' ').toLowerCase();
+  const sellAll = args === 'all' || args.endsWith(' all') || parsed.target.toLowerCase() === 'all';
+  let targetLower = parsed.target.toLowerCase();
+
+  // If "sell all <item>" or "sell <item> all", extract the item name
+  if (sellAll && targetLower === 'all' && parsed.args.length > 0) {
+    // "sell all <item>" - args[0] is the item
+    targetLower = parsed.args[0]?.toLowerCase() ?? '';
+  } else if (sellAll && args.endsWith(' all')) {
+    // "sell <item> all" - target is the item, remove "all" from consideration
+    // targetLower is already set correctly
+  }
+
+  if (!targetLower || targetLower === 'all') {
+    return {
+      output: [{ text: 'Sell what? Try "sell <item>" or "sell <item> all".', style: 'error' }],
+    };
+  }
 
   // Find item in inventory
   const invIndex = player.inventory.findIndex(slot => {
@@ -4344,16 +5072,51 @@ function handleSell(ctx: CommandContext): CommandResult {
     };
   }
 
-  // Calculate sell price (base 10 copper for common items)
-  const basePrice = 10;
-  const sellPrice = Math.floor(basePrice * merchant.shop.sellMultiplier);
+  // Look up base sell value from templates
+  // Priority: SHOP_ITEM_TEMPLATES.sellValue > SEWER_ITEM_TEMPLATES.baseValue > default by rarity
+  let basePrice = 5; // Default fallback
+  const shopTemplate = SHOP_ITEM_TEMPLATES[item.baseId];
+  const sewerTemplate = SEWER_ITEM_TEMPLATES[item.baseId];
+
+  if (shopTemplate?.sellValue !== undefined) {
+    basePrice = shopTemplate.sellValue;
+  } else if (sewerTemplate?.baseValue !== undefined) {
+    basePrice = sewerTemplate.baseValue;
+  } else {
+    // Estimate by rarity if no template found
+    const rarityValues: Record<string, number> = {
+      junk: 1, common: 5, uncommon: 15, rare: 50, epic: 150, legendary: 500
+    };
+    basePrice = rarityValues[item.rarity] ?? 5;
+  }
+
+  // Check if item is not sellable (keys, quest items)
+  if (basePrice === 0 && (item.tags.includes('key') || item.tags.includes('quest'))) {
+    return {
+      output: [{ text: `${merchant.name} isn't interested in the ${item.name}.`, style: 'normal' }],
+    };
+  }
+
+  const sellPrice = Math.max(1, Math.floor(basePrice * merchant.shop.sellMultiplier));
+
+  // Determine how many to sell
+  const quantityToSell = sellAll ? slot.quantity : 1;
+  const totalPrice = sellPrice * quantityToSell;
 
   // Complete sale
-  player.currency = addCopper(player.currency, sellPrice);
-  player.inventory.splice(invIndex, 1);
+  player.currency = addCopper(player.currency, totalPrice);
 
+  if (quantityToSell >= slot.quantity) {
+    // Remove entire slot
+    player.inventory.splice(invIndex, 1);
+  } else {
+    // Decrement quantity
+    slot.quantity -= quantityToSell;
+  }
+
+  const qtyText = quantityToSell > 1 ? ` (x${quantityToSell})` : '';
   return {
-    output: [{ text: `You sell ${item.name} for ${formatPrice(sellPrice)}.`, style: 'success' }],
+    output: [{ text: `You sell ${item.name}${qtyText} for ${formatPrice(totalPrice)}.`, style: 'success' }],
     updatePlayer: true,
   };
 }
@@ -4435,11 +5198,44 @@ function handleStatus(ctx: CommandContext): CommandResult {
   output.push({ text: `║  MP: ${player.currentMp}/${player.maxMp} (${mpPercent}%)`.padEnd(40) + '║', style: 'normal' });
   output.push({ text: '╠════════════════════════════════════════╣', style: 'system' });
 
-  // Base Stats
-  output.push({ text: '║  Base Stats:'.padEnd(40) + '║', style: 'system' });
-  const stats = player.baseStats;
-  output.push({ text: `║    STR: ${stats.str}  DEX: ${stats.dex}  CON: ${stats.con}`.padEnd(40) + '║', style: 'normal' });
-  output.push({ text: `║    INT: ${stats.int}  WIS: ${stats.wis}`.padEnd(40) + '║', style: 'normal' });
+  // Effective Stats (base + level bonus + gear)
+  const effectiveStats = getEffectiveStats(player, world.items);
+  const classDef = CLASSES[player.class];
+  const primaryStat = classDef.primaryStats[0] as keyof typeof player.baseStats;
+  const levelBonus = Math.max(0, player.level - 1);
+
+  output.push({ text: '║  Stats:'.padEnd(40) + '║', style: 'system' });
+  // Show stats with level bonus highlighted
+  const strDisplay = primaryStat === 'str' && levelBonus > 0
+    ? `${effectiveStats.str} (+${levelBonus})`
+    : `${effectiveStats.str}`;
+  const dexDisplay = primaryStat === 'dex' && levelBonus > 0
+    ? `${effectiveStats.dex} (+${levelBonus})`
+    : `${effectiveStats.dex}`;
+  const conDisplay = primaryStat === 'con' && levelBonus > 0
+    ? `${effectiveStats.con} (+${levelBonus})`
+    : `${effectiveStats.con}`;
+  const intDisplay = primaryStat === 'int' && levelBonus > 0
+    ? `${effectiveStats.int} (+${levelBonus})`
+    : `${effectiveStats.int}`;
+  const wisDisplay = primaryStat === 'wis' && levelBonus > 0
+    ? `${effectiveStats.wis} (+${levelBonus})`
+    : `${effectiveStats.wis}`;
+
+  output.push({ text: `║    STR: ${strDisplay}  DEX: ${dexDisplay}  CON: ${conDisplay}`.padEnd(40) + '║', style: 'normal' });
+  output.push({ text: `║    INT: ${intDisplay}  WIS: ${wisDisplay}`.padEnd(40) + '║', style: 'normal' });
+
+  // Combat Stats (derived from effective stats)
+  const combat = calculateCombatStats(effectiveStats);
+  output.push({ text: '╠════════════════════════════════════════╣', style: 'system' });
+  output.push({ text: '║  Combat Stats:'.padEnd(40) + '║', style: 'system' });
+  output.push({ text: `║    Attack: ${combat.attackPower}  Spell Pwr: ${combat.spellPower}`.padEnd(40) + '║', style: 'normal' });
+  output.push({ text: `║    Defense: ${combat.defense}%`.padEnd(40) + '║', style: 'normal' });
+  output.push({ text: `║    Fire: ${combat.fireResist}%  Ice: ${combat.iceResist}%  Light: ${combat.lightningResist}%  Psn: ${combat.poisonResist}%`.padEnd(40) + '║', style: 'normal' });
+  const hitPct = Math.floor(combat.hitChance * 100);
+  const dodgePct = Math.floor(combat.dodgeChance * 100);
+  const critPct = Math.floor(combat.critChance * 100);
+  output.push({ text: `║    Hit: ${hitPct}%  Dodge: ${dodgePct}%  Crit: ${critPct}%`.padEnd(40) + '║', style: 'normal' });
 
   // Currency
   output.push({ text: '╠════════════════════════════════════════╣', style: 'system' });
@@ -4456,6 +5252,12 @@ function handleStatus(ctx: CommandContext): CommandResult {
       const stackText = effect.stacks > 1 ? ` x${effect.stacks}` : '';
       const durationText = remaining > 0 ? ` (${remaining}m)` : ' (permanent)';
       output.push({ text: `║    • ${effect.name}${stackText}${durationText}`.padEnd(40) + '║', style: 'success' });
+
+      // Show effect description/stats
+      const effectDesc = getEffectDescription(effect.id);
+      if (effectDesc) {
+        output.push({ text: `║        ${effectDesc}`.padEnd(40) + '║', style: 'normal' });
+      }
     }
   }
 
@@ -4558,6 +5360,120 @@ function handleOpen(ctx: CommandContext): CommandResult {
 
   return {
     output: [{ text: `You don't see a "${parsed.target}" here to open.`, style: 'error' }],
+  };
+}
+
+/**
+ * Handle the "unlock" command - unlock a locked exit/door.
+ * Usage: unlock <direction> or unlock door
+ */
+function handleUnlock(ctx: CommandContext): CommandResult {
+  const { session, parsed } = ctx;
+  const { world, player } = session;
+
+  if (!parsed.target) {
+    return {
+      output: [{ text: 'Unlock what? Try "unlock <direction>" or "unlock door".', style: 'error' }],
+    };
+  }
+
+  const location = world.locations[player.locationId];
+  if (!location) {
+    return {
+      output: [{ text: 'You are nowhere.', style: 'error' }],
+    };
+  }
+
+  const targetLower = parsed.target.toLowerCase();
+
+  // Get exits from this location
+  const exitIds = world.adjacency[player.locationId] ?? [];
+  const exits = exitIds.map(id => world.exits[id]).filter(Boolean) as Exit[];
+
+  // Find a locked exit matching the target (direction or "door")
+  let targetExit: Exit | undefined;
+
+  if (targetLower === 'door' || targetLower === 'gate') {
+    // Find any locked exit
+    targetExit = exits.find(e => e.type === 'locked');
+  } else {
+    // Match by direction label
+    targetExit = exits.find(e => e.label.toLowerCase() === targetLower);
+  }
+
+  if (!targetExit) {
+    return {
+      output: [{ text: `You don't see anything to unlock in that direction.`, style: 'error' }],
+    };
+  }
+
+  // Check if it's already unlocked
+  if (targetExit.type !== 'locked') {
+    return {
+      output: [{ text: `The way ${targetExit.label} is not locked.`, style: 'normal' }],
+    };
+  }
+
+  // Check if it requires an item key
+  if (targetExit.requirement?.kind !== 'item') {
+    // Quest/puzzle locked - can't unlock with a key
+    return {
+      output: [
+        { text: `The way ${targetExit.label} is blocked by something other than a lock.`, style: 'error' },
+        { text: 'Perhaps a puzzle or mechanism controls it...', style: 'system' },
+      ],
+    };
+  }
+
+  // Check if player has the required key (check keyring first, then inventory)
+  const requiredKey = targetExit.requirement.value as string;
+
+  // Check keyring first
+  let keyItemId = player.keyring?.find(keyId => {
+    const item = world.items[keyId];
+    return keyId === requiredKey || item?.baseId === requiredKey || item?.id === requiredKey;
+  });
+
+  // Fall back to inventory if not on keyring
+  if (!keyItemId) {
+    const keySlot = player.inventory.find(slot => {
+      const item = world.items[slot.itemId];
+      return slot.itemId === requiredKey || item?.baseId === requiredKey || item?.id === requiredKey;
+    });
+    if (keySlot) {
+      keyItemId = keySlot.itemId;
+    }
+  }
+
+  if (!keyItemId) {
+    const keyItem = world.items[requiredKey];
+    const keyName = keyItem?.name ?? 'a key';
+    return {
+      output: [{ text: `The way ${targetExit.label} is locked. You need ${keyName}.`, style: 'error' }],
+    };
+  }
+
+  // Unlock the exit
+  const keyItem = world.items[keyItemId];
+  targetExit.type = 'open';
+
+  // Also unlock the reverse exit if it exists
+  const reverseExitIds = world.adjacency[targetExit.to] ?? [];
+  for (const exitId of reverseExitIds) {
+    const reverseExit = world.exits[exitId];
+    if (reverseExit && reverseExit.to === player.locationId && reverseExit.type === 'locked') {
+      reverseExit.type = 'open';
+    }
+  }
+
+  const destLocation = world.locations[targetExit.to];
+  const destName = destLocation?.name ?? 'somewhere';
+
+  return {
+    output: [
+      { text: `You use the ${keyItem?.name ?? 'key'} to unlock the way ${targetExit.label}.`, style: 'success' },
+      { text: `The passage to ${destName} is now open.`, style: 'normal' },
+    ],
   };
 }
 
@@ -4758,4 +5674,256 @@ function triggerRangerTrap(
   }
 
   return { output, creatureKilled: false };
+}
+
+// ============ PROP INTERACTION HANDLERS ============
+
+/**
+ * Handle prop interaction commands.
+ * Called when verb matches PROP_VERBS and target is found.
+ * Returns null if no prop found (caller should fall through to other handlers).
+ */
+export function handlePropInteraction(ctx: CommandContext): CommandResult | null {
+  const { session, parsed } = ctx;
+  const { world, player } = session;
+  const { command: verb, target, item } = parsed;
+
+  if (!target) {
+    return null; // No target, let other handlers try
+  }
+
+  const locationId = player.locationId;
+
+  // Find the prop in this location
+  const prop = findPropByName(locationId, target);
+  if (!prop) {
+    return null; // Not a prop - let other handlers try
+  }
+
+  // Check if this verb works with this prop
+  if (!prop.verbs.includes(verb)) {
+    return {
+      output: [{ text: `You can't ${verb} the ${prop.name}.`, style: 'error' }],
+    };
+  }
+
+  // Check if prop is hidden and trying wrong verb
+  if (prop.hidden && prop.discoverVerb && verb !== prop.discoverVerb) {
+    return null; // Don't reveal hidden props
+  }
+
+  // If an item is specified, handle item+prop interaction
+  if (item) {
+    return handleItemPropInteraction(ctx, prop, verb, item);
+  }
+
+  // Handle default interaction
+  const interaction = prop.defaultInteraction;
+  if (!interaction) {
+    const examineText = pickRandomText(prop.examineText || [`You see ${prop.name}.`]);
+    return {
+      output: [{ text: examineText, style: 'normal' }],
+    };
+  }
+
+  // Check if item is required
+  if (interaction.requiresItem) {
+    const hasItem = player.inventory.some(slot => {
+      const invItem = world.items[slot.itemId];
+      return invItem?.baseId === interaction.requiresItem;
+    });
+    if (!hasItem) {
+      return {
+        output: [{ text: `You need a ${interaction.requiresItem} to do that.`, style: 'error' }],
+      };
+    }
+  }
+
+  // Check cooldown
+  const gameTime = world.time.totalMinutes;
+  if (interaction.cooldown && isPropOnCooldown(player, prop.id, gameTime)) {
+    const remaining = getRemainingCooldown(player, prop.id, gameTime);
+    return {
+      output: [{ text: formatCooldownMessage(remaining), style: 'system' }],
+    };
+  }
+
+  const output: OutputLine[] = [];
+
+  // Execute interaction - show text
+  const text = pickRandomText(interaction.text);
+  output.push({ text, style: 'normal' });
+
+  // Apply rewards if any
+  if (interaction.rewards) {
+    const rewardMessages = applyPropRewards(player, interaction.rewards, world);
+    for (const msg of rewardMessages) {
+      output.push({ text: msg, style: 'success' });
+    }
+
+    // If rewards include consuming an item, remove it
+    if (interaction.rewards.consumeItem) {
+      const slotIndex = player.inventory.findIndex(slot => {
+        const invItem = world.items[slot.itemId];
+        return invItem?.baseId === interaction.rewards!.consumeItem;
+      });
+      if (slotIndex !== -1) {
+        const slot = player.inventory[slotIndex]!;
+        if (slot.quantity > 1) {
+          slot.quantity--;
+        } else {
+          player.inventory.splice(slotIndex, 1);
+        }
+      }
+    }
+  }
+
+  // Set cooldown
+  if (interaction.cooldown) {
+    setPropCooldown(player, prop.id, gameTime, interaction.cooldown);
+  }
+
+  return { output, updatePlayer: true };
+}
+
+/**
+ * Handle item + prop interactions (e.g., "toss coin well", "fill waterskin fountain")
+ */
+function handleItemPropInteraction(
+  ctx: CommandContext,
+  prop: PropDefinition,
+  verb: string,
+  itemName: string
+): CommandResult {
+  const { session } = ctx;
+  const { world, player } = session;
+  const output: OutputLine[] = [];
+
+  // Find item in player inventory
+  const itemNameLower = itemName.toLowerCase();
+  const invSlotIndex = player.inventory.findIndex(slot => {
+    const invItem = world.items[slot.itemId];
+    return invItem?.name.toLowerCase().includes(itemNameLower);
+  });
+
+  if (invSlotIndex === -1) {
+    return {
+      output: [{ text: `You don't have a ${itemName}.`, style: 'error' }],
+    };
+  }
+
+  const invSlot = player.inventory[invSlotIndex]!;
+  const invItem = world.items[invSlot.itemId]!;
+  const gameTime = world.time.totalMinutes;
+
+  // Check for specific item interactions on this prop
+  if (prop.itemInteractions && prop.itemInteractions[invItem.baseId]) {
+    const interaction = prop.itemInteractions[invItem.baseId]!;
+
+    // Check cooldown
+    const cooldownKey = `${prop.id}_${invItem.baseId}`;
+    if (interaction.cooldown && isPropOnCooldown(player, cooldownKey, gameTime)) {
+      const remaining = getRemainingCooldown(player, cooldownKey, gameTime);
+      return {
+        output: [{ text: formatCooldownMessage(remaining), style: 'system' }],
+      };
+    }
+
+    // Show interaction text
+    const text = pickRandomText(interaction.text);
+    output.push({ text, style: 'normal' });
+
+    // Apply rewards
+    if (interaction.rewards) {
+      // Check if this reward consumes the item
+      if (interaction.rewards.consumeItem === invItem.baseId) {
+        if (invSlot.quantity > 1) {
+          invSlot.quantity--;
+        } else {
+          player.inventory.splice(invSlotIndex, 1);
+        }
+        output.push({ text: `You use your ${invItem.name}.`, style: 'system' });
+      }
+
+      const rewardMessages = applyPropRewards(player, interaction.rewards, world);
+      for (const msg of rewardMessages) {
+        output.push({ text: msg, style: 'success' });
+      }
+    }
+
+    // Set cooldown
+    if (interaction.cooldown) {
+      setPropCooldown(player, cooldownKey, gameTime, interaction.cooldown);
+    }
+
+    return { output, updatePlayer: true };
+  }
+
+  // Check for tag-based interactions
+  if (prop.tags && invItem.tags) {
+    for (const propTag of prop.tags) {
+      const tagInteraction = TAG_INTERACTIONS[propTag];
+      if (!tagInteraction) continue;
+
+      // Check if item has any of the required tags
+      const hasMatchingTag = tagInteraction.itemTags.some(t => invItem.tags.includes(t));
+      if (!hasMatchingTag) continue;
+
+      // Check if verb matches (or use default 'use')
+      const requiredVerb = tagInteraction.verb || 'use';
+      if (verb !== requiredVerb) continue;
+
+      // Check cooldown
+      const cooldownKey = `${prop.id}_tag_${propTag}`;
+      if (isPropOnCooldown(player, cooldownKey, gameTime)) {
+        const remaining = getRemainingCooldown(player, cooldownKey, gameTime);
+        return {
+          output: [{ text: formatCooldownMessage(remaining), style: 'system' }],
+        };
+      }
+
+      // Apply effect text with placeholders
+      const text = tagInteraction.text
+        .replace(/\$\{item\}/g, invItem.name)
+        .replace(/\$\{prop\}/g, prop.name);
+      output.push({ text, style: 'normal' });
+
+      // Consume item if required
+      if (tagInteraction.consumeItem) {
+        if (invSlot.quantity > 1) {
+          invSlot.quantity--;
+        } else {
+          player.inventory.splice(invSlotIndex, 1);
+        }
+      }
+
+      // Handle result item creation
+      if (tagInteraction.resultItem) {
+        const resultBaseId = tagInteraction.resultItem.replace(/\$\{item\.baseId\}/g, invItem.baseId);
+        // For now, just message about the result - item creation would need more infrastructure
+        output.push({ text: `You now have a ${resultBaseId}.`, style: 'success' });
+      }
+
+      // Handle effects
+      if (tagInteraction.effect === 'light_source') {
+        // Apply light effect similar to torch
+        player.lightSource = {
+          itemBaseId: invItem.baseId,
+          name: invItem.name,
+          expiresAt: gameTime + 30, // 30 game minutes
+        };
+        output.push({ text: `The ${invItem.name} provides light.`, style: 'system' });
+      }
+
+      // Set cooldown (default 5 minutes for tag interactions)
+      setPropCooldown(player, cooldownKey, gameTime, 5);
+
+      return { output, updatePlayer: true };
+    }
+  }
+
+  // No matching interaction
+  return {
+    output: [{ text: `You can't ${verb} your ${invItem.name} with the ${prop.name}.`, style: 'error' }],
+  };
 }
