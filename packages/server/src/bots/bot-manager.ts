@@ -5,6 +5,10 @@
 import type { BotSpawnConfig, ClassName } from '@solo-mud/shared';
 import type { BotSession } from './bot-session';
 import { createBotPlayer, createBotSession } from './bot-factory';
+import { BotExecutor } from './bot-executor';
+
+/** Command handler type for executing bot commands */
+export type CommandHandler = (session: BotSession, command: string) => Promise<void>;
 
 /** Random bot names for generic bots */
 const BOT_NAMES = [
@@ -29,9 +33,17 @@ export class BotManager {
   private config: BotSpawnConfig;
   private bots: Map<string, BotSession> = new Map();
   private nextBotId = 1;
+  private executor: BotExecutor;
+  private commandHandler?: CommandHandler;
 
   constructor(config: BotSpawnConfig) {
     this.config = config;
+    this.executor = new BotExecutor();
+  }
+
+  /** Set command handler for executing bot commands */
+  setCommandHandler(handler: CommandHandler): void {
+    this.commandHandler = handler;
   }
 
   /** Get current configuration */
@@ -90,9 +102,37 @@ export class BotManager {
     }
   }
 
-  /** Run AI tick for all bots (placeholder for now) */
+  /** Run AI tick for all bots */
   async tick(_gameTime: number): Promise<void> {
-    // TODO: Implement GOAP planning and action execution
-    // For now, this is a placeholder
+    for (const session of this.bots.values()) {
+      // Skip if in combat (combat tick handles this)
+      if (session.player.inCombat) {
+        continue;
+      }
+
+      // Check if bot should tick
+      if (!this.executor.shouldTick(session)) {
+        continue;
+      }
+
+      // Get next command
+      const command = this.executor.getNextCommand(session);
+      if (!command) {
+        continue;
+      }
+
+      // Execute command if handler is set
+      if (this.commandHandler) {
+        try {
+          await this.commandHandler(session, command);
+        } catch (error) {
+          // Log but don't crash
+          console.error(`Bot ${session.id} command error:`, error);
+        }
+      }
+
+      // Mark as ticked
+      this.executor.markTicked(session);
+    }
   }
 }

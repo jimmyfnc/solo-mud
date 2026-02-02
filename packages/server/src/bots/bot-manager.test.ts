@@ -92,4 +92,66 @@ describe('BotManager', () => {
       expect(removed).toBe(false);
     });
   });
+
+  describe('AI tick', () => {
+    it('should use executor for bot commands', async () => {
+      manager.maintainPopulation();
+
+      // Set last tick to past so bots will tick
+      for (const session of manager.getAllBotSessions()) {
+        session.player.lastAiTick = 0;
+      }
+
+      // Mock command handler
+      const commands: string[] = [];
+      manager.setCommandHandler(async (_session, command) => {
+        commands.push(command);
+      });
+
+      await manager.tick(0);
+
+      // Should have generated some commands
+      expect(commands.length).toBeGreaterThan(0);
+    });
+
+    it('should skip bots in combat', async () => {
+      manager.maintainPopulation();
+      const sessions = manager.getAllBotSessions();
+
+      // Put all bots in combat
+      for (const session of sessions) {
+        session.player.inCombat = true;
+        session.player.lastAiTick = 0;
+      }
+
+      const commands: string[] = [];
+      manager.setCommandHandler(async (_session, command) => {
+        commands.push(command);
+      });
+
+      await manager.tick(0);
+
+      // No commands - combat bots are skipped
+      expect(commands.length).toBe(0);
+    });
+
+    it('should skip bots that ticked recently', async () => {
+      manager.maintainPopulation();
+
+      // Set last tick to now
+      for (const session of manager.getAllBotSessions()) {
+        session.player.lastAiTick = Date.now();
+      }
+
+      const commands: string[] = [];
+      manager.setCommandHandler(async (_session, command) => {
+        commands.push(command);
+      });
+
+      await manager.tick(0);
+
+      // No commands - bots ticked recently
+      expect(commands.length).toBe(0);
+    });
+  });
 });
