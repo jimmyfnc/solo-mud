@@ -55,7 +55,8 @@ export function restoreSession(
     talentPointsAvailable: 0,
     equipment: character.equipment,
     inventory: character.inventory,
-    inventorySlots: 20,
+    inventorySlots: 40,
+    keyring: character.keyring ?? [],
     carryWeight: calculateCarryWeight(character.inventory),
     maxCarryWeight: 50 + (character.baseStats.str * 5),
     itemSlots: [null, null, null, null],
@@ -81,6 +82,7 @@ export function restoreSession(
       known: restoreKnownSpells(character.knownSpells, character.class),
       slots: [null, null, null, null],
     },
+    propCooldowns: {}, // Will need to be restored from database when prop persistence is added
   };
 
   // Restore game time
