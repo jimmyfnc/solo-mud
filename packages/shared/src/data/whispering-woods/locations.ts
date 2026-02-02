@@ -2,6 +2,7 @@
  * Whispering Woods location definitions.
  */
 import type { Location, Exit } from '../../types';
+import { TOWN_EAST_ROAD } from '../easthollow';
 
 // ============ Location IDs ============
 // Transition Zone
@@ -722,4 +723,713 @@ export const WOODS_LOCATIONS: Record<string, Location> = {
     npcs: [],
   },
 };
-export const WOODS_EXITS: Record<string, Exit> = {};
+export const WOODS_EXITS: Record<string, Exit> = {
+  // ============ Transition Zone Chain ============
+  // town_east_road -> WOODS_FARMHOUSE
+  exit_eastroad_farmhouse: {
+    id: 'exit_eastroad_farmhouse',
+    from: TOWN_EAST_ROAD,
+    to: WOODS_FARMHOUSE,
+    label: 'east',
+    type: 'open',
+  },
+  exit_farmhouse_eastroad: {
+    id: 'exit_farmhouse_eastroad',
+    from: WOODS_FARMHOUSE,
+    to: TOWN_EAST_ROAD,
+    label: 'west',
+    type: 'open',
+  },
+  // WOODS_FARMHOUSE -> WOODS_FIELDS
+  exit_farmhouse_fields: {
+    id: 'exit_farmhouse_fields',
+    from: WOODS_FARMHOUSE,
+    to: WOODS_FIELDS,
+    label: 'east',
+    type: 'open',
+  },
+  exit_fields_farmhouse: {
+    id: 'exit_fields_farmhouse',
+    from: WOODS_FIELDS,
+    to: WOODS_FARMHOUSE,
+    label: 'west',
+    type: 'open',
+  },
+  // WOODS_FIELDS -> WOODS_EAST_GATE
+  exit_fields_eastgate: {
+    id: 'exit_fields_eastgate',
+    from: WOODS_FIELDS,
+    to: WOODS_EAST_GATE,
+    label: 'east',
+    type: 'open',
+  },
+  exit_eastgate_fields: {
+    id: 'exit_eastgate_fields',
+    from: WOODS_EAST_GATE,
+    to: WOODS_FIELDS,
+    label: 'west',
+    type: 'open',
+  },
+  // WOODS_EAST_GATE -> WOODS_OLD_ROAD_1
+  exit_eastgate_oldroad1: {
+    id: 'exit_eastgate_oldroad1',
+    from: WOODS_EAST_GATE,
+    to: WOODS_OLD_ROAD_1,
+    label: 'east',
+    type: 'open',
+  },
+  exit_oldroad1_eastgate: {
+    id: 'exit_oldroad1_eastgate',
+    from: WOODS_OLD_ROAD_1,
+    to: WOODS_EAST_GATE,
+    label: 'west',
+    type: 'open',
+  },
+  // WOODS_OLD_ROAD_1 -> WOODS_OLD_ROAD_2
+  exit_oldroad1_oldroad2: {
+    id: 'exit_oldroad1_oldroad2',
+    from: WOODS_OLD_ROAD_1,
+    to: WOODS_OLD_ROAD_2,
+    label: 'east',
+    type: 'open',
+  },
+  exit_oldroad2_oldroad1: {
+    id: 'exit_oldroad2_oldroad1',
+    from: WOODS_OLD_ROAD_2,
+    to: WOODS_OLD_ROAD_1,
+    label: 'west',
+    type: 'open',
+  },
+  // WOODS_OLD_ROAD_2 -> WOODS_OLD_ROAD_3
+  exit_oldroad2_oldroad3: {
+    id: 'exit_oldroad2_oldroad3',
+    from: WOODS_OLD_ROAD_2,
+    to: WOODS_OLD_ROAD_3,
+    label: 'east',
+    type: 'open',
+  },
+  exit_oldroad3_oldroad2: {
+    id: 'exit_oldroad3_oldroad2',
+    from: WOODS_OLD_ROAD_3,
+    to: WOODS_OLD_ROAD_2,
+    label: 'west',
+    type: 'open',
+  },
+  // WOODS_OLD_ROAD_3 -> WOODS_OLD_ROAD_4
+  exit_oldroad3_oldroad4: {
+    id: 'exit_oldroad3_oldroad4',
+    from: WOODS_OLD_ROAD_3,
+    to: WOODS_OLD_ROAD_4,
+    label: 'east',
+    type: 'open',
+  },
+  exit_oldroad4_oldroad3: {
+    id: 'exit_oldroad4_oldroad3',
+    from: WOODS_OLD_ROAD_4,
+    to: WOODS_OLD_ROAD_3,
+    label: 'west',
+    type: 'open',
+  },
+  // WOODS_OLD_ROAD_4 -> WOODS_OLD_ROAD_5
+  exit_oldroad4_oldroad5: {
+    id: 'exit_oldroad4_oldroad5',
+    from: WOODS_OLD_ROAD_4,
+    to: WOODS_OLD_ROAD_5,
+    label: 'east',
+    type: 'open',
+  },
+  exit_oldroad5_oldroad4: {
+    id: 'exit_oldroad5_oldroad4',
+    from: WOODS_OLD_ROAD_5,
+    to: WOODS_OLD_ROAD_4,
+    label: 'west',
+    type: 'open',
+  },
+  // WOODS_OLD_ROAD_5 -> WOODS_CLEARING
+  exit_oldroad5_clearing: {
+    id: 'exit_oldroad5_clearing',
+    from: WOODS_OLD_ROAD_5,
+    to: WOODS_CLEARING,
+    label: 'east',
+    type: 'open',
+  },
+  exit_clearing_oldroad5: {
+    id: 'exit_clearing_oldroad5',
+    from: WOODS_CLEARING,
+    to: WOODS_OLD_ROAD_5,
+    label: 'west',
+    type: 'open',
+  },
+
+  // ============ Hub to Sub-Zones ============
+  // WOODS_CLEARING -> WOODS_PIXIE_ENTRANCE (north/south)
+  exit_clearing_pixie_entrance: {
+    id: 'exit_clearing_pixie_entrance',
+    from: WOODS_CLEARING,
+    to: WOODS_PIXIE_ENTRANCE,
+    label: 'north',
+    type: 'open',
+  },
+  exit_pixie_entrance_clearing: {
+    id: 'exit_pixie_entrance_clearing',
+    from: WOODS_PIXIE_ENTRANCE,
+    to: WOODS_CLEARING,
+    label: 'south',
+    type: 'open',
+  },
+  // WOODS_CLEARING -> WOODS_FEN_ENTRANCE (northwest/southeast)
+  exit_clearing_fen_entrance: {
+    id: 'exit_clearing_fen_entrance',
+    from: WOODS_CLEARING,
+    to: WOODS_FEN_ENTRANCE,
+    label: 'northwest',
+    type: 'open',
+  },
+  exit_fen_entrance_clearing: {
+    id: 'exit_fen_entrance_clearing',
+    from: WOODS_FEN_ENTRANCE,
+    to: WOODS_CLEARING,
+    label: 'southeast',
+    type: 'open',
+  },
+  // WOODS_CLEARING -> WOODS_STONES_ENTRANCE (east/west)
+  exit_clearing_stones_entrance: {
+    id: 'exit_clearing_stones_entrance',
+    from: WOODS_CLEARING,
+    to: WOODS_STONES_ENTRANCE,
+    label: 'east',
+    type: 'open',
+  },
+  exit_stones_entrance_clearing: {
+    id: 'exit_stones_entrance_clearing',
+    from: WOODS_STONES_ENTRANCE,
+    to: WOODS_CLEARING,
+    label: 'west',
+    type: 'open',
+  },
+  // WOODS_CLEARING -> WOODS_SPIDER_ENTRANCE (southeast/northwest)
+  exit_clearing_spider_entrance: {
+    id: 'exit_clearing_spider_entrance',
+    from: WOODS_CLEARING,
+    to: WOODS_SPIDER_ENTRANCE,
+    label: 'southeast',
+    type: 'open',
+  },
+  exit_spider_entrance_clearing: {
+    id: 'exit_spider_entrance_clearing',
+    from: WOODS_SPIDER_ENTRANCE,
+    to: WOODS_CLEARING,
+    label: 'northwest',
+    type: 'open',
+  },
+  // WOODS_CLEARING -> WOODS_THORN_ENTRANCE (south/north)
+  exit_clearing_thorn_entrance: {
+    id: 'exit_clearing_thorn_entrance',
+    from: WOODS_CLEARING,
+    to: WOODS_THORN_ENTRANCE,
+    label: 'south',
+    type: 'open',
+  },
+  exit_thorn_entrance_clearing: {
+    id: 'exit_thorn_entrance_clearing',
+    from: WOODS_THORN_ENTRANCE,
+    to: WOODS_CLEARING,
+    label: 'north',
+    type: 'open',
+  },
+
+  // ============ Pixie Dell Internal ============
+  // PIXIE_ENTRANCE -> PIXIE_GLADE (north/south)
+  exit_pixie_entrance_glade: {
+    id: 'exit_pixie_entrance_glade',
+    from: WOODS_PIXIE_ENTRANCE,
+    to: WOODS_PIXIE_GLADE,
+    label: 'north',
+    type: 'open',
+  },
+  exit_pixie_glade_entrance: {
+    id: 'exit_pixie_glade_entrance',
+    from: WOODS_PIXIE_GLADE,
+    to: WOODS_PIXIE_ENTRANCE,
+    label: 'south',
+    type: 'open',
+  },
+  // PIXIE_GLADE -> PIXIE_MAZE_1 (north/south)
+  exit_pixie_glade_maze1: {
+    id: 'exit_pixie_glade_maze1',
+    from: WOODS_PIXIE_GLADE,
+    to: WOODS_PIXIE_MAZE_1,
+    label: 'north',
+    type: 'open',
+  },
+  exit_pixie_maze1_glade: {
+    id: 'exit_pixie_maze1_glade',
+    from: WOODS_PIXIE_MAZE_1,
+    to: WOODS_PIXIE_GLADE,
+    label: 'south',
+    type: 'open',
+  },
+  // PIXIE_MAZE_1 -> PIXIE_MAZE_2 (east/west)
+  exit_pixie_maze1_maze2: {
+    id: 'exit_pixie_maze1_maze2',
+    from: WOODS_PIXIE_MAZE_1,
+    to: WOODS_PIXIE_MAZE_2,
+    label: 'east',
+    type: 'open',
+  },
+  exit_pixie_maze2_maze1: {
+    id: 'exit_pixie_maze2_maze1',
+    from: WOODS_PIXIE_MAZE_2,
+    to: WOODS_PIXIE_MAZE_1,
+    label: 'west',
+    type: 'open',
+  },
+  // PIXIE_MAZE_2 -> PIXIE_MAZE_3 (north/south)
+  exit_pixie_maze2_maze3: {
+    id: 'exit_pixie_maze2_maze3',
+    from: WOODS_PIXIE_MAZE_2,
+    to: WOODS_PIXIE_MAZE_3,
+    label: 'north',
+    type: 'open',
+  },
+  exit_pixie_maze3_maze2: {
+    id: 'exit_pixie_maze3_maze2',
+    from: WOODS_PIXIE_MAZE_3,
+    to: WOODS_PIXIE_MAZE_2,
+    label: 'south',
+    type: 'open',
+  },
+  // PIXIE_MAZE_3 -> PIXIE_TRAPPED (east/west)
+  exit_pixie_maze3_trapped: {
+    id: 'exit_pixie_maze3_trapped',
+    from: WOODS_PIXIE_MAZE_3,
+    to: WOODS_PIXIE_TRAPPED,
+    label: 'east',
+    type: 'open',
+  },
+  exit_pixie_trapped_maze3: {
+    id: 'exit_pixie_trapped_maze3',
+    from: WOODS_PIXIE_TRAPPED,
+    to: WOODS_PIXIE_MAZE_3,
+    label: 'west',
+    type: 'open',
+  },
+  // PIXIE_TRAPPED -> PIXIE_COURT (north/south)
+  exit_pixie_trapped_court: {
+    id: 'exit_pixie_trapped_court',
+    from: WOODS_PIXIE_TRAPPED,
+    to: WOODS_PIXIE_COURT,
+    label: 'north',
+    type: 'open',
+  },
+  exit_pixie_court_trapped: {
+    id: 'exit_pixie_court_trapped',
+    from: WOODS_PIXIE_COURT,
+    to: WOODS_PIXIE_TRAPPED,
+    label: 'south',
+    type: 'open',
+  },
+
+  // ============ Murky Fen Internal ============
+  // FEN_ENTRANCE -> FEN_BOG_PATH (north/south)
+  exit_fen_entrance_bog: {
+    id: 'exit_fen_entrance_bog',
+    from: WOODS_FEN_ENTRANCE,
+    to: WOODS_FEN_BOG_PATH,
+    label: 'north',
+    type: 'open',
+  },
+  exit_fen_bog_entrance: {
+    id: 'exit_fen_bog_entrance',
+    from: WOODS_FEN_BOG_PATH,
+    to: WOODS_FEN_ENTRANCE,
+    label: 'south',
+    type: 'open',
+  },
+  // FEN_BOG_PATH -> FEN_RUINS_1 (north/south)
+  exit_fen_bog_ruins1: {
+    id: 'exit_fen_bog_ruins1',
+    from: WOODS_FEN_BOG_PATH,
+    to: WOODS_FEN_RUINS_1,
+    label: 'north',
+    type: 'open',
+  },
+  exit_fen_ruins1_bog: {
+    id: 'exit_fen_ruins1_bog',
+    from: WOODS_FEN_RUINS_1,
+    to: WOODS_FEN_BOG_PATH,
+    label: 'south',
+    type: 'open',
+  },
+  // FEN_RUINS_1 -> FEN_RUINS_2 (east/west)
+  exit_fen_ruins1_ruins2: {
+    id: 'exit_fen_ruins1_ruins2',
+    from: WOODS_FEN_RUINS_1,
+    to: WOODS_FEN_RUINS_2,
+    label: 'east',
+    type: 'open',
+  },
+  exit_fen_ruins2_ruins1: {
+    id: 'exit_fen_ruins2_ruins1',
+    from: WOODS_FEN_RUINS_2,
+    to: WOODS_FEN_RUINS_1,
+    label: 'west',
+    type: 'open',
+  },
+  // FEN_RUINS_2 -> FEN_CAMP (north/south)
+  exit_fen_ruins2_camp: {
+    id: 'exit_fen_ruins2_camp',
+    from: WOODS_FEN_RUINS_2,
+    to: WOODS_FEN_CAMP,
+    label: 'north',
+    type: 'open',
+  },
+  exit_fen_camp_ruins2: {
+    id: 'exit_fen_camp_ruins2',
+    from: WOODS_FEN_CAMP,
+    to: WOODS_FEN_RUINS_2,
+    label: 'south',
+    type: 'open',
+  },
+  // FEN_CAMP -> FEN_MOUND (north/south)
+  exit_fen_camp_mound: {
+    id: 'exit_fen_camp_mound',
+    from: WOODS_FEN_CAMP,
+    to: WOODS_FEN_MOUND,
+    label: 'north',
+    type: 'open',
+  },
+  exit_fen_mound_camp: {
+    id: 'exit_fen_mound_camp',
+    from: WOODS_FEN_MOUND,
+    to: WOODS_FEN_CAMP,
+    label: 'south',
+    type: 'open',
+  },
+
+  // ============ Standing Stones Internal ============
+  // STONES_ENTRANCE -> STONES_OLD_PATH (east/west)
+  exit_stones_entrance_oldpath: {
+    id: 'exit_stones_entrance_oldpath',
+    from: WOODS_STONES_ENTRANCE,
+    to: WOODS_STONES_OLD_PATH,
+    label: 'east',
+    type: 'open',
+  },
+  exit_stones_oldpath_entrance: {
+    id: 'exit_stones_oldpath_entrance',
+    from: WOODS_STONES_OLD_PATH,
+    to: WOODS_STONES_ENTRANCE,
+    label: 'west',
+    type: 'open',
+  },
+  // STONES_OLD_PATH -> STONES_CIRCLE (east/west)
+  exit_stones_oldpath_circle: {
+    id: 'exit_stones_oldpath_circle',
+    from: WOODS_STONES_OLD_PATH,
+    to: WOODS_STONES_CIRCLE,
+    label: 'east',
+    type: 'open',
+  },
+  exit_stones_circle_oldpath: {
+    id: 'exit_stones_circle_oldpath',
+    from: WOODS_STONES_CIRCLE,
+    to: WOODS_STONES_OLD_PATH,
+    label: 'west',
+    type: 'open',
+  },
+  // STONES_CIRCLE -> STONES_RITUAL_1 (north/south)
+  exit_stones_circle_ritual1: {
+    id: 'exit_stones_circle_ritual1',
+    from: WOODS_STONES_CIRCLE,
+    to: WOODS_STONES_RITUAL_1,
+    label: 'north',
+    type: 'open',
+  },
+  exit_stones_ritual1_circle: {
+    id: 'exit_stones_ritual1_circle',
+    from: WOODS_STONES_RITUAL_1,
+    to: WOODS_STONES_CIRCLE,
+    label: 'south',
+    type: 'open',
+  },
+  // STONES_RITUAL_1 -> STONES_RITUAL_2 (east/west)
+  exit_stones_ritual1_ritual2: {
+    id: 'exit_stones_ritual1_ritual2',
+    from: WOODS_STONES_RITUAL_1,
+    to: WOODS_STONES_RITUAL_2,
+    label: 'east',
+    type: 'open',
+  },
+  exit_stones_ritual2_ritual1: {
+    id: 'exit_stones_ritual2_ritual1',
+    from: WOODS_STONES_RITUAL_2,
+    to: WOODS_STONES_RITUAL_1,
+    label: 'west',
+    type: 'open',
+  },
+  // STONES_RITUAL_2 -> STONES_ALTAR (north/south)
+  exit_stones_ritual2_altar: {
+    id: 'exit_stones_ritual2_altar',
+    from: WOODS_STONES_RITUAL_2,
+    to: WOODS_STONES_ALTAR,
+    label: 'north',
+    type: 'open',
+  },
+  exit_stones_altar_ritual2: {
+    id: 'exit_stones_altar_ritual2',
+    from: WOODS_STONES_ALTAR,
+    to: WOODS_STONES_RITUAL_2,
+    label: 'south',
+    type: 'open',
+  },
+
+  // ============ Spider Hollow Internal ============
+  // SPIDER_ENTRANCE -> SPIDER_TRAIL (south/north)
+  exit_spider_entrance_trail: {
+    id: 'exit_spider_entrance_trail',
+    from: WOODS_SPIDER_ENTRANCE,
+    to: WOODS_SPIDER_TRAIL,
+    label: 'south',
+    type: 'open',
+  },
+  exit_spider_trail_entrance: {
+    id: 'exit_spider_trail_entrance',
+    from: WOODS_SPIDER_TRAIL,
+    to: WOODS_SPIDER_ENTRANCE,
+    label: 'north',
+    type: 'open',
+  },
+  // SPIDER_TRAIL -> SPIDER_COCOON (south/north)
+  exit_spider_trail_cocoon: {
+    id: 'exit_spider_trail_cocoon',
+    from: WOODS_SPIDER_TRAIL,
+    to: WOODS_SPIDER_COCOON,
+    label: 'south',
+    type: 'open',
+  },
+  exit_spider_cocoon_trail: {
+    id: 'exit_spider_cocoon_trail',
+    from: WOODS_SPIDER_COCOON,
+    to: WOODS_SPIDER_TRAIL,
+    label: 'north',
+    type: 'open',
+  },
+  // SPIDER_COCOON -> SPIDER_NEST_1 (south/north)
+  exit_spider_cocoon_nest1: {
+    id: 'exit_spider_cocoon_nest1',
+    from: WOODS_SPIDER_COCOON,
+    to: WOODS_SPIDER_NEST_1,
+    label: 'south',
+    type: 'open',
+  },
+  exit_spider_nest1_cocoon: {
+    id: 'exit_spider_nest1_cocoon',
+    from: WOODS_SPIDER_NEST_1,
+    to: WOODS_SPIDER_COCOON,
+    label: 'north',
+    type: 'open',
+  },
+  // SPIDER_NEST_1 -> SPIDER_NEST_2 (east/west)
+  exit_spider_nest1_nest2: {
+    id: 'exit_spider_nest1_nest2',
+    from: WOODS_SPIDER_NEST_1,
+    to: WOODS_SPIDER_NEST_2,
+    label: 'east',
+    type: 'open',
+  },
+  exit_spider_nest2_nest1: {
+    id: 'exit_spider_nest2_nest1',
+    from: WOODS_SPIDER_NEST_2,
+    to: WOODS_SPIDER_NEST_1,
+    label: 'west',
+    type: 'open',
+  },
+  // SPIDER_NEST_2 -> SPIDER_NEST_3 (south/north)
+  exit_spider_nest2_nest3: {
+    id: 'exit_spider_nest2_nest3',
+    from: WOODS_SPIDER_NEST_2,
+    to: WOODS_SPIDER_NEST_3,
+    label: 'south',
+    type: 'open',
+  },
+  exit_spider_nest3_nest2: {
+    id: 'exit_spider_nest3_nest2',
+    from: WOODS_SPIDER_NEST_3,
+    to: WOODS_SPIDER_NEST_2,
+    label: 'north',
+    type: 'open',
+  },
+  // SPIDER_NEST_3 -> SPIDER_LAIR (south/north)
+  exit_spider_nest3_lair: {
+    id: 'exit_spider_nest3_lair',
+    from: WOODS_SPIDER_NEST_3,
+    to: WOODS_SPIDER_LAIR,
+    label: 'south',
+    type: 'open',
+  },
+  exit_spider_lair_nest3: {
+    id: 'exit_spider_lair_nest3',
+    from: WOODS_SPIDER_LAIR,
+    to: WOODS_SPIDER_NEST_3,
+    label: 'north',
+    type: 'open',
+  },
+
+  // ============ Thornwood Maze Internal ============
+  // THORN_ENTRANCE -> THORN_PATH (south/north)
+  exit_thorn_entrance_path: {
+    id: 'exit_thorn_entrance_path',
+    from: WOODS_THORN_ENTRANCE,
+    to: WOODS_THORN_PATH,
+    label: 'south',
+    type: 'open',
+  },
+  exit_thorn_path_entrance: {
+    id: 'exit_thorn_path_entrance',
+    from: WOODS_THORN_PATH,
+    to: WOODS_THORN_ENTRANCE,
+    label: 'north',
+    type: 'open',
+  },
+  // THORN_PATH -> THORN_DEAD_1 (east/west)
+  exit_thorn_path_dead1: {
+    id: 'exit_thorn_path_dead1',
+    from: WOODS_THORN_PATH,
+    to: WOODS_THORN_DEAD_1,
+    label: 'east',
+    type: 'open',
+  },
+  exit_thorn_dead1_path: {
+    id: 'exit_thorn_dead1_path',
+    from: WOODS_THORN_DEAD_1,
+    to: WOODS_THORN_PATH,
+    label: 'west',
+    type: 'open',
+  },
+  // THORN_PATH -> THORN_DEAD_2 (west/east)
+  exit_thorn_path_dead2: {
+    id: 'exit_thorn_path_dead2',
+    from: WOODS_THORN_PATH,
+    to: WOODS_THORN_DEAD_2,
+    label: 'west',
+    type: 'open',
+  },
+  exit_thorn_dead2_path: {
+    id: 'exit_thorn_dead2_path',
+    from: WOODS_THORN_DEAD_2,
+    to: WOODS_THORN_PATH,
+    label: 'east',
+    type: 'open',
+  },
+  // THORN_PATH -> THORN_GARDEN (south/north) - main path
+  exit_thorn_path_garden: {
+    id: 'exit_thorn_path_garden',
+    from: WOODS_THORN_PATH,
+    to: WOODS_THORN_GARDEN,
+    label: 'south',
+    type: 'open',
+  },
+  exit_thorn_garden_path: {
+    id: 'exit_thorn_garden_path',
+    from: WOODS_THORN_GARDEN,
+    to: WOODS_THORN_PATH,
+    label: 'north',
+    type: 'open',
+  },
+  // THORN_DEAD_1 -> THORN_DEAD_3 (south/north) - connects dead ends
+  exit_thorn_dead1_dead3: {
+    id: 'exit_thorn_dead1_dead3',
+    from: WOODS_THORN_DEAD_1,
+    to: WOODS_THORN_DEAD_3,
+    label: 'south',
+    type: 'open',
+  },
+  exit_thorn_dead3_dead1: {
+    id: 'exit_thorn_dead3_dead1',
+    from: WOODS_THORN_DEAD_3,
+    to: WOODS_THORN_DEAD_1,
+    label: 'north',
+    type: 'open',
+  },
+  // THORN_GARDEN -> THORN_DEN (south/north)
+  exit_thorn_garden_den: {
+    id: 'exit_thorn_garden_den',
+    from: WOODS_THORN_GARDEN,
+    to: WOODS_THORN_DEN,
+    label: 'south',
+    type: 'open',
+  },
+  exit_thorn_den_garden: {
+    id: 'exit_thorn_den_garden',
+    from: WOODS_THORN_DEN,
+    to: WOODS_THORN_GARDEN,
+    label: 'north',
+    type: 'open',
+  },
+
+  // ============ Thornwood to Sanctum ============
+  // THORN_DEN -> SANCTUM_ALTAR (south/north)
+  exit_thorn_den_sanctum: {
+    id: 'exit_thorn_den_sanctum',
+    from: WOODS_THORN_DEN,
+    to: WOODS_SANCTUM_ALTAR,
+    label: 'south',
+    type: 'open',
+  },
+  exit_sanctum_altar_den: {
+    id: 'exit_sanctum_altar_den',
+    from: WOODS_SANCTUM_ALTAR,
+    to: WOODS_THORN_DEN,
+    label: 'north',
+    type: 'open',
+  },
+
+  // ============ Sanctum Internal ============
+  // SANCTUM_ALTAR -> SANCTUM_GROVE (south/north) - LOCKED
+  exit_sanctum_altar_grove: {
+    id: 'exit_sanctum_altar_grove',
+    from: WOODS_SANCTUM_ALTAR,
+    to: WOODS_SANCTUM_GROVE,
+    label: 'south',
+    type: 'locked',
+    requirement: { kind: 'quest', value: 'dryads_heart_key' },
+  },
+  exit_sanctum_grove_altar: {
+    id: 'exit_sanctum_grove_altar',
+    from: WOODS_SANCTUM_GROVE,
+    to: WOODS_SANCTUM_ALTAR,
+    label: 'north',
+    type: 'open',
+  },
+  // SANCTUM_GROVE -> SANCTUM_APPROACH (south/north)
+  exit_sanctum_grove_approach: {
+    id: 'exit_sanctum_grove_approach',
+    from: WOODS_SANCTUM_GROVE,
+    to: WOODS_SANCTUM_APPROACH,
+    label: 'south',
+    type: 'open',
+  },
+  exit_sanctum_approach_grove: {
+    id: 'exit_sanctum_approach_grove',
+    from: WOODS_SANCTUM_APPROACH,
+    to: WOODS_SANCTUM_GROVE,
+    label: 'north',
+    type: 'open',
+  },
+  // SANCTUM_APPROACH -> SANCTUM_HEART (south/north)
+  exit_sanctum_approach_heart: {
+    id: 'exit_sanctum_approach_heart',
+    from: WOODS_SANCTUM_APPROACH,
+    to: WOODS_SANCTUM_HEART,
+    label: 'south',
+    type: 'open',
+  },
+  exit_sanctum_heart_approach: {
+    id: 'exit_sanctum_heart_approach',
+    from: WOODS_SANCTUM_HEART,
+    to: WOODS_SANCTUM_APPROACH,
+    label: 'north',
+    type: 'open',
+  },
+};

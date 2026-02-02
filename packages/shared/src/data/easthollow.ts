@@ -587,6 +587,15 @@ export const EASTHOLLOW_EXITS: Record<string, Exit> = {
     type: 'open',
   },
 
+  // East from Eastern Road to Whispering Woods
+  exit_eastroad_woods: {
+    id: 'exit_eastroad_woods',
+    from: TOWN_EAST_ROAD,
+    to: 'woods_farmhouse',
+    label: 'east',
+    type: 'open',
+  },
+
   // === BUILDING ENTRANCES (cardinal + named) ===
   // Eastern Road runs east-west; Inn is north side, Temple is south side
 
@@ -909,10 +918,17 @@ export const EASTHOLLOW_NPCS: Record<string, NPC> = {
     role: 'innkeeper',
     tutorialTopics: ['basics', 'movement', 'items'],
     combat: {
-      level: 10,
-      maxHp: 150,
-      currentHp: 150,
-      damage: 18,
+      level: 12,
+      maxHp: 194,
+      currentHp: 194,
+      maxMp: 24,
+      currentMp: 24,
+      damage: 15,
+      class: 'warrior',
+      knownSpells: ['battle_shout', 'heroic_strike'],
+      abilityCooldowns: {},
+      activeBuffs: [],
+      aiPriority: 'defensive',
     },
     shop: {
       items: [
@@ -1000,10 +1016,17 @@ export const EASTHOLLOW_NPCS: Record<string, NPC> = {
     trainsClass: 'warrior',
     tutorialTopics: ['combat'],
     combat: {
-      level: 12,
-      maxHp: 200,
-      currentHp: 200,
-      damage: 25,
+      level: 35,
+      maxHp: 470,
+      currentHp: 470,
+      maxMp: 100,
+      currentMp: 100,
+      damage: 55,
+      class: 'warrior',
+      knownSpells: ['battle_shout', 'heroic_strike', 'shield_bash', 'rend', 'intimidating_roar', 'charge', 'second_wind', 'execute', 'berserker_rage', 'last_stand'],
+      abilityCooldowns: {},
+      activeBuffs: [],
+      aiPriority: 'aggressive',
     },
     dialogue: [
       {
@@ -1072,10 +1095,17 @@ export const EASTHOLLOW_NPCS: Record<string, NPC> = {
     trainsClass: 'mage',
     tutorialTopics: ['magic'],
     combat: {
-      level: 10,
-      maxHp: 100,
-      currentHp: 100,
-      damage: 22,
+      level: 30,
+      maxHp: 230,
+      currentHp: 230,
+      maxMp: 390,
+      currentMp: 390,
+      damage: 40,
+      class: 'mage',
+      knownSpells: ['fire_bolt', 'frost_bolt', 'arcane_missile', 'fireball', 'ice_barrier', 'blizzard', 'polymorph', 'blink', 'pyroblast', 'counterspell', 'time_warp'],
+      abilityCooldowns: {},
+      activeBuffs: [],
+      aiPriority: 'defensive',
     },
     dialogue: [
       {
@@ -1141,10 +1171,17 @@ export const EASTHOLLOW_NPCS: Record<string, NPC> = {
     trainsClass: 'rogue',
     tutorialTopics: ['stealth'],
     combat: {
-      level: 10,
-      maxHp: 90,
-      currentHp: 90,
-      damage: 28,
+      level: 30,
+      maxHp: 290,
+      currentHp: 290,
+      maxMp: 150,
+      currentMp: 150,
+      damage: 50,
+      class: 'rogue',
+      knownSpells: ['backstab', 'poison_blade', 'evasion', 'kick', 'cheap_shot', 'vanish', 'blade_flurry', 'expose_armor', 'shadow_step', 'deaths_embrace'],
+      abilityCooldowns: {},
+      activeBuffs: [],
+      aiPriority: 'aggressive',
     },
     dialogue: [
       {
@@ -1207,10 +1244,17 @@ export const EASTHOLLOW_NPCS: Record<string, NPC> = {
     role: 'shopkeeper',
     tutorialTopics: ['shopping'],
     combat: {
-      level: 10,
-      maxHp: 130,
-      currentHp: 130,
-      damage: 15,
+      level: 15,
+      maxHp: 180,
+      currentHp: 180,
+      maxMp: 30,
+      currentMp: 30,
+      damage: 18,
+      class: 'warrior',
+      knownSpells: ['battle_shout', 'heroic_strike'],
+      abilityCooldowns: {},
+      activeBuffs: [],
+      aiPriority: 'defensive',
     },
     shop: {
       items: [
@@ -1272,10 +1316,17 @@ export const EASTHOLLOW_NPCS: Record<string, NPC> = {
     locationId: TOWN_BLACKSMITH,
     role: 'shopkeeper',
     combat: {
-      level: 10,
-      maxHp: 160,
-      currentHp: 160,
-      damage: 20,
+      level: 18,
+      maxHp: 266,
+      currentHp: 266,
+      maxMp: 36,
+      currentMp: 36,
+      damage: 28,
+      class: 'warrior',
+      knownSpells: ['battle_shout', 'heroic_strike', 'shield_bash', 'rend'],
+      abilityCooldowns: {},
+      activeBuffs: [],
+      aiPriority: 'defensive',
     },
     shop: {
       items: [
@@ -1337,10 +1388,17 @@ export const EASTHOLLOW_NPCS: Record<string, NPC> = {
     locationId: TOWN_ALCHEMIST,
     role: 'shopkeeper',
     combat: {
-      level: 10,
-      maxHp: 100,
-      currentHp: 100,
-      damage: 25,
+      level: 20,
+      maxHp: 170,
+      currentHp: 170,
+      maxMp: 270,
+      currentMp: 270,
+      damage: 30,
+      class: 'mage',
+      knownSpells: ['fire_bolt', 'frost_bolt', 'arcane_missile', 'fireball', 'ice_barrier', 'blizzard'],
+      abilityCooldowns: {},
+      activeBuffs: [],
+      aiPriority: 'defensive',
     },
     shop: {
       items: [
@@ -1399,6 +1457,15 @@ export const EASTHOLLOW_NPCS: Record<string, NPC> = {
     name: 'Giles',
     title: 'Farmer',
     locationId: TOWN_SQUARE,
+    role: 'citizen',
+    schedule: {
+      dawn: { locationId: TOWN_GATE, activity: 'arriving with his cart' },
+      morning: { locationId: TOWN_MARKET, activity: 'selling vegetables' },
+      noon: { locationId: TOWN_SQUARE, activity: 'taking a break' },
+      afternoon: { locationId: TOWN_MARKET, activity: 'packing up his stall' },
+      evening: { locationId: TOWN_INN, activity: 'having a well-earned drink' },
+      night: { locationId: TOWN_GATE, activity: 'heading home' },
+    },
     dialogue: [
       {
         id: 'greeting',
@@ -1445,6 +1512,15 @@ export const EASTHOLLOW_NPCS: Record<string, NPC> = {
     name: 'Pete',
     title: 'Layabout',
     locationId: TOWN_SQUARE,
+    role: 'citizen',
+    schedule: {
+      dawn: { locationId: TOWN_SQUARE, activity: 'sleeping on a bench' },
+      morning: { locationId: TOWN_MARKET, activity: 'looking for opportunities' },
+      noon: { locationId: TOWN_INN, activity: 'nursing a cheap ale' },
+      afternoon: { locationId: TOWN_SQUARE, activity: 'loitering suspiciously' },
+      evening: { locationId: TOWN_NORTH_ALLEY, activity: 'lurking in the shadows' },
+      night: { locationId: TOWN_INN, activity: 'eavesdropping on conversations' },
+    },
     dialogue: [
       {
         id: 'greeting',
@@ -1495,10 +1571,17 @@ export const EASTHOLLOW_NPCS: Record<string, NPC> = {
     locationId: TOWN_GATE,
     role: 'guard',
     combat: {
-      level: 8,
-      maxHp: 120,
-      currentHp: 120,
-      damage: 15,
+      level: 30,
+      maxHp: 410,
+      currentHp: 410,
+      maxMp: 90,
+      currentMp: 90,
+      damage: 45,
+      class: 'warrior',
+      knownSpells: ['battle_shout', 'heroic_strike', 'shield_bash', 'rend', 'intimidating_roar', 'charge', 'second_wind', 'execute', 'berserker_rage', 'last_stand'],
+      abilityCooldowns: {},
+      activeBuffs: [],
+      aiPriority: 'aggressive',
     },
     dialogue: [
       {
@@ -1556,10 +1639,17 @@ export const EASTHOLLOW_NPCS: Record<string, NPC> = {
     locationId: TOWN_GATE,
     role: 'guard',
     combat: {
-      level: 8,
-      maxHp: 120,
-      currentHp: 120,
-      damage: 15,
+      level: 30,
+      maxHp: 410,
+      currentHp: 410,
+      maxMp: 90,
+      currentMp: 90,
+      damage: 45,
+      class: 'warrior',
+      knownSpells: ['battle_shout', 'heroic_strike', 'shield_bash', 'rend', 'intimidating_roar', 'charge', 'second_wind', 'execute', 'berserker_rage', 'last_stand'],
+      abilityCooldowns: {},
+      activeBuffs: [],
+      aiPriority: 'aggressive',
     },
     dialogue: [
       {
@@ -1573,6 +1663,36 @@ export const EASTHOLLOW_NPCS: Record<string, NPC> = {
         response: "We take turns. Some of us watch the gate, others walk the streets. Captain Holt runs a tight operation.",
       },
     ],
+    schedule: {
+      dawn: { locationId: TOWN_GATE, activity: 'starting morning watch' },
+      morning: { locationId: TOWN_GATE, activity: 'watching the gate' },
+      noon: { locationId: TOWN_SQUARE, activity: 'checking the square' },
+      afternoon: { locationId: TOWN_MARKET, activity: 'patrolling the market' },
+      evening: { locationId: TOWN_GATE, activity: 'evening watch' },
+      night: { locationId: TOWN_OUTSIDE_WALLS, activity: 'night patrol outside' },
+    },
+    simulation: {
+      personality: 'stern',
+      topics: ['safety', 'threats', 'gossip', 'duty'],
+      topicInterest: { safety: 8, threats: 9, gossip: 5, duty: 7 },
+      ambientActions: [
+        { text: 'scans the crowd with a practiced eye', weight: 5 },
+        { text: 'rests her hand on her sword hilt', weight: 4 },
+        { text: 'adjusts her helmet', weight: 3 },
+        { text: 'exchanges a nod with a passing merchant', weight: 3 },
+        { text: 'checks the straps on her armor', weight: 2 },
+        { text: 'stretches her neck, staying alert', weight: 2 },
+      ],
+      reactions: {
+        player_enter: [
+          { weight: 4, says: 'Stay out of trouble.' },
+          { weight: 3, says: 'Another adventurer. Watch yourself out there.' },
+        ],
+        creature_enter: [
+          { weight: 5, action: 'draws her sword smoothly', says: 'Hostile incoming!' },
+        ],
+      },
+    },
   },
   npc_guard_patrol: {
     id: 'npc_guard_patrol',
@@ -1581,10 +1701,17 @@ export const EASTHOLLOW_NPCS: Record<string, NPC> = {
     locationId: TOWN_SQUARE, // Default location
     role: 'guard',
     combat: {
-      level: 7,
-      maxHp: 100,
-      currentHp: 100,
-      damage: 12,
+      level: 30,
+      maxHp: 410,
+      currentHp: 410,
+      maxMp: 90,
+      currentMp: 90,
+      damage: 45,
+      class: 'warrior',
+      knownSpells: ['battle_shout', 'heroic_strike', 'shield_bash', 'rend', 'intimidating_roar', 'charge', 'second_wind', 'execute', 'berserker_rage', 'last_stand'],
+      abilityCooldowns: {},
+      activeBuffs: [],
+      aiPriority: 'aggressive',
     },
     schedule: {
       dawn: { locationId: TOWN_GATE, activity: 'relieving night watch' },
@@ -1616,10 +1743,17 @@ export const EASTHOLLOW_NPCS: Record<string, NPC> = {
     role: 'priest',
     trainsClass: 'cleric',
     combat: {
-      level: 10,
-      maxHp: 120,
-      currentHp: 120,
-      damage: 18,
+      level: 30,
+      maxHp: 290,
+      currentHp: 290,
+      maxMp: 330,
+      currentMp: 330,
+      damage: 35,
+      class: 'cleric',
+      knownSpells: ['light_heal', 'smite', 'blessing', 'heal', 'purify', 'holy_shield', 'consecrate', 'greater_heal', 'resurrection', 'divine_wrath', 'guardian_angel'],
+      abilityCooldowns: {},
+      activeBuffs: [],
+      aiPriority: 'defensive',
     },
     dialogue: [
       {
@@ -1746,6 +1880,29 @@ export const EASTHOLLOW_NPCS: Record<string, NPC> = {
         response: "Well, between you and me, Kira at the smithy has been working late. Some say she's forging something special. And Elwin's been buying strange herbs...",
       },
     ],
+    simulation: {
+      personality: 'friendly',
+      topics: ['gossip', 'town_life', 'adventurers', 'weather'],
+      topicInterest: { gossip: 10, town_life: 8, adventurers: 7, weather: 6 },
+      ambientActions: [
+        { text: 'leans in conspiratorially toward a passerby', weight: 5 },
+        { text: 'fans herself with a handkerchief', weight: 4 },
+        { text: 'peers at everyone passing by with interest', weight: 4 },
+        { text: 'waves to an acquaintance across the square', weight: 3 },
+        { text: 'adjusts her bonnet', weight: 3 },
+        { text: 'clucks her tongue disapprovingly at something', weight: 2 },
+        { text: 'taps her foot impatiently, waiting for news', weight: 2 },
+      ],
+      reactions: {
+        player_enter: [
+          { weight: 5, says: 'Oh! A new face! Tell me, where are you from?' },
+          { weight: 3, says: 'Have you heard the latest? No? Well, let me tell you...' },
+        ],
+        player_levelup: [
+          { weight: 5, says: 'My, my! Growing more powerful by the day, I see!' },
+        ],
+      },
+    },
   },
   npc_thomas_delivery: {
     id: 'npc_thomas_delivery',
@@ -1773,6 +1930,26 @@ export const EASTHOLLOW_NPCS: Record<string, NPC> = {
         response: "Everywhere! The smithy, the alchemist, even the inn. I know every shortcut in Easthollow.",
       },
     ],
+    simulation: {
+      personality: 'cheerful',
+      topics: ['trade', 'town_life', 'gossip'],
+      topicInterest: { trade: 8, town_life: 7, gossip: 6 },
+      ambientActions: [
+        { text: 'hurries past with a stack of packages', weight: 5 },
+        { text: 'checks his delivery list', weight: 4 },
+        { text: 'juggles a parcel from hand to hand', weight: 3 },
+        { text: 'wipes his brow and catches his breath', weight: 3 },
+        { text: 'peers around looking for his next stop', weight: 3 },
+        { text: 'counts coins in his pocket', weight: 2 },
+        { text: 'whistles cheerfully as he works', weight: 2 },
+      ],
+      reactions: {
+        player_enter: [
+          { weight: 4, says: "'Scuse me! Coming through!" },
+          { weight: 2, says: 'Need something delivered? Ask Thom at the general store!' },
+        ],
+      },
+    },
   },
   npc_agnes_baker: {
     id: 'npc_agnes_baker',
@@ -1908,6 +2085,29 @@ export const EASTHOLLOW_NPCS: Record<string, NPC> = {
         response: "Never turn your back on a goblin, always check your corners, and for the love of all that's holy, pack extra bandages.",
       },
     ],
+    simulation: {
+      personality: 'wise',
+      topics: ['threats', 'nostalgia', 'duty', 'weather'],
+      topicInterest: { threats: 6, nostalgia: 10, duty: 8, weather: 5 },
+      ambientActions: [
+        { text: 'tosses breadcrumbs to the pigeons', weight: 5 },
+        { text: 'adjusts his old guard cloak', weight: 4 },
+        { text: 'watches the clouds drift by', weight: 3 },
+        { text: 'scratches his grizzled beard thoughtfully', weight: 3 },
+        { text: 'stretches his creaky joints', weight: 2 },
+        { text: 'mutters about young folks these days', weight: 2 },
+        { text: 'dozes off briefly, then snaps awake', weight: 1 },
+      ],
+      reactions: {
+        player_enter: [
+          { weight: 4, says: 'Ah, another young adventurer. Stay safe out there.' },
+          { weight: 2, says: 'You remind me of myself, fifty years ago...' },
+        ],
+        creature_enter: [
+          { weight: 5, action: 'rises stiffly to his feet', says: 'By the gods, not again...' },
+        ],
+      },
+    },
   },
   npc_lily_child: {
     id: 'npc_lily_child',
@@ -1935,6 +2135,29 @@ export const EASTHOLLOW_NPCS: Record<string, NPC> = {
         response: "I'm pretending to fight dragons! *swings imaginary sword* Take that, you big meanie!",
       },
     ],
+    simulation: {
+      personality: 'cheerful',
+      topics: ['adventurers', 'town_life'],
+      topicInterest: { adventurers: 10, town_life: 7 },
+      ambientActions: [
+        { text: 'hops on one foot, playing hopscotch', weight: 5 },
+        { text: 'chases a butterfly across the square', weight: 4 },
+        { text: 'twirls around with arms outstretched', weight: 4 },
+        { text: 'draws pictures in the dirt with a stick', weight: 3 },
+        { text: 'hums a cheerful tune to herself', weight: 3 },
+        { text: 'waves at a passing merchant', weight: 2 },
+        { text: 'pretends to be a dragon, roaring softly', weight: 2 },
+      ],
+      reactions: {
+        player_enter: [
+          { weight: 5, says: 'Are you an adventurer? Wow!' },
+          { weight: 3, says: 'Hello! Wanna play?' },
+        ],
+        creature_enter: [
+          { weight: 5, action: 'runs to hide behind Old Jasper', says: 'Eeeek!' },
+        ],
+      },
+    },
   },
   npc_cobb_stable: {
     id: 'npc_cobb_stable',
@@ -1962,6 +2185,29 @@ export const EASTHOLLOW_NPCS: Record<string, NPC> = {
         response: "Got a merchant's wagon horse and a courier's mare. That mare's a beauty - fast as the wind, she is.",
       },
     ],
+    simulation: {
+      personality: 'friendly',
+      topics: ['trade', 'weather', 'town_life'],
+      topicInterest: { trade: 7, weather: 8, town_life: 5 },
+      ambientActions: [
+        { text: 'brushes down a chestnut mare', weight: 5 },
+        { text: 'feeds an apple to one of the horses', weight: 4 },
+        { text: 'shovels hay into a feed trough', weight: 4 },
+        { text: 'checks a horse\'s hooves', weight: 3 },
+        { text: 'whistles a working tune', weight: 3 },
+        { text: 'pats a horse\'s neck affectionately', weight: 3 },
+        { text: 'wipes sweat from his brow', weight: 2 },
+      ],
+      reactions: {
+        player_enter: [
+          { weight: 4, says: 'Morning! Mind the horses, they spook easy.' },
+          { weight: 2, says: 'Need a ride? Talk to the merchants about their wagons.' },
+        ],
+        creature_enter: [
+          { weight: 5, action: 'tries to calm the panicking horses', says: 'Whoa! Easy there, easy!' },
+        ],
+      },
+    },
   },
   npc_ranger_fletcher: {
     id: 'npc_ranger_fletcher',
@@ -1972,10 +2218,17 @@ export const EASTHOLLOW_NPCS: Record<string, NPC> = {
     trainsClass: 'ranger',
     tutorialTopics: ['wilderness'],
     combat: {
-      level: 11,
-      maxHp: 140,
-      currentHp: 140,
-      damage: 20,
+      level: 30,
+      maxHp: 290,
+      currentHp: 290,
+      maxMp: 210,
+      currentMp: 210,
+      damage: 45,
+      class: 'ranger',
+      knownSpells: ['hunters_mark', 'serpent_sting', 'rapid_shot', 'track', 'set_trap', 'concussive_shot', 'feign_death', 'aimed_shot', 'explosive_trap', 'aspect_of_cheetah', 'kill_shot'],
+      abilityCooldowns: {},
+      activeBuffs: [],
+      aiPriority: 'aggressive',
     },
     dialogue: [
       {
@@ -2021,35 +2274,35 @@ export const EASTHOLLOW_NPCS: Record<string, NPC> = {
 };
 
 // ============ Shop Items (templates for items NPCs sell) ============
-export const SHOP_ITEM_TEMPLATES: Record<string, { name: string; tags: string[]; description: string }> = {
-  // General supplies
-  torch: { name: 'Torch', tags: ['light', 'consumable'], description: 'A wooden torch that provides light.' },
-  rations: { name: 'Rations', tags: ['food', 'consumable'], description: 'Dried meat and hardtack.' },
-  rope: { name: 'Rope', tags: ['tool'], description: '50 feet of sturdy hemp rope.' },
-  empty_flask: { name: 'Empty Flask', tags: ['container'], description: 'A glass flask for holding liquids.' },
-  bandage: { name: 'Bandage', tags: ['healing', 'consumable'], description: 'Clean cloth bandages.' },
+export const SHOP_ITEM_TEMPLATES: Record<string, { name: string; tags: string[]; description: string; sellValue: number }> = {
+  // General supplies (sellValue is what merchant pays for item in copper)
+  torch: { name: 'Torch', tags: ['light', 'consumable'], description: 'A wooden torch that provides light.', sellValue: 2 },
+  rations: { name: 'Rations', tags: ['food', 'consumable'], description: 'Dried meat and hardtack.', sellValue: 3 },
+  rope: { name: 'Rope', tags: ['tool'], description: '50 feet of sturdy hemp rope.', sellValue: 5 },
+  empty_flask: { name: 'Empty Flask', tags: ['container'], description: 'A glass flask for holding liquids.', sellValue: 2 },
+  bandage: { name: 'Bandage', tags: ['healing', 'consumable'], description: 'Clean cloth bandages.', sellValue: 3 },
   // Inn supplies
-  ale: { name: 'Mug of Ale', tags: ['drink', 'consumable'], description: 'A frothy mug of the house ale.' },
-  wine: { name: 'Bottle of Wine', tags: ['drink', 'consumable'], description: 'A decent vintage from the southern vineyards.' },
-  bread: { name: 'Fresh Bread', tags: ['food', 'consumable'], description: 'A warm loaf, still steaming.' },
-  cheese_wedge: { name: 'Cheese Wedge', tags: ['food', 'consumable'], description: 'Sharp yellow cheese from local farms.' },
-  waterskin: { name: 'Waterskin', tags: ['drink', 'container'], description: 'A leather waterskin, filled with fresh water.' },
-  travelers_map: { name: "Traveler's Map", tags: ['tool', 'rare'], description: 'A hand-drawn map of the local wilderness.' },
+  ale: { name: 'Mug of Ale', tags: ['drink', 'consumable'], description: 'A frothy mug of the house ale.', sellValue: 1 },
+  wine: { name: 'Bottle of Wine', tags: ['drink', 'consumable'], description: 'A decent vintage from the southern vineyards.', sellValue: 8 },
+  bread: { name: 'Fresh Bread', tags: ['food', 'consumable'], description: 'A warm loaf, still steaming.', sellValue: 1 },
+  cheese_wedge: { name: 'Cheese Wedge', tags: ['food', 'consumable'], description: 'Sharp yellow cheese from local farms.', sellValue: 2 },
+  waterskin: { name: 'Waterskin', tags: ['drink', 'container'], description: 'A leather waterskin, filled with fresh water.', sellValue: 3 },
+  travelers_map: { name: "Traveler's Map", tags: ['tool', 'rare'], description: 'A hand-drawn map of the local wilderness.', sellValue: 25 },
   // Weapons
-  iron_sword: { name: 'Iron Sword', tags: ['weapon', 'sword', 'melee'], description: 'A well-forged iron blade.' },
-  iron_axe: { name: 'Iron Axe', tags: ['weapon', 'axe', 'melee'], description: 'A heavy iron axe.' },
-  wooden_shield: { name: 'Wooden Shield', tags: ['armor', 'shield', 'offhand'], description: 'A sturdy wooden shield.' },
-  leather_armor: { name: 'Leather Armor', tags: ['armor', 'chest', 'leather'], description: 'Supple leather armor.' },
-  chain_mail: { name: 'Chain Mail', tags: ['armor', 'chest', 'metal'], description: 'Interlocking metal rings.' },
+  iron_sword: { name: 'Iron Sword', tags: ['weapon', 'sword', 'melee'], description: 'A well-forged iron blade.', sellValue: 50 },
+  iron_axe: { name: 'Iron Axe', tags: ['weapon', 'axe', 'melee'], description: 'A heavy iron axe.', sellValue: 45 },
+  wooden_shield: { name: 'Wooden Shield', tags: ['armor', 'shield', 'offhand'], description: 'A sturdy wooden shield.', sellValue: 15 },
+  leather_armor: { name: 'Leather Armor', tags: ['armor', 'chest', 'leather'], description: 'Supple leather armor.', sellValue: 40 },
+  chain_mail: { name: 'Chain Mail', tags: ['armor', 'chest', 'metal'], description: 'Interlocking metal rings.', sellValue: 80 },
   // Potions
-  health_potion: { name: 'Health Potion', tags: ['potion', 'consumable', 'healing'], description: 'Restores 50 HP.' },
-  mana_potion: { name: 'Mana Potion', tags: ['potion', 'consumable', 'mana'], description: 'Restores 50 MP.' },
-  antidote: { name: 'Antidote', tags: ['potion', 'consumable'], description: 'Cures poison.' },
-  stamina_tonic: { name: 'Stamina Tonic', tags: ['potion', 'consumable'], description: 'Restores stamina.' },
+  health_potion: { name: 'Health Potion', tags: ['potion', 'consumable', 'healing'], description: 'Restores 50 HP.', sellValue: 15 },
+  mana_potion: { name: 'Mana Potion', tags: ['potion', 'consumable', 'mana'], description: 'Restores 50 MP.', sellValue: 15 },
+  antidote: { name: 'Antidote', tags: ['potion', 'consumable'], description: 'Cures poison.', sellValue: 10 },
+  stamina_tonic: { name: 'Stamina Tonic', tags: ['potion', 'consumable'], description: 'Restores stamina.', sellValue: 12 },
   // Sewer dungeon items
-  sewer_rusty_key: { name: 'Rusty Key', tags: ['key', 'sewer'], description: 'A corroded iron key, still functional. Opens the locked door deeper in the sewers.' },
-  rat_tail: { name: 'Rat Tail', tags: ['junk', 'trophy'], description: 'A severed rat tail. Proof of your pest control efforts.' },
-  rat_kings_fang: { name: "Rat King's Fang", tags: ['weapon', 'dagger', 'melee', 'unique'], description: 'A yellowed fang from the King Rat, set into a crude bone handle. Deals poison damage over time. Usable by all classes.' },
+  sewer_rusty_key: { name: 'Rusty Key', tags: ['key', 'sewer'], description: 'A corroded iron key, still functional. Opens the locked door deeper in the sewers.', sellValue: 0 },
+  rat_tail: { name: 'Rat Tail', tags: ['junk', 'trophy'], description: 'A severed rat tail. Proof of your pest control efforts.', sellValue: 1 },
+  rat_kings_fang: { name: "Rat King's Fang", tags: ['weapon', 'dagger', 'melee', 'unique'], description: 'A yellowed fang from the King Rat, set into a crude bone handle. Deals poison damage over time. Usable by all classes.', sellValue: 100 },
 };
 
 // ============ Sewer Dungeon Items (pre-placed) ============
