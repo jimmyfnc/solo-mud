@@ -11,7 +11,8 @@ import { generateWildernessLoot, WILDERNESS_LOOT_TABLES } from '../loot/wilderne
 import { generateNpcLoot, calculateNpcGoldDrop } from '../loot/npc-loot';
 import { addAssaultBounty, addMurderBounty, getInfamyDisplay } from '../game/infamy';
 import { selectNpcAction, applyNpcAction } from '../game/npc-combat';
-import type { GameSession } from '../game/session';
+import { sessionManager, type GameSession } from '../game/session';
+import { getBotManager } from '../game/game-loop';
 import { parseCommand, getDirection, isPropVerb, type ParsedCommand } from './parser';
 import { isPropOnCooldown, setPropCooldown, formatCooldownMessage, applyPropRewards, pickRandomText, getRemainingCooldown } from './prop-helpers';
 import { generateDescription, generateExitProse, generateCreatureProse, type Biome, type Weather, type ExitInfo } from '../descriptions';
@@ -37,6 +38,7 @@ type CommandHandler = (ctx: CommandContext) => CommandResult;
 const handlers: Record<string, CommandHandler> = {
   look: handleLook,
   l: handleLook,
+  who: handleWho,
   examine: handleExamine,
   help: handleHelp,
   inventory: handleInventory,
@@ -450,6 +452,24 @@ function generateRoomOutput(
       const corpseList = corpses.map(c => `${c.name}'s corpse`).join(', ');
       output.push({ text: `Corpses: ${corpseList}`, style: 'normal' });
     }
+
+    // Show other players at this location
+    const otherPlayers = sessionManager.getAllSessions()
+      .filter(s => s.player.locationId === player.locationId && s.id !== session.id);
+
+    for (const other of otherPlayers) {
+      output.push({ text: `**${other.player.name}** (Level ${other.player.level} ${other.player.class}) is here.`, style: 'normal' });
+    }
+
+    // Show bots at this location
+    const botManager = getBotManager();
+    const botsHere = (botManager?.getAllBotSessions() || [])
+      .filter(bs => bs.player.locationId === player.locationId);
+
+    for (const botSession of botsHere) {
+      const bot = botSession.player;
+      output.push({ text: `**${bot.name}** (Level ${bot.level} ${bot.class}) is here.`, style: 'normal' });
+    }
   }
 
   return output;
@@ -461,6 +481,51 @@ function generateRoomOutput(
 function handleLook(ctx: CommandContext): CommandResult {
   const output = generateRoomOutput(ctx.session, true, true);
   return { output, updateRoom: true };
+}
+
+/**
+ * Handle the "who" command - show online players.
+ */
+function handleWho(_ctx: CommandContext): CommandResult {
+  const output: OutputLine[] = [];
+
+  // Get real player sessions
+  const sessions = sessionManager.getAllSessions();
+
+  // Get bot sessions
+  const botManager = getBotManager();
+  const botSessions = botManager?.getAllBotSessions() || [];
+
+  // Combine and sort by level
+  const allPlayers = [
+    ...sessions.map(s => ({
+      name: s.player.name,
+      level: s.player.level,
+      class: s.player.class,
+      location: s.player.locationId,
+    })),
+    ...botSessions.map(bs => ({
+      name: bs.player.name,
+      level: bs.player.level,
+      class: bs.player.class,
+      location: bs.player.locationId,
+    })),
+  ];
+
+  allPlayers.sort((a, b) => b.level - a.level);
+
+  output.push({ text: '--- Online Players ---', style: 'system' });
+
+  if (allPlayers.length === 0) {
+    output.push({ text: 'No one is online.', style: 'normal' });
+  } else {
+    for (const p of allPlayers) {
+      output.push({ text: `${p.name} (Level ${p.level} ${p.class})`, style: 'normal' });
+    }
+    output.push({ text: `Total: ${allPlayers.length} player(s) online`, style: 'system' });
+  }
+
+  return { output };
 }
 
 /**
