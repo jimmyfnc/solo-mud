@@ -93,6 +93,75 @@ describe('BotManager', () => {
     });
   });
 
+  describe('named bot loading', () => {
+    it('should load named bots on initialize()', async () => {
+      await manager.initialize();
+
+      const namedBots = manager.getNamedBots();
+      expect(namedBots.size).toBe(defaultConfig.namedBotCount);
+    });
+
+    it('should store named bots separately from generic bots', async () => {
+      await manager.initialize();
+
+      const namedBots = manager.getNamedBots();
+      const genericCount = manager.getBotCount();
+
+      // Named bots are tracked separately
+      expect(namedBots.size).toBe(defaultConfig.namedBotCount);
+      // Generic bot count is still 0 since we haven't called maintainPopulation
+      expect(genericCount).toBe(0);
+    });
+
+    it('should limit named bots to config.namedBotCount', async () => {
+      // Config says 2 named bots, but there are 8 in NAMED_BOTS
+      await manager.initialize();
+
+      const namedBots = manager.getNamedBots();
+      expect(namedBots.size).toBe(2);
+    });
+
+    it('should include named bots in getAllBots()', async () => {
+      await manager.initialize();
+      manager.maintainPopulation();
+
+      const allBots = manager.getAllBots();
+      const namedBots = manager.getNamedBots();
+      const genericBots = manager.getAllBotSessions();
+
+      // Total should be named + generic
+      expect(allBots.length).toBe(namedBots.size + genericBots.length);
+    });
+
+    it('should not remove named bots during maintainPopulation()', async () => {
+      await manager.initialize();
+
+      const namedBotsBefore = manager.getNamedBots();
+      const namedBotIds = Array.from(namedBotsBefore.keys());
+
+      // Call maintainPopulation multiple times
+      for (let i = 0; i < 10; i++) {
+        manager.maintainPopulation();
+      }
+
+      // Named bots should still be present
+      for (const id of namedBotIds) {
+        expect(manager.getNamedBots().has(id)).toBe(true);
+      }
+    });
+
+    it('should create named bots with correct properties', async () => {
+      await manager.initialize();
+
+      const namedBots = manager.getNamedBots();
+      for (const [_id, session] of namedBots) {
+        expect(session.player.isBot).toBe(true);
+        expect(session.player.botProfile?.isNamed).toBe(true);
+        expect(session.player.namedBotId).toBeDefined();
+      }
+    });
+  });
+
   describe('AI tick', () => {
     it('should use executor for bot commands', async () => {
       manager.maintainPopulation();

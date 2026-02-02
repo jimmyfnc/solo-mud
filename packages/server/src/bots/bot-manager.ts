@@ -4,7 +4,8 @@
 
 import type { BotSpawnConfig, ClassName } from '@solo-mud/shared';
 import type { BotSession } from './bot-session';
-import { createBotPlayer, createBotSession } from './bot-factory';
+import { createBotPlayer, createBotSession, createNamedBot } from './bot-factory';
+import { NAMED_BOTS } from './roster/named-bots';
 import { BotExecutor } from './bot-executor';
 
 /** Command handler type for executing bot commands */
@@ -32,6 +33,7 @@ function randomInRange(min: number, max: number): number {
 export class BotManager {
   private config: BotSpawnConfig;
   private bots: Map<string, BotSession> = new Map();
+  private namedBots: Map<string, BotSession> = new Map();
   private nextBotId = 1;
   private executor: BotExecutor;
   private commandHandler?: CommandHandler;
@@ -39,6 +41,40 @@ export class BotManager {
   constructor(config: BotSpawnConfig) {
     this.config = config;
     this.executor = new BotExecutor();
+  }
+
+  /** Initialize the bot manager by loading named bots */
+  async initialize(): Promise<void> {
+    await this.loadNamedBots();
+  }
+
+  /** Load named bots from the roster */
+  private async loadNamedBots(): Promise<void> {
+    const namedBotIds = Object.keys(NAMED_BOTS);
+    const botsToLoad = namedBotIds.slice(0, this.config.namedBotCount);
+
+    for (const botId of botsToLoad) {
+      const definition = NAMED_BOTS[botId];
+      if (!definition) continue;
+
+      // Use first spawn location for named bots
+      const startLocation = this.config.spawnLocations[0] ?? 'town_square';
+
+      const bot = createNamedBot(definition, startLocation);
+      const session = createBotSession(bot);
+
+      this.namedBots.set(definition.id, session);
+    }
+  }
+
+  /** Get all named bot sessions */
+  getNamedBots(): Map<string, BotSession> {
+    return this.namedBots;
+  }
+
+  /** Get all bots (both named and generic) */
+  getAllBots(): BotSession[] {
+    return [...this.namedBots.values(), ...this.bots.values()];
   }
 
   /** Set command handler for executing bot commands */
@@ -56,7 +92,7 @@ export class BotManager {
     return this.bots.size;
   }
 
-  /** Get all bot sessions */
+  /** Get all generic bot sessions (excludes named bots) */
   getAllBotSessions(): BotSession[] {
     return Array.from(this.bots.values());
   }
@@ -102,9 +138,10 @@ export class BotManager {
     }
   }
 
-  /** Run AI tick for all bots */
+  /** Run AI tick for all bots (both named and generic) */
   async tick(_gameTime: number): Promise<void> {
-    for (const session of this.bots.values()) {
+    // Iterate over all bots (named + generic)
+    for (const session of this.getAllBots()) {
       // Skip if in combat (combat tick handles this)
       if (session.player.inCombat) {
         continue;
