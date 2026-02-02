@@ -11,9 +11,39 @@ export interface ParsedCommand {
   target?: string;
   /** Source for "take X from Y" syntax */
   source?: string;
+  /** Item being used with a prop verb (e.g., "toss coin well" -> item: "coin") */
+  item?: string;
   /** Original raw input */
   raw: string;
 }
+
+/** Prop interaction verbs for environmental objects */
+export const PROP_VERBS = [
+  // Universal
+  'use', 'examine', 'look',
+  // Positional
+  'sit', 'lean', 'kneel', 'stand',
+  // Physical
+  'push', 'pull', 'lift', 'pry', 'kick', 'dig',
+  // Combat
+  'attack', 'hit', 'shoot',
+  // Social
+  'pet', 'feed', 'tip', 'talk', 'wave', 'greet',
+  // Sensory
+  'smell', 'sniff', 'listen', 'taste', 'feel',
+  // Object manipulation
+  'light', 'ring', 'blow', 'fill', 'drink', 'read',
+  // Special
+  'toss', 'throw', 'offer', 'donate', 'pray',
+  'warm', 'cool', 'stir', 'pump', 'weigh',
+  'scatter', 'shoo', 'whistle', 'watch',
+  'search', 'take', 'leave',
+];
+
+/** Prop verbs that use an item with a target (e.g., "toss coin well", "offer bread altar") */
+const PROP_VERBS_WITH_ITEM = new Set([
+  'toss', 'throw', 'offer', 'donate', 'feed', 'fill', 'light',
+]);
 
 /** Direction shortcuts */
 const DIRECTION_SHORTCUTS: Record<string, string> = {
@@ -109,6 +139,35 @@ export function parseCommand(input: string): ParsedCommand {
     };
   }
 
+  // Handle prop verbs that use an item with a target (e.g., "toss coin well", "offer bread altar")
+  // Pattern: <verb> <item> <target> OR <verb> <item> in/into/at/to <target>
+  if (PROP_VERBS_WITH_ITEM.has(command) && args.length >= 2) {
+    // Check for preposition patterns: "toss coin into well", "offer bread to altar"
+    const prepIndex = args.findIndex(a => ['in', 'into', 'at', 'to'].includes(a.toLowerCase()));
+    if (prepIndex > 0 && prepIndex < args.length - 1) {
+      const item = args.slice(0, prepIndex).join(' ');
+      const target = args.slice(prepIndex + 1).join(' ');
+      return {
+        command,
+        args,
+        target,
+        item,
+        raw,
+      };
+    }
+    // Simple pattern: "toss coin well" - first arg is item, last arg is target
+    // For now, treat first token as item, rest as target
+    const item = args[0];
+    const target = args.slice(1).join(' ');
+    return {
+      command,
+      args,
+      target,
+      item,
+      raw,
+    };
+  }
+
   return {
     command,
     args,
@@ -178,6 +237,13 @@ export function isMovementCommand(command: string): boolean {
     'northeast', 'northwest', 'southeast', 'southwest',
   ];
   return movementCommands.includes(command);
+}
+
+/**
+ * Check if a command is a prop interaction verb.
+ */
+export function isPropVerb(command: string): boolean {
+  return PROP_VERBS.includes(command);
 }
 
 /**
