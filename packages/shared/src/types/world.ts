@@ -90,6 +90,8 @@ export interface Item {
   tags: string[]; // "weapon", "key", "consumable"
   rarity: Rarity;
   affixes: Affix[];
+  /** Base defense value for armor items (scaled by rarity) */
+  baseDefense?: number;
 }
 
 // ============ Creature System ============
@@ -160,6 +162,8 @@ export interface CreatureTemplate {
   baseHp: number;
   baseLevel: number;
   spawnWeight: number; // Higher = more common
+  /** Damage type dealt by this creature's attacks */
+  damageType?: 'physical' | 'fire' | 'ice' | 'lightning' | 'holy' | 'shadow' | 'nature' | 'poison' | 'arcane';
   descriptions: {
     idle: string[]; // Random idle descriptions
     alert?: string[]; // When player enters (aggressive/territorial)
@@ -178,6 +182,10 @@ export interface Corpse {
   looted: boolean;
   lootedAt?: number;
   loot: ItemId[]; // Items that can be taken from corpse
+  /** When the corpse decays (game time in minutes) */
+  decayAt?: number;
+  /** Whether this corpse is from an NPC (not a creature) */
+  isNpc?: boolean;
 }
 
 /** A container that can hold items (chests, boxes, etc.) */
