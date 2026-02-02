@@ -54,12 +54,14 @@ export interface VisitState {
 export interface Location {
   id: NodeId;
   name: string;
+  /** Prose description of the location */
+  description?: string;
   biome: BiomeWeights;
-  props: string[]; // "altar", "campfire", "broken statue"
+  props?: string[]; // "altar", "campfire", "broken statue"
   items: ItemId[];
-  enemies: EnemyId[];
+  enemies?: EnemyId[];
   creatures: CreatureId[]; // Creatures currently in this location
-  visitState: VisitState;
+  visitState?: VisitState;
   depth: number; // Distance from start (for difficulty scaling)
   /** If true, no combat allowed and no creature spawns */
   isSafeZone?: boolean;
@@ -69,6 +71,8 @@ export interface Location {
   npcs?: string[];
   /** If true, location is dark and requires a light source to see properly */
   isDark?: boolean;
+  /** If true, this is a boss room */
+  isBossRoom?: boolean;
 }
 
 /** Item rarity tiers */
