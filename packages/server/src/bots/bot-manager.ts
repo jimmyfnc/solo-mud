@@ -11,12 +11,12 @@ import { BotExecutor } from './bot-executor';
 /** Command handler type for executing bot commands */
 export type CommandHandler = (session: BotSession, command: string) => Promise<void>;
 
-/** Random bot names for generic bots */
-const BOT_NAMES = [
-  'Wanderer', 'Traveler', 'Adventurer', 'Seeker', 'Explorer',
-  'Drifter', 'Nomad', 'Pilgrim', 'Wayfarer', 'Rover',
-  'Scout', 'Hunter', 'Tracker', 'Ranger', 'Guardian',
-  'Sentinel', 'Watcher', 'Keeper', 'Defender', 'Protector',
+/** Regular human names for generic bots (red shirts) */
+const FIRST_NAMES = [
+  'Bob', 'Janet', 'Steve', 'Carol', 'Dave', 'Linda', 'Mike', 'Susan',
+  'Tom', 'Nancy', 'Jim', 'Betty', 'Frank', 'Helen', 'Gary', 'Debbie',
+  'Ron', 'Barbara', 'Dan', 'Sharon', 'Bill', 'Karen', 'Joe', 'Donna',
+  'Rick', 'Patricia', 'Larry', 'Diane', 'Jeff', 'Margaret',
 ];
 
 /** Classes for random selection */
@@ -117,7 +117,7 @@ export class BotManager {
   /** Spawn a generic bot */
   spawnGenericBot(): BotSession {
     const id = `bot_generic_${this.nextBotId++}`;
-    const name = `${pickRandom(BOT_NAMES)} #${this.nextBotId}`;
+    const name = pickRandom(FIRST_NAMES);
     const className = pickRandom(CLASSES);
     const level = randomInRange(this.config.levelRange[0], this.config.levelRange[1]);
     const startLocation = pickRandom(this.config.spawnLocations);
@@ -200,7 +200,7 @@ export class BotManager {
           session.player.currentMp = session.player.maxMp;
 
           // Move to a spawn location
-          session.player.currentLocation = pickRandom(this.config.spawnLocations);
+          session.player.locationId = pickRandom(this.config.spawnLocations);
 
           respawnedNames.push(session.player.name);
         }
@@ -263,6 +263,7 @@ export class BotManager {
 
       // Get next command
       const command = this.executor.getNextCommand(session);
+      console.log(`[BOT] ${session.player.name} at ${session.player.locationId}: command=${command}`);
       if (!command) {
         continue;
       }

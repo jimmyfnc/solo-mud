@@ -312,21 +312,27 @@ function generateRoomOutput(
     return output;
   }
 
-  // Get dominant biome
-  const biomeEntries = Object.entries(location.biome) as [string, number][];
-  biomeEntries.sort((a, b) => (b[1] ?? 0) - (a[1] ?? 0));
-  const dominantBiome = (biomeEntries[0]?.[0] ?? 'plains') as Biome;
+  // Use location's description if provided, otherwise generate one from biome
+  let description: string;
+  if (location.description) {
+    description = location.description;
+  } else {
+    // Get dominant biome
+    const biomeEntries = Object.entries(location.biome) as [string, number][];
+    biomeEntries.sort((a, b) => (b[1] ?? 0) - (a[1] ?? 0));
+    const dominantBiome = (biomeEntries[0]?.[0] ?? 'plains') as Biome;
 
-  // Generate dynamic description using template system
-  const descriptionCtx = {
-    biome: dominantBiome,
-    timeOfDay: world.time.timeOfDay,
-    weather: world.weather.type as Weather,
-    visitCount: location.visitState.visitCount,
-    props: location.props,
-    rng: createRng(`${world.seed}-${location.id}-${location.visitState.visitCount}`),
-  };
-  const description = generateDescription(descriptionCtx);
+    // Generate dynamic description using template system
+    const descriptionCtx = {
+      biome: dominantBiome,
+      timeOfDay: world.time.timeOfDay,
+      weather: world.weather.type as Weather,
+      visitCount: location.visitState.visitCount,
+      props: location.props,
+      rng: createRng(`${world.seed}-${location.id}-${location.visitState.visitCount}`),
+    };
+    description = generateDescription(descriptionCtx);
+  }
   output.push({ text: description, style: 'normal' });
 
   // Get exits for prose generation
@@ -413,14 +419,54 @@ function generateRoomOutput(
   // NPCs (using schedule-aware lookup)
   const timeOfDay = world.time.timeOfDay;
   const npcs = getNpcsAtLocation(world.npcs, location.npcs ?? [], location.id, timeOfDay);
-  if (npcs.length > 0) {
-    const npcList = npcs.map(n => {
-      const title = n.title ? `${n.title} ` : '';
-      const activity = getNpcActivity(n, timeOfDay);
-      const activityText = activity ? ` (${activity})` : '';
-      return `${title}${n.name}${activityText}`;
-    }).join(', ');
-    output.push({ text: `People: ${npcList}`, style: 'normal' });
+
+  // Bots at this location (both named and generic)
+  const botManager = getBotManager();
+  const botsHere = (botManager?.getAllBots() ?? [])
+    .filter(bs => bs.player.locationId === player.locationId);
+
+  // Combine NPCs and bots into "People:" section
+  const peopleList: string[] = [];
+
+  // Add NPCs
+  for (const n of npcs) {
+    const title = n.title ? `${n.title} ` : '';
+    const activity = getNpcActivity(n, timeOfDay);
+    const activityText = activity ? ` (${activity})` : '';
+    peopleList.push(`${title}${n.name}${activityText}`);
+  }
+
+  // Add bots (adventurers) - just show name
+  for (const botSession of botsHere) {
+    const bot = botSession.player;
+    peopleList.push(bot.name);
+  }
+
+  // Display people, breaking into multiple lines if too long (max ~70 chars per line)
+  if (peopleList.length > 0) {
+    const maxLineLength = 70;
+    let currentLine = 'People: ';
+    const lines: string[] = [];
+
+    for (let i = 0; i < peopleList.length; i++) {
+      const person = peopleList[i]!;
+      const separator = i === 0 ? '' : ', ';
+      const addition = separator + person;
+
+      if (currentLine.length + addition.length > maxLineLength && currentLine !== 'People: ') {
+        lines.push(currentLine);
+        currentLine = '  ' + person; // Indent continuation lines
+      } else {
+        currentLine += addition;
+      }
+    }
+    if (currentLine.length > 0) {
+      lines.push(currentLine);
+    }
+
+    for (const line of lines) {
+      output.push({ text: line, style: 'normal' });
+    }
   }
 
   // Detailed mode: show tactical breakdown (items, creature levels)
@@ -453,22 +499,12 @@ function generateRoomOutput(
       output.push({ text: `Corpses: ${corpseList}`, style: 'normal' });
     }
 
-    // Show other players at this location
+    // Show other real players at this location
     const otherPlayers = sessionManager.getAllSessions()
       .filter(s => s.player.locationId === player.locationId && s.id !== session.id);
 
     for (const other of otherPlayers) {
-      output.push({ text: `**${other.player.name}** (Level ${other.player.level} ${other.player.class}) is here.`, style: 'normal' });
-    }
-
-    // Show bots at this location
-    const botManager = getBotManager();
-    const botsHere = (botManager?.getAllBotSessions() || [])
-      .filter(bs => bs.player.locationId === player.locationId);
-
-    for (const botSession of botsHere) {
-      const bot = botSession.player;
-      output.push({ text: `**${bot.name}** (Level ${bot.level} ${bot.class}) is here.`, style: 'normal' });
+      output.push({ text: `${other.player.name} the ${other.player.class} (Level ${other.player.level}) is here.`, style: 'normal' });
     }
   }
 

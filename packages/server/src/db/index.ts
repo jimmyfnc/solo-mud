@@ -8,3 +8,4 @@ export { getDatabase, closeDatabase, generateId, generatePlayerCode } from './da
 export * from './repositories/PlayerRepository';
 export * from './repositories/CharacterRepository';
 export * from './repositories/WorldStateRepository';
+export * from './repositories/BankRepository';

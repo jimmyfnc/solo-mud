@@ -6,15 +6,58 @@ import type { Stats, CombatStats, Player, Item, EquipSlot } from '@solo-mud/shar
 import { CLASSES } from '@solo-mud/shared';
 import { calculateMaxHp, calculateMaxMp, calculateMaxCarryWeight } from './player-factory';
 
+/** Hit chance penalty per level the enemy is above you */
+const HIT_PENALTY_PER_LEVEL = 0.05; // 5%
+
+/** Damage penalty per level the enemy is above you */
+const DAMAGE_PENALTY_PER_LEVEL = 0.08; // 8%
+
 /**
- * Calculate combat stats from effective stats.
+ * Calculate hit chance modifier based on level difference.
+ * Returns a multiplier (0.0 - 1.0) to apply to base hit chance.
+ * Penalty only applies when enemy is higher level.
  */
-export function calculateCombatStats(stats: Stats): CombatStats {
+export function getLevelHitModifier(playerLevel: number, enemyLevel: number): number {
+  const levelDiff = enemyLevel - playerLevel;
+  if (levelDiff <= 0) return 1.0; // No penalty for same level or lower
+  const penalty = levelDiff * HIT_PENALTY_PER_LEVEL;
+  return Math.max(0.5, 1.0 - penalty); // Cap at 50% hit chance minimum
+}
+
+/**
+ * Calculate damage modifier based on level difference.
+ * Returns a multiplier (0.0 - 1.0+) to apply to final damage.
+ * Penalty when enemy is higher level, bonus when lower.
+ */
+export function getLevelDamageModifier(playerLevel: number, enemyLevel: number): number {
+  const levelDiff = enemyLevel - playerLevel;
+  if (levelDiff > 0) {
+    // Enemy is higher level: deal less damage
+    const penalty = levelDiff * DAMAGE_PENALTY_PER_LEVEL;
+    return Math.max(0.4, 1.0 - penalty); // Cap at 60% damage reduction
+  } else if (levelDiff < 0) {
+    // Enemy is lower level: deal bonus damage (smaller bonus)
+    const bonus = Math.abs(levelDiff) * 0.05; // 5% bonus per level below
+    return Math.min(1.5, 1.0 + bonus); // Cap at 50% bonus damage
+  }
+  return 1.0; // Same level
+}
+
+/**
+ * Calculate base combat stats from effective stats (without equipment bonuses).
+ */
+export function calculateBaseCombatStats(stats: Stats): CombatStats {
+  // Base elemental resist from WIS (floor(WIS / 3))
+  const baseElementalResist = Math.floor(stats.wis / 3);
+
   return {
     attackPower: stats.str * 2,
     spellPower: stats.int * 2,
-    defense: stats.con + 5,
-    magicResist: stats.wis + 5,
+    defense: stats.con + 5, // Base physical defense from CON
+    fireResist: baseElementalResist,
+    iceResist: baseElementalResist,
+    lightningResist: baseElementalResist,
+    poisonResist: baseElementalResist,
     hitChance: 0.9 + stats.dex * 0.005,
     dodgeChance: 0.05 + stats.dex * 0.003,
     critChance: 0.05 + stats.dex * 0.002,
@@ -24,7 +67,76 @@ export function calculateCombatStats(stats: Stats): CombatStats {
 }
 
 /**
- * Get effective stats by combining base stats with equipment bonuses.
+ * Calculate combat stats from effective stats.
+ * @deprecated Use calculateCombatStatsWithEquipment for full resistance calculation
+ */
+export function calculateCombatStats(stats: Stats): CombatStats {
+  return calculateBaseCombatStats(stats);
+}
+
+/**
+ * Calculate combat stats including equipment bonuses (defense and resistances).
+ */
+export function calculateCombatStatsWithEquipment(
+  stats: Stats,
+  player: Player,
+  items: Record<string, Item>
+): CombatStats {
+  const combat = calculateBaseCombatStats(stats);
+
+  // Add defense and resistances from equipped items
+  const slots = Object.keys(player.equipment) as EquipSlot[];
+  for (const slot of slots) {
+    const itemId = player.equipment[slot];
+    if (!itemId) continue;
+
+    const item = items[itemId];
+    if (!item) continue;
+
+    // Add base defense from armor items
+    if (item.baseDefense) {
+      combat.defense += item.baseDefense;
+    }
+
+    // Add resistance bonuses from affixes
+    for (const affix of item.affixes) {
+      for (const [stat, value] of Object.entries(affix.statMods)) {
+        switch (stat) {
+          case 'defense':
+            combat.defense += value;
+            break;
+          case 'fireResist':
+            combat.fireResist += value;
+            break;
+          case 'iceResist':
+            combat.iceResist += value;
+            break;
+          case 'lightningResist':
+            combat.lightningResist += value;
+            break;
+          case 'poisonResist':
+            combat.poisonResist += value;
+            break;
+          case 'attackPower':
+            combat.attackPower += value;
+            break;
+          case 'spellPower':
+            combat.spellPower += value;
+            break;
+          case 'attackSpeed':
+            combat.attackSpeed += value;
+            break;
+        }
+      }
+    }
+  }
+
+  return combat;
+}
+
+/**
+ * Get effective stats by combining base stats with level bonuses and equipment.
+ * Level scaling: +1 to class primary stat per level above 1.
  */
 export function getEffectiveStats(
   player: Player,
@@ -32,6 +144,12 @@ export function getEffectiveStats(
 ): Stats {
   // Start with base stats
   const effective: Stats = { ...player.baseStats };
+
+  // Add level-based bonus to primary stat (+1 per level above 1)
+  const classDef = CLASSES[player.class];
+  const primaryStat = classDef.primaryStats[0] as keyof Stats;
+  const levelBonus = Math.max(0, player.level - 1);
+  effective[primaryStat] += levelBonus;
 
   // Add bonuses from equipped items
   const slots = Object.keys(player.equipment) as EquipSlot[];

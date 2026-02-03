@@ -156,6 +156,8 @@ export interface SyncMessage {
   room: RoomMessage;
   time: GameTime;
   weather: WeatherState;
+  /** Character ID for session resume on refresh */
+  characterId?: string;
 }
 
 /** Server requests character creation from client */

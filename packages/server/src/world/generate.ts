@@ -21,8 +21,11 @@ import {
   EASTHOLLOW_CREATURES,
   EASTHOLLOW_CONTAINERS,
   TEMPLE_ITEMS,
+  SEWER_ITEMS,
   TOWN_INN,
   TOWN_OUTSIDE_WALLS,
+  WOODS_LOCATIONS,
+  WOODS_EXITS,
 } from '@solo-mud/shared';
 
 import {
@@ -270,6 +273,30 @@ function generateWorldAttempt(params: WorldGenParams): World {
   // Add temple items (cleric starter gear)
   for (const [id, item] of Object.entries(TEMPLE_ITEMS)) {
     items[id] = { ...item };
+  }
+
+  // Add sewer items (rusty key, etc.)
+  for (const item of Object.values(SEWER_ITEMS)) {
+    items[item.id] = { ...item };
+  }
+
+  // 13. Integrate Whispering Woods
+  // Add woods locations
+  for (const [id, location] of Object.entries(WOODS_LOCATIONS)) {
+    locations[id] = { ...location };
+  }
+
+  // Add woods exits
+  for (const [id, exit] of Object.entries(WOODS_EXITS)) {
+    exits[id] = exit;
+  }
+
+  // Build woods adjacency from exits
+  for (const exit of Object.values(WOODS_EXITS)) {
+    if (!adjacency[exit.from]) {
+      adjacency[exit.from] = [];
+    }
+    adjacency[exit.from]!.push(exit.id);
   }
 
   // Connect outside walls to wilderness (loc_0)

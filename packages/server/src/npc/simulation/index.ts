@@ -95,8 +95,8 @@ export class SimulationEngine {
     const messages: SimulationMessage[] = [];
     const npcsWithSim = npcsAtLocation.filter(npc => npc.simulation);
 
-    // 40% chance: Try NPC conversation
-    if (Math.random() < 0.4 && npcsWithSim.length >= 2) {
+    // 60% chance: Try NPC conversation (was 40%)
+    if (Math.random() < 0.6 && npcsWithSim.length >= 2) {
       const result = tryGenerateConversation(
         npcsWithSim,
         TOPICS,
@@ -112,8 +112,8 @@ export class SimulationEngine {
       }
     }
 
-    // 50% chance: Ambient action from random NPC
-    if (Math.random() < 0.5 && npcsWithSim.length > 0) {
+    // 75% chance: Ambient action from random NPC (was 50%)
+    if (Math.random() < 0.75 && npcsWithSim.length > 0) {
       const npc = npcsWithSim[Math.floor(Math.random() * npcsWithSim.length)];
 
       if (npc) {

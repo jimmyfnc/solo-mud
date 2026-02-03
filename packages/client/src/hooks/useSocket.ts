@@ -47,6 +47,8 @@ export function useSocket(): UseSocketReturn {
     setTime,
     setWeather,
     getStoredPlayerId,
+    getLastCharacterId,
+    setLastCharacterId,
     enterGame,
   } = useGameStore();
 
@@ -94,6 +96,17 @@ export function useSocket(): UseSocketReturn {
       setPlayerIdentity(message.playerId, message.playerCode);
       setSavedCharacters(message.characters, message.maxCharacters);
       setClassOptions(message.classes);
+
+      // Auto-resume: if last character exists in the list, auto-load it
+      const lastCharId = getLastCharacterId();
+      if (lastCharId && message.characters.some(c => c.id === lastCharId)) {
+        socket.emit(CLIENT_EVENTS.LOAD_CHARACTER, {
+          type: 'load_character',
+          characterId: lastCharId,
+        });
+        return;
+      }
+
       setShowCharacterSelect(true);
     });
 
@@ -126,6 +139,9 @@ export function useSocket(): UseSocketReturn {
       setRoom(message.room);
       setTime(message.time);
       setWeather(message.weather);
+      if (message.characterId) {
+        setLastCharacterId(message.characterId);
+      }
       enterGame(); // Hide character select, show game
     });
 
@@ -172,6 +188,8 @@ export function useSocket(): UseSocketReturn {
     setTime,
     setWeather,
     getStoredPlayerId,
+    getLastCharacterId,
+    setLastCharacterId,
     enterGame,
   ]);
 
@@ -181,6 +199,12 @@ export function useSocket(): UseSocketReturn {
     if (!socket?.connected) {
       addLines([{ text: 'Not connected to server.', style: 'error' }]);
       return;
+    }
+
+    // Clear auto-resume on explicit quit so WELCOME doesn't auto-load
+    const cmd = input.trim().toLowerCase();
+    if (cmd === 'quit' || cmd === 'logout' || cmd === 'exit') {
+      useGameStore.getState().clearLastCharacterId();
     }
 
     socket.emit(CLIENT_EVENTS.COMMAND, { type: 'command', input });

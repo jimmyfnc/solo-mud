@@ -32,6 +32,8 @@ export interface GameSession {
   puzzleSolution?: string[];
   /** Whether the sewer gate is currently open (resets when leaving area) */
   sewerGateOpen?: boolean;
+  /** God mode — take no damage (admin toggle, session-only) */
+  invincible?: boolean;
 }
 
 /**

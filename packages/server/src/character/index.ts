@@ -14,4 +14,6 @@ export {
   calculateCombatStats,
   getEffectiveStats,
   recalculatePlayerStats,
+  getLevelHitModifier,
+  getLevelDamageModifier,
 } from './stats';

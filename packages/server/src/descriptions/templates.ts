@@ -4,6 +4,7 @@
  */
 
 import type { TimeOfDay, Rng, Creature } from '@solo-mud/shared';
+import { getProp } from '@solo-mud/shared';
 
 export type Biome = 'plains' | 'forest' | 'hills' | 'swamp' | 'mountains' | 'desert';
 export type Weather = 'clear' | 'cloudy' | 'rain' | 'storm' | 'fog';
@@ -174,10 +175,12 @@ export function generateDescription(ctx: DescriptionContext): string {
     }
   }
 
-  // Props integration
+  // Props integration - use display name instead of ID
   if (ctx.props.length > 0 && ctx.rng.next() > 0.5) {
-    const prop = ctx.props[Math.floor(ctx.rng.next() * ctx.props.length)]!;
-    parts.push(`A ${prop} catches your attention.`);
+    const propId = ctx.props[Math.floor(ctx.rng.next() * ctx.props.length)]!;
+    const propDef = getProp(propId);
+    const propName = propDef?.name ?? propId.replace(/_/g, ' ');
+    parts.push(`A ${propName.toLowerCase()} catches your attention.`);
   }
 
   // Familiarity on repeat visits (after 2+ visits)

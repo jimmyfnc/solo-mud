@@ -1,7 +1,7 @@
 // Cooldown durations in milliseconds
-const NPC_CONVERSATION_COOLDOWN = 10 * 60 * 1000; // 10 minutes
-const TOPIC_COOLDOWN = 5 * 60 * 1000; // 5 minutes
-const PLAYER_SEEN_COOLDOWN = 10 * 60 * 1000; // 10 minutes
+const NPC_CONVERSATION_COOLDOWN = 3 * 60 * 1000; // 3 minutes (was 10)
+const TOPIC_COOLDOWN = 2 * 60 * 1000; // 2 minutes (was 5)
+const PLAYER_SEEN_COOLDOWN = 5 * 60 * 1000; // 5 minutes (was 10)
 
 export class CooldownTracker {
   // Key: sorted NPC IDs joined by '-', Value: timestamp when cooldown expires

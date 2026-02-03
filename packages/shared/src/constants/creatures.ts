@@ -3,6 +3,7 @@
  */
 
 import type { CreatureTemplate, BiomeWeights } from '../types/world';
+import { WOODS_CREATURE_TEMPLATES } from '../data/whispering-woods/creatures';
 
 // ============ Static (Ambient) Creatures ============
 
@@ -167,6 +168,7 @@ const WOLF: CreatureTemplate = {
   baseHp: 35,
   baseLevel: 3,
   spawnWeight: 5,
+  damageType: 'physical',
   descriptions: {
     idle: [
       'A wolf watches you from the shadows.',
@@ -192,6 +194,7 @@ const BEAR: CreatureTemplate = {
   baseHp: 80,
   baseLevel: 6,
   spawnWeight: 2,
+  damageType: 'physical',
   descriptions: {
     idle: [
       'A massive bear forages nearby.',
@@ -217,6 +220,7 @@ const SPIDER: CreatureTemplate = {
   baseHp: 25,
   baseLevel: 4,
   spawnWeight: 4,
+  damageType: 'poison',
   descriptions: {
     idle: [
       'Thick webs hang between the trees.',
@@ -242,6 +246,7 @@ const GOBLIN: CreatureTemplate = {
   baseHp: 20,
   baseLevel: 2,
   spawnWeight: 6,
+  damageType: 'physical',
   descriptions: {
     idle: [
       'A goblin skulks in the shadows.',
@@ -267,6 +272,7 @@ const BANDIT: CreatureTemplate = {
   baseHp: 40,
   baseLevel: 4,
   spawnWeight: 3,
+  damageType: 'physical',
   descriptions: {
     idle: [
       'A hooded figure watches from nearby.',
@@ -292,6 +298,7 @@ const TROLL: CreatureTemplate = {
   baseHp: 100,
   baseLevel: 7,
   spawnWeight: 1,
+  damageType: 'physical',
   descriptions: {
     idle: [
       'The ground trembles with heavy footsteps.',
@@ -317,6 +324,7 @@ const SNAKE: CreatureTemplate = {
   baseHp: 15,
   baseLevel: 2,
   spawnWeight: 7,
+  damageType: 'poison',
   descriptions: {
     idle: [
       'A snake slithers through the grass.',
@@ -347,6 +355,85 @@ const TRAINING_DUMMY: CreatureTemplate = {
   },
 };
 
+// ============ Sewer Dungeon Creatures ============
+
+const SEWER_RAT: CreatureTemplate = {
+  id: 'sewer_rat',
+  name: 'Rat',
+  behavior: 'aggressive',
+  mobility: 'roaming',
+  tier: 'common',
+  biomes: [],
+  minDepth: 0,
+  maxDepth: -1,
+  baseHp: 15,
+  baseLevel: 1,
+  spawnWeight: 0, // Placed manually in sewer
+  damageType: 'physical',
+  descriptions: {
+    idle: [
+      'A mangy rat bares its yellow teeth.',
+      'A filthy rat scurries along the wall.',
+      'A rat with scarred ears chitters menacingly.',
+    ],
+    alert: [
+      'The rat lunges at you with a high-pitched shriek!',
+      'Yellowed fangs snap at your ankles!',
+    ],
+  },
+};
+
+const LARGE_RAT: CreatureTemplate = {
+  id: 'large_rat',
+  name: 'Large Rat',
+  behavior: 'aggressive',
+  mobility: 'static',
+  tier: 'common',
+  biomes: [],
+  minDepth: 0,
+  maxDepth: -1,
+  baseHp: 35,
+  baseLevel: 3,
+  spawnWeight: 0, // Placed manually in sewer
+  damageType: 'physical',
+  descriptions: {
+    idle: [
+      'A massive rat the size of a small dog blocks your path.',
+      'An enormous rat guards its territory.',
+      'A bloated rat watches you with beady eyes.',
+    ],
+    alert: [
+      'The large rat screeches and charges!',
+      'The rat rears up, claws raking the air!',
+    ],
+  },
+};
+
+const KING_RAT: CreatureTemplate = {
+  id: 'king_rat',
+  name: 'King Rat',
+  behavior: 'aggressive',
+  mobility: 'static',
+  tier: 'apex',
+  biomes: [],
+  minDepth: 0,
+  maxDepth: -1,
+  baseHp: 150,
+  baseLevel: 6,
+  spawnWeight: 0, // Boss - never spawns naturally
+  damageType: 'poison', // The King Rat's bites are diseased
+  descriptions: {
+    idle: [
+      'A monstrous rat lord sits upon a throne of bones and refuse.',
+      'The King Rat\'s crown of twisted metal glints in the dim light.',
+    ],
+    alert: [
+      'The King Rat rises with a terrible shriek, rallying its subjects!',
+      'Diseased claws rake toward you as the beast attacks!',
+    ],
+  },
+};
+
 // ============ Export All Templates ============
 
 export const CREATURE_TEMPLATES: Record<string, CreatureTemplate> = {
@@ -367,6 +454,12 @@ export const CREATURE_TEMPLATES: Record<string, CreatureTemplate> = {
   bandit: BANDIT,
   troll: TROLL,
   snake: SNAKE,
+  // Sewer Dungeon
+  sewer_rat: SEWER_RAT,
+  large_rat: LARGE_RAT,
+  king_rat: KING_RAT,
+  // Whispering Woods
+  ...WOODS_CREATURE_TEMPLATES,
 };
 
 /**

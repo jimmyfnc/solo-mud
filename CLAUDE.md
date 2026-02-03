@@ -88,12 +88,6 @@ This file contains persistent notes for Claude Code sessions.
 ### Missing Commands
 - `effects` / `buffs` - View active spell effects, buffs, debuffs (currently shown in `status` command)
 
-### Combat System Issues
-- `attack` command does instant damage (should start auto-attack)
-- Players can spam `kill` for unlimited damage
-- Only creatures use the tick-based auto-attack system
-- Need proper MUD-style auto-attack for players
-
 ### UX Improvements
 - Show exits automatically (brief: just directions)
 - `look` should expand with more description + detailed exits
@@ -158,6 +152,49 @@ simulation: {
 ### Cooldown System
 - Prevents message spam with per-player, per-NPC-pair, and per-topic cooldowns
 - Players don't see the same message twice in a session
+
+## Planned Refactor: Data Organization
+
+Current state: `easthollow.ts` is 2000+ lines mixing locations, NPCs, and shop items. As we add more towns, this won't scale.
+
+### Target Structure
+```
+packages/shared/src/data/
+├── towns/
+│   ├── easthollow/
+│   │   ├── index.ts          # Re-exports all
+│   │   ├── locations.ts      # EASTHOLLOW_LOCATIONS, SEWER_LOCATIONS
+│   │   ├── npcs.ts           # EASTHOLLOW_NPCS, conversation templates
+│   │   └── shop-items.ts     # Items sold by Easthollow merchants
+│   ├── [future-town]/
+│   │   └── ...
+│   └── shared/
+│       └── common-items.ts   # Items sold everywhere (torch, rations, bandage)
+├── items/
+│   ├── index.ts              # Re-exports, createItemFromTemplate()
+│   ├── weapons.ts            # WEAPON_DAMAGE, weapon templates
+│   ├── armor.ts              # ARMOR_STATS (TODO), armor templates
+│   ├── consumables.ts        # Move from constants/ (already separate)
+│   └── starter-gear.ts       # STARTER_CLOTHING, CLASS_STARTER_WEAPONS
+└── loot/
+    ├── index.ts              # Shared loot types, generateLootDrop()
+    ├── sewer-loot.ts         # Sewer templates + tables
+    └── [future]-loot.ts      # Other dungeon drops
+```
+
+### Benefits
+- Each town is self-contained (easy to add new towns)
+- Clear separation: locations vs NPCs vs shop inventory
+- Shared items don't duplicate across towns
+- Weapon/armor stats in dedicated files
+
+### Migration Steps
+1. Create `data/towns/easthollow/` directory
+2. Extract locations → `locations.ts`
+3. Extract NPCs → `npcs.ts`
+4. Extract shop items → `shop-items.ts`
+5. Update imports across server/client
+6. Move weapon damage from `constants/items.ts` → `data/items/weapons.ts`
 
 ## Code Conventions
 

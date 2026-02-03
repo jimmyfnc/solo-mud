@@ -102,6 +102,11 @@ export const CONSUMABLE_EFFECTS: Record<string, ConsumableEffect> = {
     amount: 50,
     flavorText: 'The red liquid tastes bitter but works instantly.',
   },
+  'minor-health-potion': {
+    type: 'heal_hp',
+    amount: 25,
+    flavorText: 'A weak healing potion. It helps, but not much.',
+  },
   mana_potion: {
     type: 'heal_mp',
     amount: 50,
@@ -116,6 +121,18 @@ export const CONSUMABLE_EFFECTS: Record<string, ConsumableEffect> = {
     type: 'heal_both',
     amount: 25,
     flavorText: 'Energy surges through your body!',
+  },
+
+  // === Sewer Loot ===
+  'dirty-bandage': {
+    type: 'heal_hp',
+    amount: 15,
+    flavorText: 'You wrap the grimy bandage around your wounds. It\'s not sanitary, but it helps.',
+  },
+  'moldy-bread': {
+    type: 'heal_hp',
+    amount: 5,
+    flavorText: 'You choke down the moldy bread. Desperate times...',
   },
 
   // === Special Items ===

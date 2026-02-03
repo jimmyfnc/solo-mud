@@ -81,7 +81,14 @@ function getOwnedItems(player: Player, world: World): Record<string, Item> {
 export function createSocketServer(httpServer: HttpServer): SocketServer {
   const io = new SocketServer(httpServer, {
     cors: {
-      origin: process.env['CLIENT_ORIGIN'] ?? 'http://localhost:3000',
+      origin: (origin, callback) => {
+        // Allow any localhost origin for development
+        if (!origin || origin.startsWith('http://localhost:')) {
+          callback(null, true);
+        } else {
+          callback(null, process.env['CLIENT_ORIGIN'] ?? 'http://localhost:3000');
+        }
+      },
       methods: ['GET', 'POST'],
     },
   });
@@ -456,6 +463,9 @@ function handleCommand(socket: GameSocket, input: string): void {
     return;
   }
 
+  // Echo the command for debugging
+  sendOutput(socket, [{ text: `> ${input}`, style: 'system' }]);
+
   const result = executeCommand(session, input);
   sendOutput(socket, result.output);
 
@@ -522,7 +532,7 @@ function handleSyncRequest(socket: GameSocket): void {
     return;
   }
 
-  // Send full sync
+  // Send full sync (includes characterId for session resume on refresh)
   socket.emit(SERVER_EVENTS.SYNC, {
     type: 'sync',
     player: session.player,
@@ -530,6 +540,7 @@ function handleSyncRequest(socket: GameSocket): void {
     room: buildRoomMessage(session),
     time: session.world.time,
     weather: session.world.weather,
+    characterId: session.characterId,
   });
 }
 
@@ -562,6 +573,7 @@ export function saveCharacterState(session: GameSession): void {
     gameTime: session.world.time.totalMinutes,
     equipment: session.player.equipment,
     inventory: session.player.inventory,
+    keyring: session.player.keyring ?? [],
     ownedItems: getOwnedItems(session.player, session.world),
     knownSpells: session.player.spells.known,
   });

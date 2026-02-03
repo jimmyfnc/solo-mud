@@ -57,11 +57,11 @@ export interface Location {
   /** Prose description of the location */
   description?: string;
   biome: BiomeWeights;
-  props?: string[]; // "altar", "campfire", "broken statue"
+  props: string[]; // "altar", "campfire", "broken statue"
   items: ItemId[];
-  enemies?: EnemyId[];
+  enemies: EnemyId[];
   creatures: CreatureId[]; // Creatures currently in this location
-  visitState?: VisitState;
+  visitState: VisitState;
   depth: number; // Distance from start (for difficulty scaling)
   /** If true, no combat allowed and no creature spawns */
   isSafeZone?: boolean;

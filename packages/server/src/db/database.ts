@@ -87,6 +87,32 @@ function runMigrations(database: Database.Database): void {
     database.exec(`ALTER TABLE characters ADD COLUMN known_spells TEXT DEFAULT '[]'`);
     console.log('Migration: Added known_spells column to characters table');
   }
+
+  // Migration: Add keyring column for key storage
+  if (!columnNames.has('keyring')) {
+    database.exec(`ALTER TABLE characters ADD COLUMN keyring TEXT DEFAULT '[]'`);
+    console.log('Migration: Added keyring column to characters table');
+  }
+
+  // Migration: Create bank_storage table
+  const tables = database.prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name='bank_storage'`).all();
+  if (tables.length === 0) {
+    database.exec(`
+      CREATE TABLE IF NOT EXISTS bank_storage (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        account_id TEXT NOT NULL,
+        character_id TEXT,
+        slot INTEGER NOT NULL,
+        item_data TEXT NOT NULL,
+        tab TEXT NOT NULL DEFAULT 'personal',
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(account_id, character_id, slot, tab)
+      );
+      CREATE INDEX IF NOT EXISTS idx_bank_account ON bank_storage(account_id);
+      CREATE INDEX IF NOT EXISTS idx_bank_character ON bank_storage(character_id);
+    `);
+    console.log('Migration: Created bank_storage table');
+  }
 }
 
 /**

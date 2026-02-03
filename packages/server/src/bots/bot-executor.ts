@@ -81,13 +81,25 @@ export interface TriggerContext {
 
 /** Get random exit from current location */
 function getRandomExit(session: BotSession): string | null {
-  const location = session.world.locations[session.player.locationId];
-  if (!location || !location.exits || location.exits.length === 0) {
+  const { world, player } = session;
+
+  // Get exit IDs for this location from adjacency list
+  const exitIds = world.adjacency[player.locationId];
+  if (!exitIds || exitIds.length === 0) {
     return null;
   }
 
-  const exit = location.exits[Math.floor(Math.random() * location.exits.length)];
-  return exit.direction;
+  // Get actual exit objects
+  const exits = exitIds
+    .map(id => world.exits[id])
+    .filter(exit => exit && exit.type !== 'locked');
+
+  if (exits.length === 0) {
+    return null;
+  }
+
+  const exit = exits[Math.floor(Math.random() * exits.length)];
+  return exit?.label ?? null;
 }
 
 export class BotExecutor {

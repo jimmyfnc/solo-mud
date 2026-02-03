@@ -412,7 +412,7 @@ describe('BotManager', () => {
       const firstNamedBot = Array.from(namedBots.values())[0]!;
 
       // Move bot to a non-spawn location
-      firstNamedBot.player.currentLocation = 'some_random_location';
+      firstNamedBot.player.locationId = 'some_random_location';
 
       const currentGameTime = 100;
       manager.queueForRespawn(firstNamedBot.id, currentGameTime);
@@ -422,7 +422,7 @@ describe('BotManager', () => {
       manager.processRespawnQueue(respawnTime);
 
       // Bot should be at a spawn location
-      expect(defaultConfig.spawnLocations).toContain(firstNamedBot.player.currentLocation);
+      expect(defaultConfig.spawnLocations).toContain(firstNamedBot.player.locationId);
     });
 
     it('should return correct values for isAwaitingRespawn', async () => {

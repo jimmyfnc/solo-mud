@@ -238,6 +238,15 @@ export function createBotSession(bot: BotPlayer, existingWorld?: World): BotSess
     lockedEdges: 2,
   });
 
+  // If world was generated (not provided), ensure bot's location is valid
+  if (!existingWorld) {
+    // Use the world's start location if bot's location doesn't exist
+    if (!world.locations[bot.locationId]) {
+      bot.locationId = world.startId;
+      bot.boundTownId = world.startId;
+    }
+  }
+
   // Generate starter gear and add to world/player
   const { items, equipmentIds, inventoryIds } = generateStarterGear(bot.class);
   for (const item of items) {

@@ -5,6 +5,7 @@ export default defineConfig({
   plugins: [react()],
   server: {
     port: 3000,
+    host: true, // Expose to Windows from WSL
     proxy: {
       '/socket.io': {
         target: 'http://localhost:3001',
