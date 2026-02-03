@@ -5,9 +5,30 @@
 import type { BotSession } from './bot-session';
 import { getNextAction, completeAction } from './goap/planner';
 import { getActionCommand } from './goap/actions';
+import {
+  generateGreeting,
+  generateCombatBark,
+  generateVictory,
+  generateLowHpCall,
+  generateIdleChat,
+} from './conversation';
 
 /** Minimum time between AI ticks in ms */
 const MIN_TICK_INTERVAL = 3000; // 3 seconds
+
+/** Types of conversation triggers */
+export interface ConversationTrigger {
+  type: 'greeting' | 'combat_start' | 'victory' | 'low_hp' | 'idle';
+  targetName?: string; // For greetings
+}
+
+/** Context for triggering conversations */
+export interface TriggerContext {
+  playerEntered?: string; // Name of player who entered the room
+  combatStarted?: boolean; // Combat just began
+  combatEnded?: boolean; // Combat just ended
+  wasHealed?: boolean; // Bot was healed
+}
 
 /** Get random exit from current location */
 function getRandomExit(session: BotSession): string | null {
@@ -21,6 +42,9 @@ function getRandomExit(session: BotSession): string | null {
 }
 
 export class BotExecutor {
+  /** Track which bots have already called for help this combat */
+  private lowHpCalledThisCombat: Set<string> = new Set();
+
   /** Check if bot should tick based on time */
   shouldTick(session: BotSession): boolean {
     const bot = session.player;
@@ -29,8 +53,19 @@ export class BotExecutor {
   }
 
   /** Get the next command for a bot to execute */
-  getNextCommand(session: BotSession): string | null {
+  getNextCommand(session: BotSession, triggerContext?: TriggerContext): string | null {
     const bot = session.player;
+
+    // Check for conversation triggers first
+    if (triggerContext) {
+      const trigger = this.checkConversationTriggers(session, triggerContext);
+      if (trigger) {
+        const speechCommand = this.generateSpeechCommand(session, trigger);
+        if (speechCommand) {
+          return speechCommand;
+        }
+      }
+    }
 
     // Get next action from GOAP
     const actionId = getNextAction(bot);
@@ -69,5 +104,94 @@ export class BotExecutor {
   /** Update last tick time */
   markTicked(session: BotSession): void {
     session.player.lastAiTick = Date.now();
+  }
+
+  /**
+   * Check for conversation triggers based on session state and context.
+   * @param session - The bot session
+   * @param context - Optional trigger context (player entered, combat events)
+   * @returns A conversation trigger if one should fire, null otherwise
+   */
+  checkConversationTriggers(
+    session: BotSession,
+    context?: TriggerContext
+  ): ConversationTrigger | null {
+    const bot = session.player;
+
+    // Combat ended - reset low HP tracking and possibly trigger victory
+    if (context?.combatEnded) {
+      this.lowHpCalledThisCombat.delete(bot.id);
+      if (bot.currentHp > 0) {
+        return { type: 'victory' };
+      }
+      return null;
+    }
+
+    // Combat started - trigger combat bark
+    if (context?.combatStarted) {
+      return { type: 'combat_start' };
+    }
+
+    // Player entered the room - 30% chance to greet
+    if (context?.playerEntered) {
+      if (Math.random() < 0.3) {
+        return { type: 'greeting', targetName: context.playerEntered };
+      }
+      return null;
+    }
+
+    // Low HP check (only once per combat)
+    if (bot.inCombat && bot.currentHp < bot.maxHp * 0.3) {
+      if (!this.lowHpCalledThisCombat.has(bot.id)) {
+        this.lowHpCalledThisCombat.add(bot.id);
+        return { type: 'low_hp' };
+      }
+      return null;
+    }
+
+    // Idle chat (5% chance when not in combat)
+    if (!bot.inCombat && Math.random() < 0.05) {
+      return { type: 'idle' };
+    }
+
+    return null;
+  }
+
+  /**
+   * Generate a speech command from a conversation trigger.
+   * @param session - The bot session
+   * @param trigger - The conversation trigger
+   * @returns A 'say' command string, or null if no speech should be generated
+   */
+  generateSpeechCommand(session: BotSession, trigger: ConversationTrigger): string | null {
+    const bot = session.player;
+    let speech: string | null = null;
+
+    switch (trigger.type) {
+      case 'greeting':
+        if (!trigger.targetName) {
+          return null;
+        }
+        speech = generateGreeting(bot, trigger.targetName);
+        break;
+      case 'combat_start':
+        speech = generateCombatBark(bot);
+        break;
+      case 'victory':
+        speech = generateVictory(bot);
+        break;
+      case 'low_hp':
+        speech = generateLowHpCall(bot);
+        break;
+      case 'idle':
+        speech = generateIdleChat(bot);
+        break;
+    }
+
+    if (speech) {
+      return `say ${speech}`;
+    }
+
+    return null;
   }
 }
