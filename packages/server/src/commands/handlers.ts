@@ -701,6 +701,79 @@ function handleExamine(ctx: CommandContext): CommandResult {
     return { output };
   }
 
+  // Check for bots at this location
+  const botManager = getBotManager();
+  const botsHere = (botManager?.getAllBots() ?? [])
+    .filter(bs => bs.player.locationId === player.locationId);
+  const botSession = botsHere.find(bs => bs.player.name.toLowerCase().includes(targetLower));
+
+  if (botSession) {
+    const bot = botSession.player;
+    const output: OutputLine[] = [
+      { text: `${bot.name}`, style: 'system' },
+      { text: `A level ${bot.level} ${bot.class}.`, style: 'normal' },
+    ];
+
+    // Show health status
+    const healthPercent = Math.floor((bot.hp / bot.maxHp) * 100);
+    if (healthPercent < 25) {
+      output.push({ text: 'They look badly wounded.', style: 'combat' });
+    } else if (healthPercent < 50) {
+      output.push({ text: 'They appear to be injured.', style: 'combat' });
+    } else if (healthPercent < 75) {
+      output.push({ text: 'They have a few scratches.', style: 'normal' });
+    } else {
+      output.push({ text: 'They appear to be in good health.', style: 'normal' });
+    }
+
+    // Show personality hint based on traits
+    const personality = bot.botProfile.personality;
+    if (personality.bravery > 80) {
+      output.push({ text: 'They carry themselves with bold confidence.', style: 'normal' });
+    } else if (personality.bravery < 30) {
+      output.push({ text: 'They seem cautious and watchful.', style: 'normal' });
+    }
+
+    if (personality.sociability > 70) {
+      output.push({ text: 'They look friendly and approachable.', style: 'normal' });
+    } else if (personality.sociability < 30) {
+      output.push({ text: 'They keep to themselves.', style: 'normal' });
+    }
+
+    return { output };
+  }
+
+  // Check for other real players at this location
+  const otherPlayers = sessionManager.getAllSessions()
+    .filter(s => s.player.locationId === player.locationId && s.id !== session.id);
+  const otherPlayer = otherPlayers.find(s => s.player.name.toLowerCase().includes(targetLower));
+
+  if (otherPlayer) {
+    const other = otherPlayer.player;
+    const output: OutputLine[] = [
+      { text: `${other.name}`, style: 'system' },
+      { text: `A level ${other.level} ${other.class}.`, style: 'normal' },
+    ];
+
+    // Show health status
+    const healthPercent = Math.floor((other.hp / other.maxHp) * 100);
+    if (healthPercent < 25) {
+      output.push({ text: 'They look badly wounded.', style: 'combat' });
+    } else if (healthPercent < 50) {
+      output.push({ text: 'They appear to be injured.', style: 'combat' });
+    } else if (healthPercent < 75) {
+      output.push({ text: 'They have a few scratches.', style: 'normal' });
+    } else {
+      output.push({ text: 'They appear to be in good health.', style: 'normal' });
+    }
+
+    if (other.inCombat) {
+      output.push({ text: 'They are currently engaged in combat!', style: 'combat' });
+    }
+
+    return { output };
+  }
+
   return {
     output: [{ text: `You don't see any "${parsed.target}" here.`, style: 'error' }],
   };

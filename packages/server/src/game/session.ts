@@ -4,7 +4,7 @@
 
 import type { Player, World, CombatStats, ClassName } from '@solo-mud/shared';
 import { generateStarterGear } from '@solo-mud/shared';
-import { generateWorld } from '../world/generate';
+import { getSharedWorld, getSharedWorldSeed } from '../world/shared-world';
 import { createPlayer, calculateCombatStats } from '../character';
 import { createIncursionState, type IncursionState } from './incursion';
 
@@ -44,17 +44,13 @@ class SessionManager {
 
   /**
    * Create a new game session for a socket connection.
+   * Uses the shared server world - all players and bots share the same world.
    * Returns the session and the world seed for persistence.
    */
   createSession(socketId: string, playerName: string, className: ClassName = 'warrior'): { session: GameSession; worldSeed: string } {
-    // Generate a new world for this player
-    const worldSeed = `${socketId}-${Date.now()}`;
-    const world = generateWorld({
-      seed: worldSeed,
-      nodeCount: 18,
-      extraEdges: 5,
-      lockedEdges: 2,
-    });
+    // Use the shared server world - everyone plays in the same world
+    const world = getSharedWorld();
+    const worldSeed = getSharedWorldSeed();
 
     // Create initial player state using the player factory
     const player = createPlayer({

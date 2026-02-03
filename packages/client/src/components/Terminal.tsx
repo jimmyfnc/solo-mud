@@ -163,6 +163,10 @@ function getStyleClasses(style?: OutputLine['style']): string {
     case 'simulation':
       // Handled separately in TerminalLine
       return 'text-gray-400';
+    case 'speech':
+      return 'text-yellow-300';
+    case 'emote':
+      return 'text-pink-400 italic';
     case 'normal':
     default:
       return 'text-gray-200';

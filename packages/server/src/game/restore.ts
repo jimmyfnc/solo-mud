@@ -4,7 +4,7 @@
 
 import type { Player, World, ClassName, InventorySlot } from '@solo-mud/shared';
 import { getStarterSpellId } from '@solo-mud/shared';
-import { generateWorld } from '../world/generate';
+import { getSharedWorld, getSharedWorldSeed } from '../world/shared-world';
 import { calculateCombatStats } from '../character';
 import type { CharacterRecord } from '../db/repositories/CharacterRepository';
 import {
@@ -18,23 +18,20 @@ import type { GameSession } from './session';
 
 /**
  * Restore a game session from a saved character.
+ * Uses the shared server world - all players share the same world.
  */
 export function restoreSession(
   socketId: string,
   character: CharacterRecord
 ): GameSession {
-  // Regenerate the world from the stored seed
-  const world = generateWorld({
-    seed: character.worldSeed,
-    nodeCount: 18,
-    extraEdges: 5,
-    lockedEdges: 2,
-  });
+  // Use the shared server world
+  const world = getSharedWorld();
 
-  // Apply world modifications
+  // Apply any character-specific world modifications (unlocked exits, etc.)
   applyWorldModifications(world, character.id);
 
-  // Restore player-owned items to the world
+  // Restore player-owned items to the shared world
+  // These are items the player has in inventory/equipment
   for (const [itemId, item] of Object.entries(character.ownedItems)) {
     world.items[itemId] = item;
   }
@@ -100,6 +97,7 @@ export function restoreSession(
     createdAt: character.createdAt,
     lastActivity: Date.now(),
     characterId: character.id,
+    worldSeed: getSharedWorldSeed(),
   };
 }
 

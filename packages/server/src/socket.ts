@@ -42,6 +42,7 @@ import {
   recordItemRemoved,
   recordItemDropped,
 } from './db/repositories/WorldStateRepository';
+import { setIoServer } from './broadcast';
 
 export interface GameSocket extends Socket {
   playerId?: string;
@@ -92,6 +93,9 @@ export function createSocketServer(httpServer: HttpServer): SocketServer {
       methods: ['GET', 'POST'],
     },
   });
+
+  // Initialize broadcast system with the io server
+  setIoServer(io);
 
   io.on('connection', (socket: GameSocket) => {
     console.log(`Client connected: ${socket.id}`);
