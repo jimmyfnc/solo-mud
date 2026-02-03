@@ -294,14 +294,87 @@ export interface NamedBotDefinition {
 // Bot Spawn Configuration
 // ============================================================================
 
-/** Configuration for bot population management */
+/**
+ * Configuration for bot population management.
+ *
+ * ## Recommended Values by World Type
+ *
+ * ### Small/Starter World (1 town, 1 dungeon)
+ * ```typescript
+ * {
+ *   minPopulation: 5,    // Keeps world feeling alive
+ *   maxPopulation: 10,   // Prevents overcrowding
+ *   namedBotCount: 8,    // All named bots from data file
+ *   spawnLocations: ['town_square', 'town_inn', 'town_gate'],
+ *   levelRange: [1, 5],  // Matches starter dungeon
+ *   namedBotRespawnDelay: 1440, // 24 game-hours = ~24 real-minutes
+ * }
+ * ```
+ *
+ * ### Medium World (multiple towns, several dungeons)
+ * ```typescript
+ * {
+ *   minPopulation: 10,
+ *   maxPopulation: 20,
+ *   namedBotCount: 15,
+ *   spawnLocations: [...], // Multiple town centers
+ *   levelRange: [1, 15],
+ *   namedBotRespawnDelay: 2880, // 48 game-hours
+ * }
+ * ```
+ *
+ * ### Large World (open world, many areas)
+ * ```typescript
+ * {
+ *   minPopulation: 20,
+ *   maxPopulation: 50,
+ *   namedBotCount: 30,
+ *   spawnLocations: [...], // Many spawn points
+ *   levelRange: [1, 30],
+ *   namedBotRespawnDelay: 4320, // 72 game-hours (3 game-days)
+ * }
+ * ```
+ *
+ * ## Parameter Guidelines
+ *
+ * - **minPopulation**: Set to desired "baseline" activity level
+ *   - Too low: World feels empty
+ *   - Too high: Spawns generic bots constantly
+ *
+ * - **maxPopulation**: Cap to prevent server strain
+ *   - Should be 2-3x minPopulation
+ *   - Consider: each bot uses ~10KB memory + tick processing
+ *
+ * - **namedBotCount**: Match your named bot data file count
+ *   - Named bots are persistent and have backstories
+ *   - Generic bots fill remaining slots
+ *
+ * - **spawnLocations**: Where new bots appear
+ *   - Use social hubs (inns, squares) for natural feel
+ *   - Avoid dungeons (bots should travel there)
+ *
+ * - **levelRange**: Match the accessible content
+ *   - Generic bots spawn within this range
+ *   - Named bots use their defined startingLevel
+ *
+ * - **namedBotRespawnDelay**: Time before dead named bot returns
+ *   - 1440 = 24 game-hours (1 real day at 60x time)
+ *   - Higher values make death more meaningful
+ *   - Set to 0 for instant respawn (testing only)
+ */
 export interface BotSpawnConfig {
+  /** Minimum bots to maintain. System spawns new bots if below this. */
   minPopulation: number;
+  /** Maximum bots allowed. No new spawns if at or above this. */
   maxPopulation: number;
+  /** Number of named (persistent) bots to spawn. */
   namedBotCount: number;
+  /** Location IDs where bots can spawn. */
   spawnLocations: string[];
+  /** Level range [min, max] for generic bot spawns. */
   levelRange: [number, number];
-  namedBotRespawnDelay: number; // in game-minutes
+  /** Game-minutes before a dead named bot respawns. */
+  namedBotRespawnDelay: number;
 }
 
 /** Death penalty configuration */

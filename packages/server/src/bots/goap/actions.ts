@@ -1,5 +1,40 @@
 /**
  * GOAP Action definitions and precondition checking.
+ *
+ * ## Action Cost System
+ *
+ * The GOAP planner chooses actions with the lowest cost that satisfy goal conditions.
+ * Lower cost = more preferred action.
+ *
+ * ### Cost Scale Guidelines
+ *
+ * | Range | Meaning                            | Examples                      |
+ * |-------|-------------------------------------|-------------------------------|
+ * | 1-5   | Trivial - always choose if valid   | Use potion, loot, equip       |
+ * | 6-10  | Cheap - generally preferred        | Attack, travel (familiar)     |
+ * | 11-20 | Moderate - situational preference  | Explore, rest, say            |
+ * | 21-30 | Expensive - only when necessary    | Flee (for brave bots)         |
+ * | 31+   | Very expensive - last resort       | Rarely used                   |
+ *
+ * ### Personality Modifiers
+ *
+ * Costs are modified by personality traits:
+ * - **bravery**: Affects flee cost (brave bots find fleeing expensive)
+ * - **patience**: Affects rest cost (impatient bots find resting expensive)
+ * - **greed**: Affects buy cost (greedy bots find spending expensive)
+ * - **sociability**: Affects say cost (social bots find talking cheap)
+ *
+ * ### Survival Balancing
+ *
+ * Critical balance: flee vs attack when HP is low
+ * - Attack base cost: 10 (always same)
+ * - Flee base cost: 20 + bravery/5 (range: 20-40)
+ * - After recent death: flee cost -10 (range: 10-30)
+ *
+ * This means:
+ * - Cowardly bots (bravery 0-50) will flee when hurt
+ * - Brave bots (bravery 70-100) keep fighting unless recently died
+ * - Recent death makes ALL bots more likely to flee
  */
 
 import type { BotActionDef, ActionPrecondition } from '@solo-mud/shared';
@@ -15,7 +50,15 @@ export interface Action extends BotActionDef {
 
 /** All defined actions */
 export const ACTIONS: Record<string, Action> = {
-  // Combat actions
+  // =========================================================================
+  // Combat Actions
+  // =========================================================================
+
+  /**
+   * ATTACK - Standard combat action
+   * Cost: 10 (fixed)
+   * Preconditions: Must be in combat with a target
+   */
   attack: {
     id: 'attack',
     category: 'combat',
@@ -29,6 +72,19 @@ export const ACTIONS: Record<string, Action> = {
     getCommand: () => 'attack',
   },
 
+  /**
+   * FLEE - Escape from combat
+   * Base cost: 20
+   * Bravery modifier: +0 to +20 (brave bots resist fleeing)
+   * Recent death modifier: -10 (trauma makes fleeing acceptable)
+   * Final range: 5-40
+   * Minimum cost: 5 (always possible to choose flee)
+   *
+   * Balance note: At low HP, survive goal increases priority. If flee cost
+   * is lower than attack cost (10), bot will flee. This happens when:
+   * - Cowardly bot (bravery < 50): cost 20-30, flee at low HP
+   * - After recent death: cost reduced by 10, more likely to flee
+   */
   flee: {
     id: 'flee',
     category: 'combat',
@@ -53,7 +109,15 @@ export const ACTIONS: Record<string, Action> = {
     getCommand: () => 'flee',
   },
 
-  // Survival actions
+  // =========================================================================
+  // Survival Actions
+  // =========================================================================
+
+  /**
+   * USE_POTION - Consume a healing potion
+   * Cost: 5 (very cheap - always use if available and hurt)
+   * Preconditions: Must have health_potion, HP below 70%
+   */
   use_potion: {
     id: 'use_potion',
     category: 'survival',
@@ -67,6 +131,13 @@ export const ACTIONS: Record<string, Action> = {
     getCommand: () => 'use health_potion',
   },
 
+  /**
+   * REST - Regenerate HP/MP faster
+   * Base cost: 15
+   * Patience modifier: +0 to +20 (impatient bots dislike resting)
+   * Final range: 15-35
+   * Preconditions: Must not be in combat
+   */
   rest: {
     id: 'rest',
     category: 'survival',
@@ -80,7 +151,17 @@ export const ACTIONS: Record<string, Action> = {
     getCommand: () => 'rest',
   },
 
-  // Movement actions
+  // =========================================================================
+  // Movement Actions
+  // =========================================================================
+
+  /**
+   * TRAVEL - Move to a known location
+   * Base cost: 10
+   * Experience modifier: -2 if knows 10+ locations (efficient pathfinding)
+   * Final range: 5-10
+   * Preconditions: Must not be in combat
+   */
   travel: {
     id: 'travel',
     category: 'movement',
@@ -109,6 +190,14 @@ export const ACTIONS: Record<string, Action> = {
     },
   },
 
+  /**
+   * EXPLORE - Discover a new location
+   * Base cost: 15
+   * Explorer activity preference: cost = 5 (explorers love this)
+   * Restlessness modifier: -3 if haven't explored in 2+ minutes
+   * Final range: 1-15
+   * Minimum cost: 1
+   */
   explore: {
     id: 'explore',
     category: 'movement',
@@ -142,7 +231,16 @@ export const ACTIONS: Record<string, Action> = {
     },
   },
 
-  // Economy actions
+  // =========================================================================
+  // Economy Actions
+  // =========================================================================
+
+  /**
+   * BUY_ITEM - Purchase from a shop
+   * Base cost: 10
+   * Greed modifier: +0 to +20 (greedy bots hate spending)
+   * Final range: 10-30
+   */
   buy_item: {
     id: 'buy_item',
     category: 'economy',
@@ -161,6 +259,10 @@ export const ACTIONS: Record<string, Action> = {
     },
   },
 
+  /**
+   * SELL_ITEM - Sell to a shop
+   * Cost: 10 (fixed - everyone likes getting gold)
+   */
   sell_item: {
     id: 'sell_item',
     category: 'economy',
@@ -176,7 +278,16 @@ export const ACTIONS: Record<string, Action> = {
     },
   },
 
-  // Social actions
+  // =========================================================================
+  // Social Actions
+  // =========================================================================
+
+  /**
+   * SAY - Speak to the room
+   * Base cost: 15
+   * Sociability modifier: -0 to -10 (social bots love talking)
+   * Final range: 5-15
+   */
   say: {
     id: 'say',
     category: 'social',
@@ -195,7 +306,14 @@ export const ACTIONS: Record<string, Action> = {
     },
   },
 
-  // Utility actions
+  // =========================================================================
+  // Utility Actions
+  // =========================================================================
+
+  /**
+   * LOOT - Pick up items from ground
+   * Cost: 5 (very cheap - always grab loot)
+   */
   loot: {
     id: 'loot',
     category: 'utility',
@@ -206,6 +324,10 @@ export const ACTIONS: Record<string, Action> = {
     getCommand: () => 'take all',
   },
 
+  /**
+   * EQUIP - Equip an item from inventory
+   * Cost: 5 (very cheap - always equip upgrades)
+   */
   equip: {
     id: 'equip',
     category: 'utility',

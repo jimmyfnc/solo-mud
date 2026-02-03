@@ -1,5 +1,42 @@
 /**
  * BotExecutor - executes bot AI decisions as game commands.
+ *
+ * ## Tick Timing
+ *
+ * The AI tick interval controls how often bots make decisions:
+ * - 1000ms (1s): Very fast - bots feel twitchy, unrealistic
+ * - 2000ms (2s): Fast - active bots, good for combat-heavy areas
+ * - 3000ms (3s): Normal - balanced, human-like reaction time (CURRENT)
+ * - 5000ms (5s): Slow - relaxed, good for social areas
+ * - 10000ms (10s): Very slow - almost idle, good for background NPCs
+ *
+ * Current value: 3000ms provides a good balance between responsiveness
+ * and natural-feeling behavior. Bots don't instantly react but aren't
+ * noticeably sluggish either.
+ *
+ * ## Conversation Trigger Chances
+ *
+ * These probabilities control how often bots speak:
+ *
+ * | Trigger       | Chance | Reasoning                                    |
+ * |---------------|--------|----------------------------------------------|
+ * | greeting      | 30%    | Noticeable but not annoying                  |
+ * | combat_start  | 100%*  | Always bark when combat starts               |
+ * | victory       | 100%*  | Always celebrate after winning               |
+ * | low_hp        | 100%*  | Always call for help when in danger          |
+ * | idle          | 5%     | Rare - keeps chat lively without spam        |
+ *
+ * *These triggers fire once per event, not per tick, so 100% is fine.
+ *
+ * ### Adjusting Conversation Frequency
+ *
+ * To make bots more chatty:
+ * - Increase greeting chance to 50-70%
+ * - Increase idle chance to 10-15%
+ *
+ * To make bots quieter:
+ * - Decrease greeting chance to 10-20%
+ * - Decrease idle chance to 1-2%
  */
 
 import type { BotSession } from './bot-session';
@@ -13,7 +50,19 @@ import {
   generateIdleChat,
 } from './conversation';
 
-/** Minimum time between AI ticks in ms */
+/**
+ * Minimum time between AI ticks in ms.
+ *
+ * Recommended values:
+ * - 2000ms: Fast-paced, good for dungeons
+ * - 3000ms: Normal pace, balanced (current)
+ * - 5000ms: Relaxed pace, good for towns
+ *
+ * Changing this affects:
+ * - Bot responsiveness in combat
+ * - How quickly bots move between rooms
+ * - Server CPU usage (lower = more processing)
+ */
 const MIN_TICK_INTERVAL = 3000; // 3 seconds
 
 /** Types of conversation triggers */
@@ -133,6 +182,7 @@ export class BotExecutor {
     }
 
     // Player entered the room - 30% chance to greet
+    // Tuning: Lower (10-20%) for quieter world, higher (50-70%) for lively world
     if (context?.playerEntered) {
       if (Math.random() < 0.3) {
         return { type: 'greeting', targetName: context.playerEntered };
@@ -150,6 +200,8 @@ export class BotExecutor {
     }
 
     // Idle chat (5% chance when not in combat)
+    // Tuning: Lower (1-2%) for quieter world, higher (10-15%) for chatty bots
+    // Note: This fires every tick, so 5% * ~20 ticks/minute = ~1 idle chat/minute
     if (!bot.inCombat && Math.random() < 0.05) {
       return { type: 'idle' };
     }
