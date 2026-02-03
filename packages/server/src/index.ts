@@ -3,7 +3,10 @@
 import { createApp, startServer } from './app';
 import { createSocketServer } from './socket';
 import { createTelnetServer } from './telnet';
-import { startGameLoop, stopGameLoop } from './game/game-loop';
+import { startGameLoop, stopGameLoop, setBotManager } from './game/game-loop';
+import { setBotManager as setAdminBotManager } from './commands/admin-handlers';
+import { BotManager, executeBotCommand } from './bots';
+import type { BotSpawnConfig } from '@solo-mud/shared';
 
 const PORT = parseInt(process.env['PORT'] ?? '3001', 10);
 const TELNET_PORT = parseInt(process.env['TELNET_PORT'] ?? '4000', 10);
@@ -25,12 +28,33 @@ async function main() {
     // Start the game loop for creature movement, etc.
     startGameLoop(io);
 
+    // Initialize bot system
+    const botConfig: BotSpawnConfig = {
+      minPopulation: 5,
+      maxPopulation: 10,
+      namedBotCount: 8,
+      spawnLocations: ['town_inn', 'town_square'],
+      levelRange: [1, 5],
+      namedBotRespawnDelay: 1440, // 24 game-hours
+    };
+
+    const botManager = new BotManager(botConfig);
+    await botManager.initialize();
+    botManager.setCommandHandler(executeBotCommand);
+    botManager.maintainPopulation(); // Spawn initial bots
+    setBotManager(botManager); // game-loop
+    setAdminBotManager(botManager); // admin-handlers
+    console.log(`Bot system initialized: ${botManager.getAllBots().length} bots active`);
+
     // Graceful shutdown
     const shutdown = async () => {
       console.log('Shutting down...');
       stopGameLoop();
       io.close();
       telnetServer.close();
+      // Bot manager cleanup (stop AI ticks, etc.)
+      setBotManager(undefined as unknown as BotManager);
+      setAdminBotManager(undefined as unknown as BotManager);
       await app.close();
       process.exit(0);
     };
