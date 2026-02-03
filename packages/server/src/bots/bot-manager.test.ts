@@ -317,6 +317,158 @@ describe('BotManager', () => {
     });
   });
 
+  describe('respawn queue', () => {
+    it('should add bot to respawn queue with correct respawn time', async () => {
+      await manager.initialize();
+      const namedBots = manager.getNamedBots();
+      const firstNamedBot = Array.from(namedBots.values())[0]!;
+
+      const currentGameTime = 100;
+      manager.queueForRespawn(firstNamedBot.id, currentGameTime);
+
+      // Respawn time should be gameTime + namedBotRespawnDelay
+      const expectedRespawnTime = currentGameTime + defaultConfig.namedBotRespawnDelay;
+      expect(manager.isAwaitingRespawn(firstNamedBot.id)).toBe(true);
+
+      // Internal check - the respawn time should be correct
+      const respawnQueue = manager['respawnQueue'];
+      const queueEntry = respawnQueue.get(firstNamedBot.id);
+      expect(queueEntry).toBeDefined();
+      expect(queueEntry!.respawnAt).toBe(expectedRespawnTime);
+    });
+
+    it('should set HP to 0 when queued for respawn', async () => {
+      await manager.initialize();
+      const namedBots = manager.getNamedBots();
+      const firstNamedBot = Array.from(namedBots.values())[0]!;
+
+      // Ensure bot has HP before death
+      expect(firstNamedBot.player.currentHp).toBeGreaterThan(0);
+
+      manager.queueForRespawn(firstNamedBot.id, 100);
+
+      // HP should be 0
+      expect(firstNamedBot.player.currentHp).toBe(0);
+    });
+
+    it('should respawn bot when time has elapsed', async () => {
+      await manager.initialize();
+      const namedBots = manager.getNamedBots();
+      const firstNamedBot = Array.from(namedBots.values())[0]!;
+
+      const currentGameTime = 100;
+      manager.queueForRespawn(firstNamedBot.id, currentGameTime);
+
+      // Process at exact respawn time
+      const respawnTime = currentGameTime + defaultConfig.namedBotRespawnDelay;
+      const respawned = manager.processRespawnQueue(respawnTime);
+
+      expect(respawned).toContain(firstNamedBot.player.name);
+      expect(manager.isAwaitingRespawn(firstNamedBot.id)).toBe(false);
+    });
+
+    it('should not respawn bot before time has elapsed', async () => {
+      await manager.initialize();
+      const namedBots = manager.getNamedBots();
+      const firstNamedBot = Array.from(namedBots.values())[0]!;
+
+      const currentGameTime = 100;
+      manager.queueForRespawn(firstNamedBot.id, currentGameTime);
+
+      // Process before respawn time
+      const tooEarly = currentGameTime + defaultConfig.namedBotRespawnDelay - 1;
+      const respawned = manager.processRespawnQueue(tooEarly);
+
+      expect(respawned).toHaveLength(0);
+      expect(manager.isAwaitingRespawn(firstNamedBot.id)).toBe(true);
+    });
+
+    it('should restore full HP and MP on respawn', async () => {
+      await manager.initialize();
+      const namedBots = manager.getNamedBots();
+      const firstNamedBot = Array.from(namedBots.values())[0]!;
+
+      const maxHp = firstNamedBot.player.maxHp;
+      const maxMp = firstNamedBot.player.maxMp;
+
+      const currentGameTime = 100;
+      manager.queueForRespawn(firstNamedBot.id, currentGameTime);
+
+      // HP should be 0 after queuing
+      expect(firstNamedBot.player.currentHp).toBe(0);
+
+      // Process at respawn time
+      const respawnTime = currentGameTime + defaultConfig.namedBotRespawnDelay;
+      manager.processRespawnQueue(respawnTime);
+
+      // HP and MP should be restored to max
+      expect(firstNamedBot.player.currentHp).toBe(maxHp);
+      expect(firstNamedBot.player.currentMp).toBe(maxMp);
+    });
+
+    it('should move bot to spawn location on respawn', async () => {
+      await manager.initialize();
+      const namedBots = manager.getNamedBots();
+      const firstNamedBot = Array.from(namedBots.values())[0]!;
+
+      // Move bot to a non-spawn location
+      firstNamedBot.player.currentLocation = 'some_random_location';
+
+      const currentGameTime = 100;
+      manager.queueForRespawn(firstNamedBot.id, currentGameTime);
+
+      // Process at respawn time
+      const respawnTime = currentGameTime + defaultConfig.namedBotRespawnDelay;
+      manager.processRespawnQueue(respawnTime);
+
+      // Bot should be at a spawn location
+      expect(defaultConfig.spawnLocations).toContain(firstNamedBot.player.currentLocation);
+    });
+
+    it('should return correct values for isAwaitingRespawn', async () => {
+      await manager.initialize();
+      const namedBots = manager.getNamedBots();
+      const firstNamedBot = Array.from(namedBots.values())[0]!;
+
+      // Initially not awaiting respawn
+      expect(manager.isAwaitingRespawn(firstNamedBot.id)).toBe(false);
+      expect(manager.isAwaitingRespawn('nonexistent_id')).toBe(false);
+
+      // After queuing for respawn
+      manager.queueForRespawn(firstNamedBot.id, 100);
+      expect(manager.isAwaitingRespawn(firstNamedBot.id)).toBe(true);
+
+      // After respawning
+      const respawnTime = 100 + defaultConfig.namedBotRespawnDelay;
+      manager.processRespawnQueue(respawnTime);
+      expect(manager.isAwaitingRespawn(firstNamedBot.id)).toBe(false);
+    });
+
+    it('should skip bots awaiting respawn during tick', async () => {
+      await manager.initialize();
+      const namedBots = manager.getNamedBots();
+      const firstNamedBot = Array.from(namedBots.values())[0]!;
+
+      // Queue for respawn
+      manager.queueForRespawn(firstNamedBot.id, 100);
+
+      // Set last tick to past so bot would normally tick
+      firstNamedBot.player.lastAiTick = 0;
+
+      // Track commands for this specific bot
+      const commands: { botId: string; command: string }[] = [];
+      manager.setCommandHandler(async (session, command) => {
+        commands.push({ botId: session.id, command });
+      });
+
+      await manager.tick(0);
+
+      // The dead bot should not have executed any commands
+      const deadBotCommands = commands.filter(c => c.botId === firstNamedBot.id);
+      expect(deadBotCommands).toHaveLength(0);
+    });
+  });
+
   describe('AI tick', () => {
     it('should use executor for bot commands', async () => {
       manager.maintainPopulation();

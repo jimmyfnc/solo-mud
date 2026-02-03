@@ -30,10 +30,17 @@ function randomInRange(min: number, max: number): number {
   return Math.floor(Math.random() * (max - min + 1)) + min;
 }
 
+/** Respawn queue entry for named bots awaiting respawn */
+interface RespawnQueueEntry {
+  namedBotId: string;
+  respawnAt: number; // game time in minutes
+}
+
 export class BotManager {
   private config: BotSpawnConfig;
   private bots: Map<string, BotSession> = new Map();
   private namedBots: Map<string, BotSession> = new Map();
+  private respawnQueue: Map<string, RespawnQueueEntry> = new Map();
   private nextBotId = 1;
   private executor: BotExecutor;
   private commandHandler?: CommandHandler;
@@ -162,6 +169,55 @@ export class BotManager {
     }
   }
 
+  /** Queue a named bot for respawn after the configured delay */
+  queueForRespawn(namedBotId: string, gameTime: number): void {
+    const session = this.namedBots.get(namedBotId);
+    if (!session) return;
+
+    // Calculate respawn time
+    const respawnAt = gameTime + this.config.namedBotRespawnDelay;
+
+    // Add to respawn queue
+    this.respawnQueue.set(namedBotId, {
+      namedBotId,
+      respawnAt,
+    });
+
+    // Set HP to 0 (they're "dead" until respawn)
+    session.player.currentHp = 0;
+  }
+
+  /** Process the respawn queue and respawn bots whose time has come */
+  processRespawnQueue(gameTime: number): string[] {
+    const respawnedNames: string[] = [];
+
+    for (const [botId, entry] of this.respawnQueue) {
+      if (gameTime >= entry.respawnAt) {
+        const session = this.namedBots.get(botId);
+        if (session) {
+          // Restore HP and MP to max
+          session.player.currentHp = session.player.maxHp;
+          session.player.currentMp = session.player.maxMp;
+
+          // Move to a spawn location
+          session.player.currentLocation = pickRandom(this.config.spawnLocations);
+
+          respawnedNames.push(session.player.name);
+        }
+
+        // Remove from respawn queue
+        this.respawnQueue.delete(botId);
+      }
+    }
+
+    return respawnedNames;
+  }
+
+  /** Check if a named bot is awaiting respawn */
+  isAwaitingRespawn(namedBotId: string): boolean {
+    return this.respawnQueue.has(namedBotId);
+  }
+
   /** Handle bot death - removes generic bots, marks named bots for respawn */
   handleBotDeath(botId: string): { wasNamed: boolean; botName: string } {
     // Check if it's a generic bot
@@ -184,9 +240,17 @@ export class BotManager {
   }
 
   /** Run AI tick for all bots (both named and generic) */
-  async tick(_gameTime: number): Promise<void> {
+  async tick(gameTime: number): Promise<void> {
+    // Process respawn queue first
+    this.processRespawnQueue(gameTime);
+
     // Iterate over all bots (named + generic)
     for (const session of this.getAllBots()) {
+      // Skip if awaiting respawn (dead)
+      if (this.isAwaitingRespawn(session.id)) {
+        continue;
+      }
+
       // Skip if in combat (combat tick handles this)
       if (session.player.inCombat) {
         continue;
