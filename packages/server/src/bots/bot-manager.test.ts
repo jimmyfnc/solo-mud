@@ -162,6 +162,161 @@ describe('BotManager', () => {
     });
   });
 
+  describe('isOverPopulated()', () => {
+    it('should return false when under max population', () => {
+      // No bots spawned yet
+      expect(manager.isOverPopulated()).toBe(false);
+
+      // Spawn up to min (5), max is 10
+      manager.maintainPopulation();
+      expect(manager.isOverPopulated()).toBe(false);
+    });
+
+    it('should return true when at or over max population', () => {
+      // Manually spawn more than max
+      for (let i = 0; i < 12; i++) {
+        manager.spawnGenericBot();
+      }
+
+      expect(manager.getBotCount()).toBe(12);
+      expect(manager.isOverPopulated()).toBe(true);
+    });
+
+    it('should return true when exactly at max population', () => {
+      // Spawn exactly max (10)
+      for (let i = 0; i < 10; i++) {
+        manager.spawnGenericBot();
+      }
+
+      expect(manager.getBotCount()).toBe(10);
+      expect(manager.isOverPopulated()).toBe(false);
+
+      // One more pushes over
+      manager.spawnGenericBot();
+      expect(manager.isOverPopulated()).toBe(true);
+    });
+  });
+
+  describe('maintainPopulation() despawning', () => {
+    it('should despawn bots when over max population', () => {
+      // Manually spawn more than max
+      for (let i = 0; i < 15; i++) {
+        manager.spawnGenericBot();
+      }
+
+      expect(manager.getBotCount()).toBe(15);
+
+      manager.maintainPopulation();
+
+      // Should be reduced to maxPopulation
+      expect(manager.getBotCount()).toBeLessThanOrEqual(defaultConfig.maxPopulation);
+    });
+
+    it('should prefer despawning idle bots over active ones', () => {
+      // Spawn some bots
+      for (let i = 0; i < 12; i++) {
+        manager.spawnGenericBot();
+      }
+
+      const sessions = manager.getAllBotSessions();
+
+      // Make some bots "active" (recent lastActivity)
+      const activeBots = sessions.slice(0, 3);
+      const idleBots = sessions.slice(3);
+
+      const now = Date.now();
+      for (const bot of activeBots) {
+        bot.lastActivity = now;
+      }
+      for (const bot of idleBots) {
+        bot.lastActivity = now - 60000; // 1 minute ago
+      }
+
+      const activeBotIds = activeBots.map(b => b.id);
+
+      manager.maintainPopulation();
+
+      // Active bots should still be present
+      for (const id of activeBotIds) {
+        expect(manager.getBotSession(id)).toBeDefined();
+      }
+    });
+
+    it('should never remove named bots when over max', async () => {
+      await manager.initialize();
+
+      const namedBotsBefore = Array.from(manager.getNamedBots().keys());
+
+      // Spawn many generic bots to exceed max
+      for (let i = 0; i < 15; i++) {
+        manager.spawnGenericBot();
+      }
+
+      manager.maintainPopulation();
+
+      // Named bots should all still be present
+      for (const id of namedBotsBefore) {
+        expect(manager.getNamedBots().has(id)).toBe(true);
+      }
+    });
+
+    it('should not despawn bots in combat', () => {
+      // Spawn more than max
+      for (let i = 0; i < 12; i++) {
+        manager.spawnGenericBot();
+      }
+
+      const sessions = manager.getAllBotSessions();
+
+      // Put all bots in combat
+      for (const bot of sessions) {
+        bot.player.inCombat = true;
+        bot.lastActivity = 0; // Very old activity
+      }
+
+      const initialCount = manager.getBotCount();
+
+      manager.maintainPopulation();
+
+      // None should be removed since all are in combat
+      expect(manager.getBotCount()).toBe(initialCount);
+    });
+  });
+
+  describe('handleBotDeath()', () => {
+    it('should remove generic bots and return wasNamed: false', () => {
+      manager.spawnGenericBot();
+      const session = manager.getAllBotSessions()[0]!;
+
+      const result = manager.handleBotDeath(session.id);
+
+      expect(result.wasNamed).toBe(false);
+      expect(result.botName).toBe(session.player.name);
+      expect(manager.getBotSession(session.id)).toBeUndefined();
+    });
+
+    it('should not remove named bots and return wasNamed: true', async () => {
+      await manager.initialize();
+
+      const namedBots = manager.getNamedBots();
+      const firstNamedBot = Array.from(namedBots.values())[0]!;
+
+      const result = manager.handleBotDeath(firstNamedBot.id);
+
+      expect(result.wasNamed).toBe(true);
+      expect(result.botName).toBe(firstNamedBot.player.name);
+      // Named bot should still be in the map
+      expect(manager.getNamedBots().has(firstNamedBot.id)).toBe(true);
+    });
+
+    it('should return wasNamed: false for unknown bot IDs', () => {
+      const result = manager.handleBotDeath('unknown_bot_id');
+
+      expect(result.wasNamed).toBe(false);
+      expect(result.botName).toBe('');
+    });
+  });
+
   describe('AI tick', () => {
     it('should use executor for bot commands', async () => {
       manager.maintainPopulation();

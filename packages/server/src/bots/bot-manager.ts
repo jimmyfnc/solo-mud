@@ -130,12 +130,57 @@ export class BotManager {
     return session;
   }
 
+  /** Check if generic bot count exceeds max population */
+  isOverPopulated(): boolean {
+    return this.bots.size > this.config.maxPopulation;
+  }
+
+  /** Get idle generic bots sorted by idle time (longest idle first) */
+  private getIdleBots(): BotSession[] {
+    return Array.from(this.bots.values())
+      .filter(bot => !bot.player.inCombat)
+      .sort((a, b) => a.lastActivity - b.lastActivity);
+  }
+
   /** Maintain population at configured levels */
   maintainPopulation(): void {
     // Spawn bots until we reach minimum
     while (this.bots.size < this.config.minPopulation) {
       this.spawnGenericBot();
     }
+
+    // Despawn bots if over maximum
+    while (this.bots.size > this.config.maxPopulation) {
+      const idleBots = this.getIdleBots();
+      if (idleBots.length === 0) {
+        // All bots are in combat, can't despawn any
+        break;
+      }
+      // Remove the most idle bot (first in the sorted list)
+      const botToRemove = idleBots[0]!;
+      this.bots.delete(botToRemove.id);
+    }
+  }
+
+  /** Handle bot death - removes generic bots, marks named bots for respawn */
+  handleBotDeath(botId: string): { wasNamed: boolean; botName: string } {
+    // Check if it's a generic bot
+    const genericBot = this.bots.get(botId);
+    if (genericBot) {
+      const botName = genericBot.player.name;
+      this.bots.delete(botId);
+      return { wasNamed: false, botName };
+    }
+
+    // Check if it's a named bot
+    const namedBot = this.namedBots.get(botId);
+    if (namedBot) {
+      // Don't remove named bots, just return info for respawn handling
+      return { wasNamed: true, botName: namedBot.player.name };
+    }
+
+    // Unknown bot ID
+    return { wasNamed: false, botName: '' };
   }
 
   /** Run AI tick for all bots (both named and generic) */
