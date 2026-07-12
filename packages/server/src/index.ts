@@ -8,6 +8,7 @@ import { loadWorldSnapshot, saveWorldSnapshot } from './db';
 import { startGameLoop, stopGameLoop, setBotManager } from './game/game-loop';
 import { setBotManager as setAdminBotManager } from './commands/admin-handlers';
 import { BotManager, executeBotCommand } from './bots';
+import { initializeSharedWorld } from './world/shared-world';
 import type { BotSpawnConfig } from '@solo-mud/shared';
 import { ensureEconomyState } from './economy/economy-manager';
 
@@ -18,6 +19,10 @@ async function main() {
   const app = createApp({ logger: true });
 
   try {
+    // Initialize the shared world FIRST - all players and bots share this
+    const sharedWorld = initializeSharedWorld();
+    console.log(`Shared world ready: ${Object.keys(sharedWorld.locations).length} locations`);
+
     const { address, server } = await startServer(app, PORT);
 
     // Initialize Socket.io (for web clients)
