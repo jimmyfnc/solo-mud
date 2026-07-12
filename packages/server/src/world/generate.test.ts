@@ -1,20 +1,23 @@
 import { describe, it, expect } from 'vitest';
+import { WILD_LOCATIONS, WILD_ENTRANCE, WILD_WATCHTOWER, WILD_WOLF_DEN } from '@solo-mud/shared';
 import { generateWorld } from './generate';
 import { validateWorld } from './validate';
 
-describe('generateWorld', () => {
-  it('should generate a connected world', () => {
-    const world = generateWorld({ seed: 'test-connected', nodeCount: 18, extraEdges: 5, lockedEdges: 2 });
+const PARAMS = { seed: 'test-world', nodeCount: 18, extraEdges: 5, lockedEdges: 2 };
 
-    // 18 wilderness + 12 town + 9 sewer + 46 woods + 1 bank = 86 total
-    expect(Object.keys(world.locations).length).toBe(86);
-    expect(world.startId).toBeDefined();
-    expect(world.goalId).toBeDefined();
+describe('generateWorld (authored-zone assembly)', () => {
+  it('should assemble a fully connected world', () => {
+    const world = generateWorld({ ...PARAMS, seed: 'test-connected' });
+
+    // 20 Western Reaches + 12 town + 1 bank + 9 sewer + 48 woods = 90 total
+    expect(Object.keys(world.locations).length).toBe(90);
+    expect(world.startId).toBe('town_inn');
+    expect(world.goalId).toBe(WILD_WATCHTOWER);
     expect(world.startId).not.toBe(world.goalId);
   });
 
-  it('should generate a solvable world', () => {
-    const world = generateWorld({ seed: 'test-solvable', nodeCount: 18, extraEdges: 5, lockedEdges: 2 });
+  it('should assemble a solvable world', () => {
+    const world = generateWorld({ ...PARAMS, seed: 'test-solvable' });
     const validation = validateWorld(world);
 
     expect(validation.valid).toBe(true);
@@ -22,64 +25,73 @@ describe('generateWorld', () => {
   });
 
   it('should be deterministic for same seed', () => {
-    const world1 = generateWorld({ seed: 'deterministic-test', nodeCount: 10, extraEdges: 3, lockedEdges: 1 });
-    const world2 = generateWorld({ seed: 'deterministic-test', nodeCount: 10, extraEdges: 3, lockedEdges: 1 });
+    const world1 = generateWorld({ ...PARAMS, seed: 'deterministic-test' });
+    const world2 = generateWorld({ ...PARAMS, seed: 'deterministic-test' });
 
-    expect(world1.startId).toBe(world2.startId);
-    expect(world1.goalId).toBe(world2.goalId);
     expect(Object.keys(world1.locations)).toEqual(Object.keys(world2.locations));
     expect(Object.keys(world1.exits)).toEqual(Object.keys(world2.exits));
+    expect(Object.keys(world1.creatures)).toEqual(Object.keys(world2.creatures));
   });
 
-  it('should produce different worlds for different seeds', () => {
-    const world1 = generateWorld({ seed: 'seed-a', nodeCount: 10, extraEdges: 3, lockedEdges: 1 });
-    const world2 = generateWorld({ seed: 'seed-b', nodeCount: 10, extraEdges: 3, lockedEdges: 1 });
+  it('should vary creature spawns by seed (skeleton stays fixed)', () => {
+    const world1 = generateWorld({ ...PARAMS, seed: 'seed-a' });
+    const world2 = generateWorld({ ...PARAMS, seed: 'seed-b' });
 
-    // Very unlikely to have same goal by chance
-    expect(world1.goalId === world2.goalId && world1.startId === world2.startId).toBe(false);
+    // The authored skeleton is identical...
+    expect(Object.keys(world1.locations)).toEqual(Object.keys(world2.locations));
+    // ...but the procedural creature population differs
+    expect(Object.keys(world1.creatures)).not.toEqual(Object.keys(world2.creatures));
   });
 
-  it('should place locked exits on critical path', () => {
-    const world = generateWorld({ seed: 'locked-test', nodeCount: 18, extraEdges: 5, lockedEdges: 2 });
+  it('should keep the sewer key/lock progression intact', () => {
+    const world = generateWorld({ ...PARAMS, seed: 'locked-test' });
 
     const lockedExits = Object.values(world.exits).filter((e) => e.type === 'locked');
-    expect(lockedExits.length).toBeGreaterThanOrEqual(2); // At least 2 locked (may have reverse edges)
-
-    // Each locked exit should have a requirement
-    for (const exit of lockedExits) {
-      expect(exit.requirement).toBeDefined();
-    }
+    expect(lockedExits.length).toBeGreaterThan(0);
+    expect(validateWorld(world).valid).toBe(true); // keys reachable before locks
   });
 
-  it('should place keys reachable before their locks', () => {
-    const world = generateWorld({ seed: 'key-placement', nodeCount: 18, extraEdges: 5, lockedEdges: 2 });
-    const validation = validateWorld(world);
+  it('should ramp wilderness depth westward for difficulty scaling', () => {
+    const world = generateWorld({ ...PARAMS, seed: 'depth-test' });
 
-    // If valid, keys must be reachable before locks
-    expect(validation.valid).toBe(true);
+    expect(world.locations[WILD_ENTRANCE]!.depth).toBe(1);
+    expect(world.locations[WILD_WATCHTOWER]!.depth).toBeGreaterThanOrEqual(9);
   });
 
-  it('should assign biomes based on depth', () => {
-    const world = generateWorld({ seed: 'biome-test', nodeCount: 18, extraEdges: 5, lockedEdges: 2 });
+  it('should place boss anchors in their lairs', () => {
+    const world = generateWorld({ ...PARAMS, seed: 'boss-test' });
 
-    const startLocation = world.locations[world.startId];
-    const goalLocation = world.locations[world.goalId];
+    const denCreatures = world.locations[WILD_WOLF_DEN]!.creatures
+      .map((id) => world.creatures[id])
+      .filter(Boolean);
+    expect(denCreatures.some((c) => c!.name === 'Packleader')).toBe(true);
 
-    // Start should have shallow biome weights (plains/forest)
-    expect(startLocation!.depth).toBe(0);
-    // Goal should have higher depth
-    expect(goalLocation!.depth).toBeGreaterThan(0);
+    const towerCreatures = world.locations[WILD_WATCHTOWER]!.creatures
+      .map((id) => world.creatures[id])
+      .filter(Boolean);
+    expect(towerCreatures.some((c) => c!.name === 'Elder Troll')).toBe(true);
+  });
+
+  it('should spawn creatures procedurally in the outdoor zones', () => {
+    const world = generateWorld({ ...PARAMS, seed: 'spawn-test' });
+
+    const wildSpawns = Object.values(world.creatures).filter((c) =>
+      c.locationId.startsWith('wild_') && !c.id.includes('anchor')
+    );
+    expect(wildSpawns.length).toBeGreaterThan(0);
+  });
+
+  it('should not mutate the authored zone data between generations', () => {
+    const before = WILD_LOCATIONS[WILD_WOLF_DEN]!.creatures.length;
+    generateWorld({ ...PARAMS, seed: 'mutation-test-1' });
+    generateWorld({ ...PARAMS, seed: 'mutation-test-2' });
+    expect(WILD_LOCATIONS[WILD_WOLF_DEN]!.creatures.length).toBe(before);
   });
 });
 
 describe('town integration', () => {
   it('should include Easthollow town locations', () => {
-    const world = generateWorld({
-      seed: 'test-town',
-      nodeCount: 10,
-      extraEdges: 2,
-      lockedEdges: 1,
-    });
+    const world = generateWorld({ ...PARAMS, seed: 'test-town' });
 
     expect(world.locations['town_inn']).toBeDefined();
     expect(world.locations['town_square']).toBeDefined();
@@ -88,41 +100,32 @@ describe('town integration', () => {
   });
 
   it('should set startId to town_inn', () => {
-    const world = generateWorld({
-      seed: 'test-town-start',
-      nodeCount: 10,
-      extraEdges: 2,
-      lockedEdges: 1,
-    });
-
+    const world = generateWorld({ ...PARAMS, seed: 'test-town-start' });
     expect(world.startId).toBe('town_inn');
   });
 
-  it('should connect town gate to wilderness loc_0', () => {
-    const world = generateWorld({
-      seed: 'test-town-gate',
-      nodeCount: 10,
-      extraEdges: 2,
-      lockedEdges: 1,
-    });
+  it('should connect Outside Walls west into the Western Reaches', () => {
+    const world = generateWorld({ ...PARAMS, seed: 'test-town-gate' });
 
-    // Town connects to wilderness via Outside Walls
     const outsideWallsExits = world.adjacency['town_outside_walls'] ?? [];
-    const exitToWilderness = outsideWallsExits.find(exitId => {
+    const exitToWilderness = outsideWallsExits.find((exitId) => {
       const exit = world.exits[exitId];
-      return exit?.to === 'loc_0';
+      return exit?.to === WILD_ENTRANCE && exit.label === 'west';
     });
 
     expect(exitToWilderness).toBeDefined();
+
+    // And the return exit leads back east
+    const returnExits = world.adjacency[WILD_ENTRANCE] ?? [];
+    const exitBack = returnExits.find((exitId) => {
+      const exit = world.exits[exitId];
+      return exit?.to === 'town_outside_walls' && exit.label === 'east';
+    });
+    expect(exitBack).toBeDefined();
   });
 
   it('should include town NPCs', () => {
-    const world = generateWorld({
-      seed: 'test-town-npcs',
-      nodeCount: 10,
-      extraEdges: 2,
-      lockedEdges: 1,
-    });
+    const world = generateWorld({ ...PARAMS, seed: 'test-town-npcs' });
 
     expect(world.npcs['npc_mira']).toBeDefined();
     expect(world.npcs['npc_mira']!.name).toBe('Mira');

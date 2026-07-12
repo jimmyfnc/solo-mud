@@ -5,6 +5,7 @@
 import type { Stats, CombatStats, Player, Item, EquipSlot } from '@solo-mud/shared';
 import { CLASSES } from '@solo-mud/shared';
 import { calculateMaxHp, calculateMaxMp, calculateMaxCarryWeight } from './player-factory';
+import { applyBuffsToCombatStats } from './buffs';
 
 /** Hit chance penalty per level the enemy is above you */
 const HIT_PENALTY_PER_LEVEL = 0.05; // 5%
@@ -132,6 +133,21 @@ export function calculateCombatStatsWithEquipment(
   }
 
   return combat;
+}
+
+/**
+ * Compute a player's full combat stats: effective stats (level + affix bonuses)
+ * plus equipment defense and resistances. This is the canonical calculation —
+ * call it whenever equipment or level changes.
+ */
+export function computePlayerCombatStats(
+  player: Player,
+  items: Record<string, Item>
+): CombatStats {
+  const effectiveStats = getEffectiveStats(player, items);
+  const combat = calculateCombatStatsWithEquipment(effectiveStats, player, items);
+  // Active combat buffs (Battle Shout, Evasion, Berserker Rage...)
+  return applyBuffsToCombatStats(combat, player);
 }
 
 /**

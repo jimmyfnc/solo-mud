@@ -59,6 +59,12 @@ export interface ShopInventory {
   items: ShopItem[];
   buyMultiplier: number;
   sellMultiplier: number;
+  /** Copper available for buying items and fulfilling work orders. */
+  cash?: number;
+  /** Production inputs held by this merchant, keyed by item baseId. */
+  materials?: Record<string, number>;
+  /** Next game-minute each recipe may complete. */
+  productionReadyAt?: Record<string, number>;
 }
 
 /** Schedule entry for time-based NPC location */
@@ -94,6 +100,11 @@ export interface NPC {
   combat?: NpcCombatStats;
   /** Class this NPC can train (for trainers) */
   trainsClass?: string;
+  /**
+   * If set, this trainer only teaches these spell ids (a subset of the
+   * class's spells). Unset = teaches the full class progression.
+   */
+  teachableSpells?: string[];
 }
 
 /** Tutorial progress tracker */

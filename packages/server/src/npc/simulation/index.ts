@@ -9,8 +9,12 @@ import { simulationEventBus, createHotTopic, SimulationEventBus } from './events
 export type ZoneType = 'social' | 'transitional' | 'quiet' | 'dungeon';
 
 export function getZoneType(locationId: string): ZoneType {
-  // Dungeon zones
-  if (locationId.startsWith('sewer_') || locationId.startsWith('loc_')) {
+  // Dungeon/wilderness zones (no ambient NPC simulation)
+  if (
+    locationId.startsWith('sewer_') ||
+    locationId.startsWith('loc_') ||
+    locationId.startsWith('wild_')
+  ) {
     return 'dungeon';
   }
 
@@ -68,6 +72,11 @@ export class SimulationEngine {
 
     this.eventBus.on('player_levelup', (data) => {
       const topic = createHotTopic('player_levelup', data);
+      this.hotTopics.push(topic);
+    });
+
+    this.eventBus.on('shop_shortage', (data) => {
+      const topic = createHotTopic('shop_shortage', data);
       this.hotTopics.push(topic);
     });
   }

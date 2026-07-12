@@ -283,6 +283,21 @@ export const ACTIONS: Record<string, Action> = {
   // =========================================================================
 
   /**
+   * CAROUSE - Buy and drink ale at the tavern (command chosen by executor:
+   * 'buy ale' → 'drink ale' → broke-bot lament)
+   * Base cost: 12, cheaper for social bots
+   */
+  carouse: {
+    id: 'carouse',
+    category: 'social',
+    description: 'Buy and drink ale at the tavern',
+    preconditions: [{ type: 'not_in_combat' }],
+    effects: ['social_interaction'],
+    getCost: (bot) => 12 - bot.botProfile.personality.sociability / 10,
+    getCommand: (_bot, context) => context?.subcommand ?? null,
+  },
+
+  /**
    * SAY - Speak to the room
    * Base cost: 15
    * Sociability modifier: -0 to -10 (social bots love talking)

@@ -362,7 +362,30 @@ export interface NamedBotDefinition {
  *   - Higher values make death more meaningful
  *   - Set to 0 for instant respawn (testing only)
  */
+/**
+ * Population band for one hub/zone. Small wilderness towns get low caps
+ * (scarce frontier feel); major castle hubs get high caps (busy city life).
+ */
+export interface BotZonePopulation {
+  /** Hub id, e.g. 'easthollow', 'castle_aldmere' */
+  id: string;
+  /** Location IDs where this hub's bots spawn */
+  spawnLocations: string[];
+  /** Minimum bots kept alive in this hub */
+  minPopulation: number;
+  /** Maximum bots for this hub */
+  maxPopulation: number;
+  /** Level range for this hub's generic bots */
+  levelRange: [number, number];
+}
+
 export interface BotSpawnConfig {
+  /**
+   * Per-hub population bands. When set, these govern generic-bot
+   * spawning; the legacy top-level fields below act as a fallback
+   * single zone when absent.
+   */
+  zones?: BotZonePopulation[];
   /** Minimum bots to maintain. System spawns new bots if below this. */
   minPopulation: number;
   /** Maximum bots allowed. No new spawns if at or above this. */

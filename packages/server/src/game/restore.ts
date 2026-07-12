@@ -2,36 +2,29 @@
  * World restoration - rebuilds game state from saved character data.
  */
 
-import type { Player, World, ClassName, InventorySlot } from '@solo-mud/shared';
-import { getStarterSpellId } from '@solo-mud/shared';
-import { getSharedWorld, getSharedWorldSeed } from '../world/shared-world';
-import { calculateCombatStats } from '../character';
+import type { Player, ClassName, InventorySlot } from '@solo-mud/shared';
+import { getStarterSpellId, xpForLevel } from '@solo-mud/shared';
+import { worldManager } from '../world/world-manager';
+import { computePlayerCombatStats } from '../character';
 import type { CharacterRecord } from '../db/repositories/CharacterRepository';
-import {
-  getVisitedLocations,
-  getUnlockedExits,
-  getRemovedItemIds,
-  getDroppedItems,
-  cleanupRespawnedCreatures,
-} from '../db/repositories/WorldStateRepository';
 import type { GameSession } from './session';
 
 /**
  * Restore a game session from a saved character.
- * Uses the shared server world - all players share the same world.
+ *
+ * The character joins the shared authoritative world — we no longer
+ * regenerate a private world from the character's stored seed, and we do
+ * not rewind the shared world clock to the character's saved gameTime.
+ * (Per-character world modifications from the solo-world era are not
+ * applied; world state is shared. See docs/design/living-world.md.)
  */
 export function restoreSession(
   socketId: string,
   character: CharacterRecord
 ): GameSession {
-  // Use the shared server world
-  const world = getSharedWorld();
+  const world = worldManager.getWorld();
 
-  // Apply any character-specific world modifications (unlocked exits, etc.)
-  applyWorldModifications(world, character.id);
-
-  // Restore player-owned items to the shared world
-  // These are items the player has in inventory/equipment
+  // Restore player-owned items to the world
   for (const [itemId, item] of Object.entries(character.ownedItems)) {
     world.items[itemId] = item;
   }
@@ -58,7 +51,8 @@ export function restoreSession(
     maxCarryWeight: 50 + (character.baseStats.str * 5),
     itemSlots: [null, null, null, null],
     abilitySlots: [null, null, null, null],
-    locationId: character.locationId,
+    // Saved location may come from a pre-shared-world seed; fall back to start
+    locationId: world.locations[character.locationId] ? character.locationId : world.startId,
     boundTownId: world.startId,
     inCombat: false,
     autoAttack: false,
@@ -82,11 +76,10 @@ export function restoreSession(
     propCooldowns: {}, // Will need to be restored from database when prop persistence is added
   };
 
-  // Restore game time
-  world.time.totalMinutes = character.gameTime;
-  updateTimeOfDay(world);
+  // Note: the shared world clock is authoritative — we intentionally do not
+  // restore character.gameTime here.
 
-  const combatStats = calculateCombatStats(player.baseStats);
+  const combatStats = computePlayerCombatStats(player, world.items);
 
   return {
     id: socketId,
@@ -97,68 +90,7 @@ export function restoreSession(
     createdAt: character.createdAt,
     lastActivity: Date.now(),
     characterId: character.id,
-    worldSeed: getSharedWorldSeed(),
   };
-}
-
-/**
- * Apply saved world modifications to a regenerated world.
- */
-function applyWorldModifications(world: World, characterId: string): void {
-  // Clean up respawned creatures first
-  cleanupRespawnedCreatures(characterId);
-
-  // Apply visit counts to locations
-  const visits = getVisitedLocations(characterId);
-  for (const visit of visits) {
-    const location = world.locations[visit.locationId];
-    if (location) {
-      location.visitState.visitCount = visit.visitCount;
-      location.visitState.firstVisitTime = visit.firstVisit;
-      location.visitState.lastVisitTime = visit.lastVisit;
-    }
-  }
-
-  // Unlock exits (change from 'locked' to 'open')
-  const unlocks = getUnlockedExits(characterId);
-  for (const unlock of unlocks) {
-    const exit = world.exits[unlock.exitId];
-    if (exit && exit.type === 'locked') {
-      exit.type = 'open';
-    }
-  }
-
-  // Remove picked-up items from locations
-  const removedItemIds = new Set(getRemovedItemIds(characterId));
-  for (const location of Object.values(world.locations)) {
-    location.items = location.items.filter(id => !removedItemIds.has(id));
-  }
-  for (const itemId of removedItemIds) {
-    delete world.items[itemId];
-  }
-
-  // Add dropped items to locations
-  const droppedItems = getDroppedItems(characterId);
-  for (const dropped of droppedItems) {
-    const location = world.locations[dropped.locationId];
-    if (location) {
-      const itemId = dropped.itemData.id;
-      world.items[itemId] = dropped.itemData;
-      if (!location.items.includes(itemId)) {
-        location.items.push(itemId);
-      }
-    }
-  }
-
-  // Note: Killed creatures will be applied when creature system is implemented
-}
-
-/**
- * Calculate XP required for a level.
- */
-function xpForLevel(level: number): number {
-  // Simple exponential curve: 100, 200, 400, 800, etc.
-  return Math.floor(100 * Math.pow(1.5, level - 1));
 }
 
 /**
@@ -168,27 +100,6 @@ function xpForLevel(level: number): number {
 function calculateCarryWeight(inventory: InventorySlot[]): number {
   // Each inventory slot counts as 1 weight unit times quantity
   return inventory.reduce((sum, slot) => sum + slot.quantity, 0);
-}
-
-/**
- * Update time of day based on total game minutes.
- */
-function updateTimeOfDay(world: World): void {
-  const hour = Math.floor(world.time.totalMinutes % (24 * 60) / 60);
-
-  if (hour >= 5 && hour < 7) {
-    world.time.timeOfDay = 'dawn';
-  } else if (hour >= 7 && hour < 12) {
-    world.time.timeOfDay = 'morning';
-  } else if (hour >= 12 && hour < 14) {
-    world.time.timeOfDay = 'noon';
-  } else if (hour >= 14 && hour < 18) {
-    world.time.timeOfDay = 'afternoon';
-  } else if (hour >= 18 && hour < 21) {
-    world.time.timeOfDay = 'evening';
-  } else {
-    world.time.timeOfDay = 'night';
-  }
 }
 
 /**

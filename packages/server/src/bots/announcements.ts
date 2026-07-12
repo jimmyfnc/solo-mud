@@ -28,8 +28,11 @@ const HEROIC_DEATH_PHRASES = [
 /**
  * Select a random phrase from an array.
  */
-function pickRandom<T>(phrases: T[]): T {
-  return phrases[Math.floor(Math.random() * phrases.length)];
+function pickRandom<T>(phrases: readonly T[]): T {
+  if (phrases.length === 0) {
+    throw new Error('Cannot select from an empty phrase list');
+  }
+  return phrases[Math.floor(Math.random() * phrases.length)]!;
 }
 
 /**

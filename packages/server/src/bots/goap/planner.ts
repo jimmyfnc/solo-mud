@@ -13,6 +13,7 @@ const GOAL_TO_ACTIONS: Record<string, string[]> = {
   level_up: ['attack', 'explore', 'travel'],
   get_richer: ['loot', 'sell_item', 'attack'], // Attack for XP/drops
   socialize: ['say'],
+  carouse: ['carouse', 'say'],
   explore: ['explore', 'travel'],
   rest: ['rest'],
 };

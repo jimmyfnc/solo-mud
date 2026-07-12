@@ -234,6 +234,8 @@ export function generateExitProse(exits: ExitInfo[]): string {
   const cardinalExits: string[] = [];
   const verticalExits: string[] = [];
   const passageExits: string[] = [];
+  const namedEntrances: string[] = [];
+  let outExit: string | null = null;
 
   for (const exit of exits) {
     const label = exit.label.toLowerCase();
@@ -250,12 +252,15 @@ export function generateExitProse(exits: ExitInfo[]): string {
       } else {
         verticalExits.push(`${dest}${locked} below`);
       }
+    } else if (label === 'out') {
+      // Building exit back to the street
+      outExit = `The way out leads back to ${dest}.`;
     } else if (passages.some(p => label.includes(p))) {
       // "a valley through the old door"
       passageExits.push(`${dest}${locked} through the ${label}`);
     } else {
-      // Generic named exit: "the grove via a tunnel"
-      passageExits.push(`${dest}${locked} via the ${label}`);
+      // Building-name exit: teach the command that enters it
+      namedEntrances.push(`the ${dest}${locked} ("${label}")`);
     }
   }
 
@@ -276,6 +281,16 @@ export function generateExitProse(exits: ExitInfo[]): string {
       const passageList = formatList(passageExits);
       parts.push(`Passages lead to ${passageList}.`);
     }
+  }
+
+  // Named building entrances: "You can enter the easthollow vault ("bank")."
+  if (namedEntrances.length > 0) {
+    parts.push(`You can enter ${formatList(namedEntrances)}.`);
+  }
+
+  // The way back out of a building
+  if (outExit) {
+    parts.push(outExit);
   }
 
   return parts.join(' ');

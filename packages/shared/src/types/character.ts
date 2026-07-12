@@ -187,6 +187,10 @@ export interface StatusEffect {
   stacks: number;
   /** When the effect was applied (game time in minutes) */
   appliedAt: number;
+  /** Real timestamp (ms) when this effect expires — combat buffs use this */
+  expiresAt?: number;
+  /** Remaining pool for absorb shields (Ice Barrier, Holy Shield) */
+  magnitude?: number;
 }
 
 /** Infamy level for players who attack NPCs */
@@ -252,12 +256,14 @@ export function getResistanceForDamageType(
     case 'ice': return stats.iceResist;
     case 'lightning': return stats.lightningResist;
     case 'poison': return stats.poisonResist;
-    case 'holy':
-    case 'shadow':
-    case 'nature':
-    case 'arcane':
+    // Exotic types map to thematic kin until they get their own resist stats,
+    // at a 25% penalty — otherwise they'd bypass ALL mitigation
+    case 'nature': return Math.floor(stats.poisonResist * 0.75);
+    case 'holy': return Math.floor(stats.fireResist * 0.75);
+    case 'shadow': return Math.floor(stats.iceResist * 0.75);
+    case 'arcane': return Math.floor(stats.lightningResist * 0.75);
     default:
-      return 0; // No resistance for these damage types (yet)
+      return 0;
   }
 }
 

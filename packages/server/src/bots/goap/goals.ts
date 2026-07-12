@@ -161,6 +161,27 @@ export const GOALS: Record<string, Goal> = {
    * Final range: 10-60
    * Completes after socializing (30 second cooldown)
    */
+  /**
+   * CAROUSE - Hang around the tavern, buy ale, and get merry.
+   * Only fires when the bot is actually at the inn — bots that wander in
+   * tend to stay for a few rounds, which is exactly the vibe.
+   * Base priority: 20-40 (sociability-scaled), winds down when properly drunk.
+   */
+  carouse: {
+    id: 'carouse',
+    category: 'social',
+    description: 'Drink and be merry at the tavern',
+    getPriority: (bot) => {
+      if (bot.locationId !== 'town_inn') return 0;
+      const drunkStacks = bot.statusEffects?.find(e => e.id === 'drunk')?.stacks ?? 0;
+      if (drunkStacks >= 3) return 5; // properly drunk — time to stumble on
+      return 20 + bot.botProfile.personality.sociability / 5;
+    },
+    isComplete: (bot) => {
+      return (bot.statusEffects?.find(e => e.id === 'drunk')?.stacks ?? 0) >= 3;
+    },
+  },
+
   socialize: {
     id: 'socialize',
     category: 'social',

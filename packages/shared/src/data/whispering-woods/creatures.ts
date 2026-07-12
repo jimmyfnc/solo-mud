@@ -514,7 +514,7 @@ const THORNLORD: CreatureTemplate = {
   biomes: ['forest'],
   minDepth: 17,
   maxDepth: 20,
-  baseHp: 450,
+  baseHp: 320,
   baseLevel: 18,
   spawnWeight: 0, // Boss
   damageType: 'nature',
@@ -593,7 +593,7 @@ const CORRUPTED_DRYAD_MATRIARCH: CreatureTemplate = {
   biomes: ['forest'],
   minDepth: 19,
   maxDepth: 20,
-  baseHp: 800,
+  baseHp: 470,
   baseLevel: 20,
   spawnWeight: 0, // Final Boss
   damageType: 'nature',
@@ -651,4 +651,29 @@ export const WOODS_BOSSES: string[] = [
   'spider_queen',
   'thornlord',
   'corrupted_dryad_matriarch',
+];
+
+// ============ Boss Anchors (hand-placed at world assembly) ============
+
+import type { BossAnchor } from '../western-reaches';
+import {
+  WOODS_PIXIE_COURT,
+  WOODS_FEN_MOUND,
+  WOODS_STONES_ALTAR,
+  WOODS_SPIDER_LAIR,
+  WOODS_THORN_DEN,
+  WOODS_SANCTUM_HEART,
+} from './locations';
+
+/** Woods bosses placed in their lairs at world assembly */
+export const WOODS_BOSS_ANCHORS: readonly BossAnchor[] = [
+  { templateId: 'sprite_trickster', level: 10, locationId: WOODS_PIXIE_COURT },
+  { templateId: 'redcap_chieftain', level: 12, locationId: WOODS_FEN_MOUND },
+  { templateId: 'satyr_shaman', level: 14, locationId: WOODS_STONES_ALTAR },
+  { templateId: 'spider_queen', level: 16, locationId: WOODS_SPIDER_LAIR },
+  { templateId: 'thornlord', level: 18, locationId: WOODS_THORN_DEN },
+  { templateId: 'corrupted_dryad_matriarch', level: 20, locationId: WOODS_SANCTUM_HEART },
+  // The Matriarch does not stand alone
+  { templateId: 'matriarchs_handmaiden', level: 19, locationId: WOODS_SANCTUM_HEART },
+  { templateId: 'matriarchs_handmaiden', level: 19, locationId: WOODS_SANCTUM_HEART },
 ];

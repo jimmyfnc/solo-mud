@@ -62,6 +62,8 @@ export const WOODS_THORN_DEN = 'woods_thorn_den';
 // Matriarch's Sanctum
 export const WOODS_SANCTUM_ALTAR = 'woods_sanctum_altar';
 export const WOODS_SANCTUM_GROVE = 'woods_sanctum_grove';
+export const WOODS_SANCTUM_POOLS = 'woods_sanctum_pools';
+export const WOODS_SANCTUM_HOLLOW = 'woods_sanctum_hollow';
 export const WOODS_SANCTUM_APPROACH = 'woods_sanctum_approach';
 export const WOODS_SANCTUM_HEART = 'woods_sanctum_heart';
 
@@ -944,6 +946,44 @@ export const WOODS_LOCATIONS: Record<string, Location> = {
     isSafeZone: false,
     npcs: [],
   },
+  [WOODS_SANCTUM_POOLS]: {
+    id: WOODS_SANCTUM_POOLS,
+    name: 'Weeping Pools',
+    biome: { forest: 0.6, swamp: 0.4 },
+    props: [
+      'pools of dark water that seem to weep upward into the air',
+      'reflections showing the forest as it once was, green and alive',
+      'handmaiden footprints circling the water’s edge',
+      'drowned offerings glinting at the bottom of the pools',
+      'willow husks bent double as if in mourning',
+    ],
+    items: [],
+    enemies: [],
+    creatures: [],
+    visitState: { visitCount: 0 },
+    depth: 16,
+    isSafeZone: false,
+    npcs: [],
+  },
+  [WOODS_SANCTUM_HOLLOW]: {
+    id: WOODS_SANCTUM_HOLLOW,
+    name: 'Withered Hollow',
+    biome: { forest: 1 },
+    props: [
+      'a bowl of dead earth where nothing has grown for years',
+      'petrified handmaidens frozen mid-dance around the hollow',
+      'roots arched overhead like the ribs of something vast',
+      'a silence so complete your own heartbeat is loud',
+      'fragments of bark carved with pleas to the Matriarch',
+    ],
+    items: [],
+    enemies: [],
+    creatures: [],
+    visitState: { visitCount: 0 },
+    depth: 16,
+    isSafeZone: false,
+    npcs: [],
+  },
   [WOODS_SANCTUM_APPROACH]: {
     id: WOODS_SANCTUM_APPROACH,
     name: 'Sanctum Approach',
@@ -1322,19 +1362,19 @@ export const WOODS_EXITS: Record<string, Exit> = {
     label: 'south',
     type: 'open',
   },
-  // FEN_RUINS_1 -> FEN_RUINS_2 (east/west)
+  // FEN_RUINS_1 -> FEN_RUINS_2 (west/east — east would overlap the Pixie Dell maze)
   exit_fen_ruins1_ruins2: {
     id: 'exit_fen_ruins1_ruins2',
     from: WOODS_FEN_RUINS_1,
     to: WOODS_FEN_RUINS_2,
-    label: 'east',
+    label: 'west',
     type: 'open',
   },
   exit_fen_ruins2_ruins1: {
     id: 'exit_fen_ruins2_ruins1',
     from: WOODS_FEN_RUINS_2,
     to: WOODS_FEN_RUINS_1,
-    label: 'west',
+    label: 'east',
     type: 'open',
   },
   // FEN_RUINS_2 -> FEN_CAMP (north/south)
@@ -1553,19 +1593,19 @@ export const WOODS_EXITS: Record<string, Exit> = {
     label: 'north',
     type: 'open',
   },
-  // THORN_PATH -> THORN_DEAD_1 (east/west)
+  // THORN_PATH -> THORN_DEAD_1 (southwest/northeast — east would overlap Spider Hollow)
   exit_thorn_path_dead1: {
     id: 'exit_thorn_path_dead1',
     from: WOODS_THORN_PATH,
     to: WOODS_THORN_DEAD_1,
-    label: 'east',
+    label: 'southwest',
     type: 'open',
   },
   exit_thorn_dead1_path: {
     id: 'exit_thorn_dead1_path',
     from: WOODS_THORN_DEAD_1,
     to: WOODS_THORN_PATH,
-    label: 'west',
+    label: 'northeast',
     type: 'open',
   },
   // THORN_PATH -> THORN_DEAD_2 (west/east)
@@ -1655,6 +1695,8 @@ export const WOODS_EXITS: Record<string, Exit> = {
     label: 'south',
     type: 'locked',
     requirement: { kind: 'quest', value: 'dryads_heart_key' },
+    requiresItemMessage:
+      'A gate of twisted roots seals the way south. Five slots are carved into the ancient altar — the guardians of these woods each carry a fragment of what fits there. (Try "use altar".)',
   },
   exit_sanctum_grove_altar: {
     id: 'exit_sanctum_grove_altar',
@@ -1676,6 +1718,66 @@ export const WOODS_EXITS: Record<string, Exit> = {
     from: WOODS_SANCTUM_APPROACH,
     to: WOODS_SANCTUM_GROVE,
     label: 'north',
+    type: 'open',
+  },
+  // SANCTUM_GROVE -> SANCTUM_POOLS (west/east) — western flank
+  exit_sanctum_grove_pools: {
+    id: 'exit_sanctum_grove_pools',
+    from: WOODS_SANCTUM_GROVE,
+    to: WOODS_SANCTUM_POOLS,
+    label: 'west',
+    type: 'open',
+  },
+  exit_sanctum_pools_grove: {
+    id: 'exit_sanctum_pools_grove',
+    from: WOODS_SANCTUM_POOLS,
+    to: WOODS_SANCTUM_GROVE,
+    label: 'east',
+    type: 'open',
+  },
+  // SANCTUM_POOLS -> SANCTUM_APPROACH (southeast/northwest)
+  exit_sanctum_pools_approach: {
+    id: 'exit_sanctum_pools_approach',
+    from: WOODS_SANCTUM_POOLS,
+    to: WOODS_SANCTUM_APPROACH,
+    label: 'southeast',
+    type: 'open',
+  },
+  exit_sanctum_approach_pools: {
+    id: 'exit_sanctum_approach_pools',
+    from: WOODS_SANCTUM_APPROACH,
+    to: WOODS_SANCTUM_POOLS,
+    label: 'northwest',
+    type: 'open',
+  },
+  // SANCTUM_GROVE -> SANCTUM_HOLLOW (east/west) — eastern flank
+  exit_sanctum_grove_hollow: {
+    id: 'exit_sanctum_grove_hollow',
+    from: WOODS_SANCTUM_GROVE,
+    to: WOODS_SANCTUM_HOLLOW,
+    label: 'east',
+    type: 'open',
+  },
+  exit_sanctum_hollow_grove: {
+    id: 'exit_sanctum_hollow_grove',
+    from: WOODS_SANCTUM_HOLLOW,
+    to: WOODS_SANCTUM_GROVE,
+    label: 'west',
+    type: 'open',
+  },
+  // SANCTUM_HOLLOW -> SANCTUM_APPROACH (southwest/northeast)
+  exit_sanctum_hollow_approach: {
+    id: 'exit_sanctum_hollow_approach',
+    from: WOODS_SANCTUM_HOLLOW,
+    to: WOODS_SANCTUM_APPROACH,
+    label: 'southwest',
+    type: 'open',
+  },
+  exit_sanctum_approach_hollow: {
+    id: 'exit_sanctum_approach_hollow',
+    from: WOODS_SANCTUM_APPROACH,
+    to: WOODS_SANCTUM_HOLLOW,
+    label: 'northeast',
     type: 'open',
   },
   // SANCTUM_APPROACH -> SANCTUM_HEART (south/north)

@@ -2,7 +2,7 @@
  * Procedural item generation system.
  */
 
-import type { Item, Rarity, Affix, Rng } from '@solo-mud/shared';
+import type { Item, ItemEffect, Rarity, Affix, Rng } from '@solo-mud/shared';
 
 /** Item template definition */
 export interface ItemTemplate {
@@ -14,6 +14,8 @@ export interface ItemTemplate {
   allowedAffixes: string[];
   /** Base defense for armor items [min, max] - scaled by rarity */
   baseDefense?: [number, number];
+  /** Special proc/passive effects copied onto generated items */
+  effects?: ItemEffect[];
 }
 
 /** Loot table entry */
@@ -31,6 +33,11 @@ export interface LootTable {
   minItems: number;
   maxItems: number;
   entries: LootTableEntry[];
+  /**
+   * Items that ALWAYS drop (quest items, boss keys) — generated in addition
+   * to the rolled entries and regardless of dropChance.
+   */
+  alwaysDrop?: { templateId: string; rarity: Rarity }[];
 }
 
 /** Options for generating a single item */
@@ -67,6 +74,10 @@ const AFFIX_DEFINITIONS: Record<string, Omit<Affix, 'id'> & { minRarity?: Rarity
   sturdy: { name: 'Sturdy', type: 'prefix', statMods: { defense: 3 } },
   reinforced: { name: 'Reinforced', type: 'prefix', statMods: { defense: 5 } },
   fortified: { name: 'Fortified', type: 'prefix', statMods: { defense: 8 }, minRarity: 'rare' },
+  defender: { name: 'of the Defender', type: 'suffix', statMods: { defense: 4 } },
+
+  // Holy affixes (priest loot)
+  blessed: { name: 'Blessed', type: 'prefix', statMods: { wis: 2, spellPower: 2 } },
 
   // Elemental resistance affixes (suffixes)
   fireproof: { name: 'of Flame Ward', type: 'suffix', statMods: { fireResist: 10 } },
@@ -280,6 +291,7 @@ export function generateItem(options: GenerateItemOptions): Item {
     rarity,
     affixes,
     baseDefense,
+    effects: template.effects ? template.effects.map(e => ({ ...e })) : undefined,
   };
 }
 
@@ -404,17 +416,30 @@ const DEFAULT_TEMPLATES: Record<string, ItemTemplate> = {
 export function generateLootDrop(options: GenerateLootOptions): Item[] {
   const { lootTable, level, rng, luckModifier = 0, guaranteeDrop = false, templates = DEFAULT_TEMPLATES } = options;
 
+  // Guaranteed drops (quest items, boss keys) — independent of dropChance
+  const alwaysItems: Item[] = [];
+  for (const ad of lootTable.alwaysDrop ?? []) {
+    const template = templates[ad.templateId];
+    if (!template) continue;
+    alwaysItems.push(generateItem({ template, rarity: ad.rarity, level, rng }));
+  }
+
   // Check drop chance
   if (!guaranteeDrop && rng.next() > lootTable.dropChance) {
-    return [];
+    return alwaysItems;
   }
 
   // Determine number of items
   const range = lootTable.maxItems - lootTable.minItems;
   const itemCount = lootTable.minItems + Math.floor(rng.next() * (range + 1));
 
-  const items: Item[] = [];
-  const droppedUniqueIds = new Set<string>(); // Track unique items already dropped
+  const items: Item[] = [...alwaysItems];
+  const droppedUniqueIds = new Set<string>(
+    // Guaranteed uniques shouldn't also roll from the entries
+    alwaysItems
+      .filter(i => i.tags.includes('unique'))
+      .map(i => i.baseId)
+  );
 
   for (let i = 0; i < itemCount; i++) {
     // Try to select a valid template (re-roll if we get a duplicate unique)
@@ -422,6 +447,7 @@ export function generateLootDrop(options: GenerateLootOptions): Item[] {
     let template: ItemTemplate | undefined;
     let attempts = 0;
     const maxAttempts = 10;
+    let selected = false;
 
     while (attempts < maxAttempts) {
       attempts++;
@@ -442,10 +468,12 @@ export function generateLootDrop(options: GenerateLootOptions): Item[] {
       if (isUnique) {
         droppedUniqueIds.add(entry.templateId);
       }
+      selected = true;
       break;
     }
 
-    if (!entry || !template) continue;
+    // Skip if no valid selection (including exhausting re-rolls on a duplicate unique)
+    if (!selected || !entry || !template) continue;
 
     // Roll rarity
     const rarity = rollRarity(entry.minRarity, entry.maxRarity, rng, luckModifier);

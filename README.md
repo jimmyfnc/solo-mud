@@ -13,6 +13,8 @@ A procedurally generated single-player text adventure (MUD) with roguelike eleme
 - **Loot Generation**: Procedural items with rarity tiers and affix system
 - **NPC Schedules**: NPCs move between locations based on time of day
 - **Living Ecosystem**: Creatures hunt, flee, and interact with each other independently of the player
+- **Living Economy**: Finite merchant stock, production recipes, cash reserves, resource gathering, work orders, and bot suppliers
+- **Zone Editor**: Visual map tool (`tools/zone-editor/index.html`) for building and viewing zones — exports ready-to-wire TypeScript zone files
 
 ## Project Structure
 
@@ -20,14 +22,14 @@ A procedurally generated single-player text adventure (MUD) with roguelike eleme
 packages/
   shared/     # Shared types, utilities, and RNG
   server/     # Game logic, world generation, combat
-  client/     # React + Tailwind UI (planned)
+  client/     # React + Tailwind terminal UI
 ```
 
 ## Quick Start
 
 ### Prerequisites
 
-- Node.js 18+
+- Node.js 20+
 - pnpm
 
 ### Installation
@@ -43,14 +45,54 @@ pnpm test
 pnpm build
 ```
 
+### Running the Game
+
+```bash
+# Start both server and client in development mode
+pnpm dev
+
+# This starts:
+#   - Server at http://localhost:3001
+#   - Client at http://localhost:3000
+#   - Telnet server at port 4000
+```
+
+Open http://localhost:3000 in your browser to play.
+
+### Custom Ports
+
+You can specify custom ports using environment variables:
+
+```bash
+# Server port (default: 3001)
+PORT=8080 pnpm --filter @solo-mud/server dev
+
+# Telnet port (default: 4000)
+TELNET_PORT=2323 pnpm --filter @solo-mud/server dev
+
+# Client socket URL (must match server port)
+VITE_SOCKET_URL=http://localhost:8080 pnpm --filter @solo-mud/client dev
+```
+
+Or copy the example config files:
+```bash
+cp packages/server/.env.example packages/server/.env
+cp packages/client/.env.example packages/client/.env
+```
+
+Then edit the `.env` files with your preferred settings.
+
 ### Development
 
 ```bash
 # Run server tests in watch mode
 pnpm --filter @solo-mud/server test
 
-# Run client development server
+# Run client development server only
 pnpm --filter @solo-mud/client dev
+
+# Run server only
+pnpm --filter @solo-mud/server dev
 ```
 
 ## Commands
@@ -116,6 +158,9 @@ pnpm --filter @solo-mud/client dev
 | `list` | | View shop inventory |
 | `buy <item>` | | Purchase from shop |
 | `sell <item>` | | Sell to shop |
+| `orders` | `workorders` | Read open merchant work orders in town square |
+| `turnin <material> [quantity]` | | Deliver materials to a requesting merchant |
+| `gather <resource>` | `mine`, `harvest`, `chop` | Collect materials from visible resource nodes |
 
 ### Character
 | Command | Aliases | Description |
@@ -155,7 +200,7 @@ Game logic and systems:
 
 ### Client Package (`@solo-mud/client`)
 
-React-based terminal UI (in development):
+React-based terminal UI:
 
 - Vite + React + TypeScript
 - Tailwind CSS for styling
@@ -227,6 +272,24 @@ pnpm test -- --coverage
 # Run specific test file
 pnpm --filter @solo-mud/server test -- --run src/combat/tick.test.ts
 ```
+
+## Local Development and Security
+
+The current player ID and recovery-code flow is designed for local development and trusted small deployments; it is not a full login system. Recovery codes should be treated as passwords.
+
+Admin commands are enabled by default outside production. They are disabled automatically when `NODE_ENV=production` unless `ENABLE_ADMIN_COMMANDS=true` is explicitly configured.
+
+Before exposing the server publicly, add a real authentication provider, TLS termination, durable rate limiting, and an authorization model for operators.
+
+## Database Backups
+
+SQLite is the supported runtime database. Create a database-neutral JSON export with:
+
+```bash
+pnpm --filter @solo-mud/server db:export -- ../../backups/solo-mud.json
+```
+
+See `docs/database.md` for schema migration and future PostgreSQL/MySQL guidance.
 
 ## License
 

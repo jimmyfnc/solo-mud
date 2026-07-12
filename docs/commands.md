@@ -325,6 +325,34 @@ You unequip the Silver Ring.
 
 ---
 
+## Shops and Economy
+
+Merchant inventories are finite. Purchases reduce stock and add money to the merchant's cash reserve. Merchants consume stored materials to produce replacements; when they run short, they post work orders in Easthollow Square.
+
+```
+list
+buy <item>
+sell <item> [all]
+orders
+read notice board
+turnin <material> [quantity]
+```
+
+Resource nodes appear in room descriptions throughout the Western Reaches and Whispering Woods:
+
+```
+gather <resource>
+mine <resource>
+harvest <resource>
+chop <resource>
+```
+
+Mining requires a mining pick, sold by Thom. Chopping requires an axe. Resource nodes are shared, can be depleted, and regenerate through cold world ticks.
+
+The inn, general store, blacksmith, and alchemist each have distinct recipes, material inventories, and cash reserves. Selling directly to a merchant pays the normal rate; fulfilling a posted work order pays a premium.
+
+---
+
 ## Development Commands
 
 ### Debug

@@ -612,7 +612,7 @@ export const PYROBLAST: Spell = {
 export const COUNTERSPELL: Spell = {
   id: 'counterspell',
   name: 'Counterspell',
-  alias: 'cs',
+  alias: 'counter',
   description: 'Interrupt an enemy spellcast and lock out that school of magic.',
   classes: ['mage'],
   levelRequired: 28,
@@ -1191,7 +1191,7 @@ export function getStarterSpellId(className: string): string | undefined {
 /** Get all spells available to a class */
 export function getClassSpells(className: string): Spell[] {
   return Object.values(SPELLS).filter(spell =>
-    spell.classes.includes(className as any)
+    spell.classes.some(spellClass => spellClass === className)
   );
 }
 

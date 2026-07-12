@@ -1,0 +1,1855 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Cartographer — Solo MUD Zone Editor</title>
+<style>
+  :root {
+    --wood-900: #1d1712;
+    --wood-800: #241c15;
+    --wood-700: #2e241b;
+    --wood-600: #3a2e22;
+    --parchment: #e9dfc6;
+    --parchment-dim: #ddd1b4;
+    --grid-ink: #c9bb9c;
+    --ink: #2b2317;
+    --ink-soft: #5a4c39;
+    --wax: #a33b2a;
+    --wax-bright: #c14a35;
+    --verdigris: #3f7d6a;
+    --gold: #b98a3d;
+    --bone: #cfc4a8;
+    --font-display: 'Palatino Linotype', 'Book Antiqua', Palatino, Georgia, serif;
+    --font-mono: 'Cascadia Code', 'Consolas', 'Courier New', monospace;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { height: 100%; overflow: hidden; }
+  body {
+    font-family: var(--font-display);
+    background: var(--wood-900);
+    color: var(--bone);
+    display: flex;
+    flex-direction: column;
+  }
+
+  /* ============ Top bar ============ */
+  header {
+    display: flex; align-items: center; gap: 14px;
+    padding: 10px 16px;
+    background: linear-gradient(180deg, var(--wood-700), var(--wood-800));
+    border-bottom: 2px solid #0f0b08;
+    box-shadow: 0 2px 8px rgba(0,0,0,.5);
+    z-index: 10; flex-wrap: wrap;
+  }
+  header h1 {
+    font-size: 17px; letter-spacing: 2px; font-variant: small-caps;
+    color: var(--parchment);
+  }
+  header h1 .glyph { color: var(--wax-bright); }
+  .field { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--bone); }
+  .field input, .field select {
+    background: var(--wood-900); color: var(--parchment);
+    border: 1px solid var(--wood-600); border-radius: 3px;
+    padding: 4px 7px; font-family: var(--font-mono); font-size: 12px;
+  }
+  .field input:focus, select:focus, textarea:focus { outline: 1px solid var(--gold); }
+  .spacer { flex: 1; }
+  button {
+    font-family: var(--font-display); font-variant: small-caps; letter-spacing: 1px;
+    background: var(--wood-600); color: var(--parchment);
+    border: 1px solid #4d3d2b; border-radius: 3px;
+    padding: 5px 12px; font-size: 12.5px; cursor: pointer;
+    transition: background .15s, transform .05s;
+  }
+  button:hover { background: #4a3a29; }
+  button:active { transform: translateY(1px); }
+  button.primary { background: var(--wax); border-color: #7c2c1f; }
+  button.primary:hover { background: var(--wax-bright); }
+  button.mode.active { background: var(--gold); color: var(--ink); border-color: #8a6527; }
+
+  /* ============ Main layout ============ */
+  main { flex: 1; display: flex; min-height: 0; }
+
+  /* Canvas */
+  #canvasWrap { flex: 1; position: relative; overflow: hidden; background: var(--wood-800); }
+  #canvasWrap::before {
+    content: ''; position: absolute; inset: 0; pointer-events: none; z-index: 3;
+    box-shadow: inset 0 0 80px rgba(0,0,0,.55);
+  }
+  svg#map { width: 100%; height: 100%; display: block; cursor: grab; }
+  svg#map.mode-room { cursor: crosshair; }
+  svg#map.panning { cursor: grabbing; }
+
+  .room-rect { fill: var(--parchment); stroke: var(--ink); stroke-width: 2; }
+  .room.selected .room-rect { stroke: var(--wax-bright); stroke-width: 3; }
+  .room.boss .room-rect { fill: #ecd2c4; }
+  .room.safe .room-rect { fill: #d7e3d3; }
+  .room.dark .room-rect { fill: #c9c2b2; stroke-dasharray: 6 3; }
+  .room text { font-family: var(--font-display); fill: var(--ink); pointer-events: none; }
+  .room .rname { font-size: 12px; font-weight: bold; }
+  .room .rmeta { font-size: 10px; fill: var(--ink-soft); font-family: var(--font-mono); }
+  .room .badge { font-size: 12px; }
+  .link { stroke: var(--ink); stroke-width: 3; }
+  .link.locked { stroke: var(--wax); stroke-dasharray: 8 5; }
+  .link.puzzle { stroke: var(--gold); stroke-dasharray: 8 5; }
+  .link.broken { stroke: var(--wax-bright); stroke-dasharray: 2 4; stroke-width: 2; }
+  .link-hit { stroke: transparent; stroke-width: 14; cursor: pointer; }
+  .link-group.selected .link { stroke: var(--wax-bright); stroke-width: 4; }
+  .vglyph { font-size: 13px; font-family: var(--font-mono); fill: var(--wax); font-weight: bold; pointer-events: none; }
+  .vlink-hit { fill: transparent; stroke: none; cursor: pointer; }
+  .vlink:hover .vlink-hit { fill: rgba(163,59,42,.12); }
+  .vlink.selected .vlink-hit { stroke: var(--wax-bright); stroke-width: 1.5; fill: rgba(193,74,53,.15); }
+  .entrance-mark { fill: none; stroke: var(--verdigris); stroke-width: 2.5; stroke-dasharray: 4 3; }
+  .connect-hint { stroke: var(--gold); stroke-width: 2; stroke-dasharray: 5 4; }
+  .bridge-line { stroke: var(--verdigris); stroke-width: 2; stroke-dasharray: 3 3; }
+  .bridge-tag { fill: var(--verdigris); font-size: 10.5px; font-family: var(--font-mono); font-style: italic; }
+
+  #floorLabel {
+    position: absolute; top: 12px; left: 14px; z-index: 4;
+    font-variant: small-caps; letter-spacing: 3px; font-size: 13px;
+    color: var(--parchment-dim); background: rgba(29,23,18,.82);
+    border: 1px solid var(--wood-600); border-radius: 3px; padding: 5px 12px;
+    display: flex; align-items: center; gap: 10px;
+  }
+  #floorLabel button { padding: 1px 8px; font-size: 13px; }
+  #hint {
+    position: absolute; bottom: 12px; left: 14px; z-index: 4;
+    font-size: 11.5px; color: var(--parchment-dim);
+    background: rgba(29,23,18,.82); border: 1px solid var(--wood-600);
+    border-radius: 3px; padding: 5px 10px; max-width: 60%;
+  }
+  #stats {
+    position: absolute; bottom: 12px; right: 14px; z-index: 4;
+    font-family: var(--font-mono); font-size: 11px; color: var(--parchment-dim);
+    background: rgba(29,23,18,.82); border: 1px solid var(--wood-600);
+    border-radius: 3px; padding: 5px 10px; text-align: right;
+  }
+  #stats .warn { color: var(--wax-bright); }
+
+  /* Inspector */
+  aside {
+    width: 300px; background: var(--wood-800); border-left: 2px solid #0f0b08;
+    overflow-y: auto; padding: 14px; font-size: 12.5px;
+    display: flex; flex-direction: column; gap: 10px;
+  }
+  aside h2 {
+    font-variant: small-caps; letter-spacing: 2px; font-size: 13px;
+    color: var(--gold); border-bottom: 1px solid var(--wood-600); padding-bottom: 6px;
+  }
+  aside label { display: block; color: var(--parchment-dim); margin-bottom: 3px; font-size: 11.5px; }
+  aside input[type=text], aside input[type=number], aside select, aside textarea {
+    width: 100%; background: var(--wood-900); color: var(--parchment);
+    border: 1px solid var(--wood-600); border-radius: 3px;
+    padding: 5px 7px; font-family: var(--font-mono); font-size: 12px;
+  }
+  aside textarea { resize: vertical; min-height: 52px; }
+  .row { display: flex; gap: 8px; }
+  .row > div { flex: 1; }
+  .checks { display: flex; gap: 12px; flex-wrap: wrap; color: var(--parchment-dim); font-size: 12px; }
+  .checks label { display: flex; align-items: center; gap: 4px; margin: 0; cursor: pointer; }
+  .anchor-row { display: flex; gap: 5px; margin-bottom: 5px; align-items: center; }
+  .anchor-row input { flex: 1; min-width: 0; }
+  .anchor-row input.lvl { flex: 0 0 44px; }
+  .anchor-row button { padding: 3px 8px; }
+  .muted { color: #8b7d64; font-size: 11px; font-style: italic; }
+  .btnrow { display: flex; gap: 8px; flex-wrap: wrap; }
+  .danger { background: #5d271c; border-color: #7c2c1f; }
+  .danger:hover { background: #7c3626; }
+
+  /* Modal */
+  #modal {
+    position: fixed; inset: 0; background: rgba(10,8,5,.78); z-index: 50;
+    display: none; align-items: center; justify-content: center;
+  }
+  #modal.open { display: flex; }
+  #modal .sheet {
+    background: var(--wood-800); border: 1px solid var(--wood-600); border-radius: 6px;
+    width: min(860px, 92vw); max-height: 88vh; display: flex; flex-direction: column;
+    box-shadow: 0 18px 60px rgba(0,0,0,.7);
+  }
+  #modal .sheet header { border-radius: 6px 6px 0 0; }
+  #modal textarea {
+    flex: 1; min-height: 420px; margin: 12px; background: #14100c; color: #d9cfae;
+    border: 1px solid var(--wood-600); border-radius: 4px; padding: 10px;
+    font-family: var(--font-mono); font-size: 11.5px; white-space: pre; overflow: auto;
+  }
+  #modal .foot { display: flex; gap: 8px; padding: 0 12px 12px; justify-content: flex-end; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1><span class="glyph">✦</span> Cartographer</h1>
+  <span class="field">Zone <input id="zoneName" type="text" size="16" value="New Zone"></span>
+  <span class="field">Prefix <input id="zonePrefix" type="text" size="8" value="zone" title="Location id prefix, e.g. 'crypt' → crypt_entrance"></span>
+  <span class="field">Library
+    <select id="librarySelect"><option value="">— load a zone —</option></select>
+  </span>
+  <span class="spacer"></span>
+  <button class="mode active" data-mode="select" title="Select / move rooms (drag). Drag empty space to pan.">Select</button>
+  <button class="mode" data-mode="room" title="Click an empty cell to add a room">Add Room</button>
+  <button class="mode" data-mode="connect" title="Click one room, then an adjacent room, to connect them">Connect</button>
+  <span class="spacer"></span>
+  <button id="btnNew">New</button>
+  <button id="btnImport">Import JSON</button>
+  <button id="btnExportJson">Export JSON</button>
+  <button id="btnExportTs" class="primary">Export TypeScript</button>
+  <span id="saveState" class="field" style="color:var(--verdigris);min-width:74px" title="Every change autosaves to this browser's localStorage. Export JSON for a durable, shareable save file.">✓ autosaved</span>
+</header>
+
+<main>
+  <div id="canvasWrap">
+    <div id="floorLabel">
+      <button id="floorDown" title="Go down a floor">▼</button>
+      <span id="floorText">Ground Floor</span>
+      <button id="floorUp" title="Go up a floor">▲</button>
+    </div>
+    <svg id="map">
+      <defs>
+        <pattern id="gridPat" width="124" height="124" patternUnits="userSpaceOnUse">
+          <rect width="124" height="124" fill="none"/>
+          <path d="M 124 0 L 0 0 0 124" fill="none" stroke="var(--grid-ink)" stroke-width="1" opacity="0.55"/>
+        </pattern>
+      </defs>
+      <g id="world">
+        <rect id="paper" x="-20000" y="-20000" width="40000" height="40000" fill="var(--parchment-dim)"/>
+        <rect id="grid" x="-20000" y="-20000" width="40000" height="40000" fill="url(#gridPat)"/>
+        <g id="links"></g>
+        <g id="rooms"></g>
+        <g id="overlay"></g>
+      </g>
+    </svg>
+    <div id="hint">Add rooms on the grid, connect adjacent cells (direction is derived from position — always compass-true). ▲▼ floors for up/down. Select a room to edit spawns, flags &amp; props.</div>
+    <div id="stats"></div>
+  </div>
+
+  <aside id="inspector">
+    <h2>Inspector</h2>
+    <div id="inspectorBody" class="muted">Nothing selected. Click a room or a connection.</div>
+  </aside>
+</main>
+
+<div id="modal">
+  <div class="sheet">
+    <header><h1 id="modalTitle">Export</h1><span class="spacer"></span><button id="modalClose">Close</button></header>
+    <textarea id="modalText" spellcheck="false"></textarea>
+    <div class="foot">
+      <button id="modalCopy">Copy to clipboard</button>
+      <button id="modalDownload" class="primary">Download file</button>
+    </div>
+  </div>
+</div>
+
+<input type="file" id="fileInput" accept=".json" style="display:none">
+
+<script src="zone-library.js"></script>
+<script>
+'use strict';
+/* ================================================================
+   Cartographer — zone editor + viewer for Solo MUD.
+   Data model: rooms on an integer grid (x, y, z-floor); links are
+   room-id pairs whose direction is DERIVED from grid positions, so
+   exported exits are always compass-consistent.
+   ================================================================ */
+
+const CELL = 124, RW = 104, RH = 80;
+const BIOMES = ['plains','forest','hills','swamp','mountains','desert'];
+const DIRS = {
+  east:[1,0,0], west:[-1,0,0], south:[0,1,0], north:[0,-1,0],
+  northeast:[1,-1,0], northwest:[-1,-1,0], southeast:[1,1,0], southwest:[-1,1,0],
+  up:[0,0,1], down:[0,0,-1],
+};
+const OPP = {
+  north:'south', south:'north', east:'west', west:'east',
+  northeast:'southwest', southwest:'northeast', northwest:'southeast', southeast:'northwest',
+  up:'down', down:'up',
+};
+
+let state = newZone();
+let floor = 0, mode = 'select', selection = null; // {kind:'room'|'link', id|index}
+let connectFrom = null;
+let view = { x: 0, y: 0, k: 1 };
+let uidCounter = 1;
+
+function newZone() {
+  return { meta: { name: 'New Zone', prefix: 'zone', bridgeFrom: 'town_outside_walls', bridgeDir: 'west' },
+           rooms: {}, links: [], entrance: null,
+           customCreatures: [], customItems: [] };
+}
+function uid() { while (state.rooms['r' + uidCounter]) uidCounter++; return 'r' + uidCounter++; }
+function slugify(s) { return s.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '') || 'room'; }
+
+/* ---------- link geometry ---------- */
+function linkDir(link) {
+  const a = state.rooms[link.a], b = state.rooms[link.b];
+  if (!a || !b) return null;
+  const d = [b.x - a.x, b.y - a.y, b.z - a.z];
+  for (const [name, v] of Object.entries(DIRS)) {
+    if (v[0] === d[0] && v[1] === d[1] && v[2] === d[2]) return name;
+  }
+  return null; // broken (rooms moved apart)
+}
+function roomAt(x, y, z) {
+  return Object.values(state.rooms).find(r => r.x === x && r.y === y && r.z === z);
+}
+function linksOf(roomId) { return state.links.filter(l => l.a === roomId || l.b === roomId); }
+function linkBetween(aId, bId) {
+  return state.links.find(l => (l.a === aId && l.b === bId) || (l.a === bId && l.b === aId));
+}
+
+/* ---------- rendering ---------- */
+const svg = document.getElementById('map');
+const gWorld = document.getElementById('world');
+const gLinks = document.getElementById('links');
+const gRooms = document.getElementById('rooms');
+const gOverlay = document.getElementById('overlay');
+
+function px(gx) { return gx * CELL + CELL / 2; }
+function render() {
+  gWorld.setAttribute('transform', `translate(${view.x},${view.y}) scale(${view.k})`);
+  gLinks.innerHTML = ''; gRooms.innerHTML = ''; gOverlay.innerHTML = '';
+
+  // links on this floor
+  state.links.forEach((link, i) => {
+    const a = state.rooms[link.a], b = state.rooms[link.b];
+    if (!a || !b) return;
+    const dir = linkDir(link);
+    if (dir === 'up' || dir === 'down') return; // drawn as glyphs on rooms
+    if (a.z !== floor && b.z !== floor) return;
+    const gatePuzzle = (state.puzzles || []).find(p => p.gate
+      && ((p.gate.a === link.a && p.gate.b === link.b) || (p.gate.a === link.b && p.gate.b === link.a)));
+    const g = mk('g', { class: 'link-group' + (isSel('link', i) ? ' selected' : '') });
+    const cls = 'link' + (link.locked ? ' locked' : '') + (gatePuzzle ? ' puzzle' : '') + (dir ? '' : ' broken');
+    g.appendChild(mk('line', { class: cls, x1: px(a.x), y1: px(a.y), x2: px(b.x), y2: px(b.y) }));
+    if (link.locked) {
+      g.appendChild(mkText((px(a.x)+px(b.x))/2, (px(a.y)+px(b.y))/2 - 6, '🗝', { 'font-size': 13, 'text-anchor': 'middle' }));
+    }
+    if (gatePuzzle) {
+      g.appendChild(mkText((px(a.x)+px(b.x))/2, (px(a.y)+px(b.y))/2 - 6, '🧩', { 'font-size': 13, 'text-anchor': 'middle' }));
+    }
+    const hit = mk('line', { class: 'link-hit', x1: px(a.x), y1: px(a.y), x2: px(b.x), y2: px(b.y) });
+    hit.addEventListener('mousedown', e => { e.stopPropagation(); select('link', i); });
+    g.appendChild(hit);
+    gLinks.appendChild(g);
+  });
+
+  // rooms on this floor
+  for (const r of Object.values(state.rooms)) {
+    if (r.z !== floor) continue;
+    const g = mk('g', { class: 'room' + (isSel('room', r.uid) ? ' selected' : '')
+      + (r.bossRoom ? ' boss' : '') + (r.safeZone ? ' safe' : '') + (r.dark ? ' dark' : ''),
+      transform: `translate(${px(r.x) - RW/2},${px(r.y) - RH/2})` });
+    g.appendChild(mk('rect', { class: 'room-rect', width: RW, height: RH, rx: 3 }));
+    if (state.entrance === r.uid) {
+      g.appendChild(mk('rect', { class: 'entrance-mark', x: -5, y: -5, width: RW + 10, height: RH + 10, rx: 6 }));
+    }
+    // Room name — wraps to two lines so full names fit
+    const lines = nameLines(r.name);
+    if (lines.length === 1) {
+      g.appendChild(mkText(RW/2, 20, lines[0], { class: 'rname', 'text-anchor': 'middle' }));
+    } else {
+      g.appendChild(mkText(RW/2, 16, lines[0], { class: 'rname', 'text-anchor': 'middle' }));
+      g.appendChild(mkText(RW/2, 29, lines[1], { class: 'rname', 'text-anchor': 'middle' }));
+    }
+    g.appendChild(mkText(RW/2, 44, `${r.biome || '—'} · d${r.depth}`, { class: 'rmeta', 'text-anchor': 'middle' }));
+    // badges
+    let badges = '';
+    if (r.bossRoom) badges += '★';
+    if (r.safeZone) badges += '⛨';
+    if (r.dark) badges += '☾';
+    if ((state.puzzles || []).some(p => p.roomUid === r.uid)) badges += '🧩';
+    if ((r.anchors || []).length) badges += '⚔' + r.anchors.length;
+    if ((r.containers || []).length) badges += '📦';
+    if ((r.items || []).length) badges += '◆';
+    if ((r.npcs || []).length) badges += '☺';
+    if (badges) g.appendChild(mkText(RW/2, 62, badges, { class: 'badge', 'text-anchor': 'middle' }));
+    // vertical glyphs
+    // Vertical connections — clickable glyphs (select to lock/gate/delete)
+    for (const vl of linksOf(r.uid)) {
+      const d0 = linkDir(vl);
+      if (!d0) continue;
+      const d = (vl.a === r.uid) ? d0 : OPP[d0];
+      if (d !== 'up' && d !== 'down') continue;
+      const idx = state.links.indexOf(vl);
+      const w = vl.locked ? 28 : 17;
+      const x = d === 'up' ? RW - w - 3 : 3;
+      const grp = mk('g', { class: 'vlink' + (isSel('link', idx) ? ' selected' : ''), transform: `translate(${x},3)` });
+      const hit = mk('rect', { class: 'vlink-hit', width: w, height: 15, rx: 3 });
+      hit.addEventListener('mousedown', e => { e.stopPropagation(); select('link', idx); });
+      const title = mk('title', {});
+      title.textContent = `${d} to floor ${r.z + (d === 'up' ? 1 : -1)}${vl.locked ? ' (locked)' : ''} — click to edit`;
+      hit.appendChild(title);
+      grp.appendChild(hit);
+      grp.appendChild(mkText(w / 2, 12, (d === 'up' ? '↑' : '↓') + (vl.locked ? '🗝' : ''), { class: 'vglyph', 'text-anchor': 'middle' }));
+      g.appendChild(grp);
+    }
+
+    // Cross-zone bridges (viewer data + the editor's own entrance bridge —
+    // skip the meta bridge if an imported bridge already points there)
+    const bridges = [...(r.bridges || [])];
+    if (state.entrance === r.uid && state.meta.bridgeFrom
+        && !bridges.some(b => b.target === state.meta.bridgeFrom)) {
+      bridges.push({ dir: OPP[state.meta.bridgeDir] || 'east', target: state.meta.bridgeFrom, targetName: state.meta.bridgeFrom });
+    }
+    for (const br of bridges) {
+      const v = DIRS[br.dir];
+      const label = `⇢ ${br.targetName || br.target}`;
+      if (!v || (v[0] === 0 && v[1] === 0)) {
+        // vertical or named bridge: tag above the room
+        g.appendChild(mkText(RW / 2, -8, `${br.dir === 'up' ? '↑' : br.dir === 'down' ? '↓' : '⤳'} ${br.targetName || br.target}`,
+          { class: 'bridge-tag', 'text-anchor': 'middle' }));
+      } else {
+        const cx = RW / 2, cy = RH / 2;
+        const ex = cx + v[0] * CELL * 0.68, ey = cy + v[1] * CELL * 0.62;
+        g.appendChild(mk('line', { class: 'bridge-line', x1: cx + v[0] * RW * 0.5, y1: cy + v[1] * RH * 0.5, x2: ex, y2: ey }));
+        g.appendChild(mkText(ex, ey + (v[1] > 0 ? 12 : -5), label,
+          { class: 'bridge-tag', 'text-anchor': v[0] > 0 ? 'start' : v[0] < 0 ? 'end' : 'middle' }));
+      }
+    }
+
+    g.addEventListener('mousedown', e => { e.stopPropagation(); onRoomMouseDown(e, r); });
+    gRooms.appendChild(g);
+  }
+
+  // connect-mode hint line
+  if (mode === 'connect' && connectFrom && state.rooms[connectFrom]) {
+    const a = state.rooms[connectFrom];
+    if (a.z === floor) {
+      gOverlay.appendChild(mk('circle', { class: 'connect-hint', cx: px(a.x), cy: px(a.y), r: RW * 0.62, fill: 'none' }));
+    }
+  }
+
+  renderFloorLabel(); renderStats(); renderInspector(); saveLocal();
+}
+function mk(tag, attrs) {
+  const el = document.createElementNS('http://www.w3.org/2000/svg', tag);
+  for (const [k, v] of Object.entries(attrs || {})) el.setAttribute(k, v);
+  return el;
+}
+function mkText(x, y, text, attrs) {
+  const el = mk('text', Object.assign({ x, y }, attrs));
+  el.textContent = text;
+  return el;
+}
+function trunc(s, n) { return s.length > n ? s.slice(0, n - 1) + '…' : s; }
+/** Wrap a room name onto up to two lines that fit the room box. */
+function nameLines(name) {
+  const MAX = 16;
+  if (name.length <= MAX) return [name];
+  // break at the space nearest the middle
+  let best = -1, mid = name.length / 2;
+  for (let i = 0; i < name.length; i++) {
+    if (name[i] === ' ' && (best === -1 || Math.abs(i - mid) < Math.abs(best - mid))) best = i;
+  }
+  if (best === -1) return [trunc(name, MAX)];
+  return [trunc(name.slice(0, best), MAX), trunc(name.slice(best + 1), MAX)];
+}
+function isSel(kind, id) { return selection && selection.kind === kind && selection.id === id; }
+
+function renderFloorLabel() {
+  const names = { 0: 'Ground Floor' };
+  const label = names[floor] ?? (floor > 0 ? `Floor +${floor}` : `Depth ${floor} (below ground)`);
+  document.getElementById('floorText').textContent = label;
+}
+function renderStats() {
+  const rooms = Object.values(state.rooms);
+  const floors = [...new Set(rooms.map(r => r.z))].sort((a, b) => b - a);
+  const broken = state.links.filter(l => !linkDir(l)).length;
+  const noEntrance = state.entrance == null && rooms.length > 0;
+  const keyWarnings = validateKeys();
+  document.getElementById('stats').innerHTML =
+    `${rooms.length} rooms · ${state.links.length} exits · floors [${floors.join(', ') || '—'}]`
+    + (broken ? `<br><span class="warn">⚠ ${broken} broken connection${broken > 1 ? 's' : ''} (rooms not adjacent)</span>` : '')
+    + (noEntrance ? `<br><span class="warn">⚠ no entrance set (select a room → “Zone entrance”)</span>` : '')
+    + keyWarnings.map(w => `<br><span class="warn">⚠ ${w}</span>`).join('');
+}
+
+/**
+ * Key-reachability check: walk the zone from the entrance collecting placed
+ * items; locked doors only open once their key has been seen. Puzzle gates
+ * are always passable (solvable in place). Warns about unplaced keys and
+ * rooms that can never be reached.
+ */
+function validateKeys() {
+  const warnings = [];
+  const rooms = Object.values(state.rooms);
+  if (rooms.length === 0) return warnings;
+
+  const lockedLinks = state.links.filter(l => l.locked && l.keyItem);
+  // Keys that exist in no room at all
+  const placedItems = new Set(rooms.flatMap(r => r.items || []));
+  for (const l of lockedLinks) {
+    if (!placedItems.has(l.keyItem)) {
+      warnings.push(`key "${l.keyItem}" isn't placed in any room`);
+    }
+  }
+
+  // Reachability with key collection
+  const start = state.entrance ?? rooms[0].uid;
+  const visited = new Set([start]);
+  const found = new Set(state.rooms[start]?.items || []);
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const uid of [...visited]) {
+      for (const l of linksOf(uid)) {
+        const other = l.a === uid ? l.b : l.a;
+        if (visited.has(other) || !linkDir(l)) continue;
+        if (l.locked && l.keyItem && !found.has(l.keyItem)) continue;
+        visited.add(other);
+        for (const it of state.rooms[other]?.items || []) found.add(it);
+        changed = true;
+      }
+    }
+  }
+  const unreachable = rooms.filter(r => !visited.has(r.uid)).length;
+  if (unreachable > 0) {
+    warnings.push(`${unreachable} room${unreachable > 1 ? 's' : ''} unreachable from the entrance (check keys/locked doors)`);
+  }
+  return warnings;
+}
+
+/* ---------- selection & inspector ---------- */
+function select(kind, id) { selection = kind == null ? null : { kind, id }; render(); }
+
+/** Catalog of everything usable in pickers: game data + this zone's customs. */
+function fullCatalog() {
+  const cat = window.GAME_CATALOG || { creatures: [], npcs: [], items: [] };
+  return {
+    creatures: [...cat.creatures, ...(state.customCreatures || []).map(c => ({ id: c.id, name: c.name + ' (custom)', level: c.baseLevel }))],
+    npcs: cat.npcs,
+    items: [...cat.items, ...(state.customItems || []).map(i => ({ id: i.id, name: i.name + ' (custom)' }))],
+  };
+}
+
+/** Small "add from library" picker under a textarea. */
+function catalogPicker(kind) {
+  const cat = fullCatalog();
+  const entries = kind === 'item' ? cat.items : cat.npcs;
+  if (!entries.length) return '';
+  const opts = entries.map(e => `<option value="${esc(e.id)}">${esc(e.name)} — ${esc(e.id)}</option>`).join('');
+  return `<div class="row" style="margin-top:4px">
+    <select data-pick="${kind}">${opts}</select>
+    <button style="flex:0 0 auto" data-pickadd="${kind}">add</button>
+  </div>`;
+}
+
+function refreshCreatureDatalist() {
+  let dl = document.getElementById('creatureList');
+  if (!dl) {
+    dl = document.createElement('datalist');
+    dl.id = 'creatureList';
+    document.body.appendChild(dl);
+  }
+  dl.innerHTML = fullCatalog().creatures
+    .map(c => `<option value="${esc(c.id)}">${esc(c.name)}${c.level ? ` (L${c.level})` : ''}</option>`)
+    .join('');
+}
+
+function renderInspector() {
+  const body = document.getElementById('inspectorBody');
+  refreshCreatureDatalist();
+  if (!selection) { renderZonePanel(body); return; }
+  body.className = '';
+
+  if (selection.kind === 'room') {
+    const r = state.rooms[selection.id];
+    if (!r) { selection = null; return renderInspector(); }
+    body.innerHTML = `
+      <div class="row">
+        <div><label title="The name players see when they enter this room">Room name</label>
+          <input type="text" data-f="name" value="${esc(r.name)}" title="The name players see when they enter this room"></div>
+      </div>
+      <div class="row">
+        <div><label title="Unique id for this room inside the zone — combined with the zone prefix">Room id <span class="muted">(→ ${esc(state.meta.prefix)}_${esc(r.slug)})</span></label>
+          <input type="text" data-f="slug" value="${esc(r.slug)}" title="Unique id for this room inside the zone (lowercase, underscores)"></div>
+        <div style="flex:0 0 70px"><label title="Difficulty rating — higher depth spawns higher-level creatures. Ramp it up as players go deeper.">Depth</label>
+          <input type="number" data-f="depth" value="${r.depth}" title="Difficulty rating — higher depth spawns higher-level creatures"></div>
+      </div>
+      <div class="row">
+        <div><label title="Primary terrain — drives which creatures spawn here and the procedural room descriptions">Biome</label><select data-f="biome" title="Primary terrain — drives creature spawns and procedural descriptions">
+          ${BIOMES.map(b => `<option ${b === r.biome ? 'selected' : ''}>${b}</option>`).join('')}
+        </select></div>
+        <div><label title="Optional blend — adds a 30% weight of a second terrain type">Secondary <span class="muted">(30%)</span></label><select data-f="biome2" title="Optional blend — adds a 30% weight of a second terrain type">
+          <option value="">— none —</option>
+          ${BIOMES.map(b => `<option ${b === r.biome2 ? 'selected' : ''}>${b}</option>`).join('')}
+        </select></div>
+      </div>
+      <div class="checks">
+        <label title="No combat allowed, no creature spawns, faster HP/MP regen — like the town inn"><input type="checkbox" data-f="safeZone" ${r.safeZone ? 'checked' : ''}> safe zone</label>
+        <label title="Excluded from procedural spawns — populate it with creature anchors below"><input type="checkbox" data-f="bossRoom" ${r.bossRoom ? 'checked' : ''}> boss room</label>
+        <label title="Players need a torch or other light source to see here"><input type="checkbox" data-f="dark" ${r.dark ? 'checked' : ''}> dark</label>
+        <label title="Where the rest of the world connects into this zone (sets the bridge exit)"><input type="checkbox" id="entranceChk" ${state.entrance === r.uid ? 'checked' : ''}> zone entrance</label>
+      </div>
+      ${state.entrance === r.uid ? `
+      <div class="row">
+        <div><label title="The id of an existing world location the zone connects to (e.g. town_outside_walls, wild_crossroads)">Bridge from <span class="muted">(existing location id)</span></label>
+          <input type="text" id="bridgeFrom" value="${esc(state.meta.bridgeFrom)}" title="Existing world location the bridge exit starts from"></div>
+        <div style="flex:0 0 110px"><label title="The compass direction players walk FROM that location INTO this zone">Walk-in direction</label>
+          <select id="bridgeDir" title="Direction players walk from the bridge location into this zone">${['north','south','east','west','northeast','northwest','southeast','southwest','up','down']
+            .map(d => `<option ${d === state.meta.bridgeDir ? 'selected' : ''}>${d}</option>`).join('')}</select></div>
+      </div>` : ''}
+      <div><label title="Hand-written room text. Leave blank and the game writes one procedurally from biome + time + weather.">Fixed description <span class="muted">(blank → procedural from biome)</span></label>
+        <textarea data-f="description" title="Hand-written room text — leave blank for procedural descriptions">${esc(r.description || '')}</textarea></div>
+      <div><label title="Ambient scenery details, one per line — the description generator weaves these in and players can examine them">Props <span class="muted">(one per line — ambient scenery)</span></label>
+        <textarea data-f="props" title="Ambient scenery details, one per line">${esc((r.props || []).join('\n'))}</textarea></div>
+      <div><label title="Items lying in this room when the world is created — ids must exist in the game (pick from the library or design custom items in the zone panel)">Placed items <span class="muted">(one id per line)</span></label>
+        <textarea data-f="items" style="min-height:34px" title="Item ids placed in this room at world creation">${esc((r.items || []).join('\n'))}</textarea>
+        ${catalogPicker('item')}</div>
+      <div><label title="NPCs who live in this room — ids must exist in the game data">NPCs <span class="muted">(one id per line)</span></label>
+        <textarea data-f="npcs" style="min-height:34px" title="NPC ids stationed in this room">${esc((r.npcs || []).join('\n'))}</textarea>
+        ${catalogPicker('npc')}</div>
+      <h2 title="Hand-placed creatures that always spawn here — for bosses and set-piece fights. Regular creatures spawn procedurally from biome + depth.">Creature anchors <span class="muted" style="letter-spacing:0">(guaranteed spawns — bosses &amp; set pieces)</span></h2>
+      <div id="anchorList"></div>
+      <div class="btnrow"><button id="addAnchor" title="Add a guaranteed creature spawn to this room">+ anchor</button></div>
+      <h2 title="Lootable objects in this room — chests, corpses, crates. Players 'open'/'loot' them by name.">Containers <span class="muted" style="letter-spacing:0">(lootable objects)</span></h2>
+      <div id="containerList"></div>
+      <div class="btnrow"><button id="addContainer" title="Add a lootable container to this room">+ container</button></div>
+      <h2>Connections</h2>
+      <div class="btnrow">
+        <button id="connUp" title="Link this room to the cell directly above it (creates the room if needed)">Connect up ▲</button>
+        <button id="connDown" title="Link this room to the cell directly below it (creates the room if needed)">Connect down ▼</button>
+      </div>
+      <div class="muted">Vertical exits pair this cell with the same cell one floor up/down.</div>
+      <div class="btnrow" style="margin-top:8px"><button id="delRoom" class="danger" title="Delete this room and all its connections">Delete room</button></div>`;
+
+    body.querySelectorAll('[data-f]').forEach(el => {
+      el.addEventListener('change', () => {
+        const f = el.dataset.f;
+        if (f === 'depth') r.depth = parseInt(el.value || '0', 10);
+        else if (el.type === 'checkbox') r[f] = el.checked;
+        else if (f === 'props' || f === 'items' || f === 'npcs') r[f] = el.value.split('\n').map(s => s.trim()).filter(Boolean);
+        else if (f === 'slug') r.slug = slugify(el.value);
+        else if (f === 'biome2') r.biome2 = el.value || undefined;
+        else r[f] = el.value;
+        render();
+      });
+    });
+    body.querySelector('#entranceChk').addEventListener('change', e => {
+      state.entrance = e.target.checked ? r.uid : null; render();
+    });
+    const bf = body.querySelector('#bridgeFrom'), bd = body.querySelector('#bridgeDir');
+    if (bf) bf.addEventListener('change', () => { state.meta.bridgeFrom = bf.value.trim(); render(); });
+    if (bd) bd.addEventListener('change', () => { state.meta.bridgeDir = bd.value; render(); });
+    // "add from library" pickers
+    body.querySelectorAll('[data-pickadd]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const kind = btn.dataset.pickadd;
+        const sel = body.querySelector(`[data-pick="${kind}"]`);
+        if (!sel?.value) return;
+        const arr = kind === 'item' ? (r.items = r.items || []) : (r.npcs = r.npcs || []);
+        if (!arr.includes(sel.value)) arr.push(sel.value);
+        render();
+      });
+    });
+    body.querySelector('#delRoom').addEventListener('click', () => deleteRoom(r.uid));
+    body.querySelector('#connUp').addEventListener('click', () => connectVertical(r, 1));
+    body.querySelector('#connDown').addEventListener('click', () => connectVertical(r, -1));
+    body.querySelector('#addAnchor').addEventListener('click', () => {
+      (r.anchors = r.anchors || []).push({ templateId: 'wolf', level: Math.max(1, r.depth), name: '' });
+      render();
+    });
+    body.querySelector('#addContainer').addEventListener('click', () => {
+      const k = (r.containers || []).length + 1;
+      (r.containers = r.containers || []).push({
+        name: `Old Chest ${k > 1 ? k : ''}`.trim(),
+        description: 'A weathered container.',
+        contents: [], locked: false, keyItem: '', respawns: false, respawnTime: 120,
+      });
+      render();
+    });
+    const contList = body.querySelector('#containerList');
+    (r.containers || []).forEach((c, ci) => {
+      const cbox = document.createElement('div');
+      cbox.style.cssText = 'border:1px solid var(--wood-600);border-radius:4px;padding:8px;margin-bottom:6px;display:flex;flex-direction:column;gap:6px';
+      cbox.innerHTML = `
+        <div class="row">
+          <div><label title="What players see and target: 'open old chest'">Name</label><input type="text" data-c="name" value="${esc(c.name)}"></div>
+        </div>
+        <div><label title="Shown when players examine the container">Description</label>
+          <textarea data-c="description" style="min-height:34px">${esc(c.description || '')}</textarea></div>
+        <div><label title="Item ids inside (one per line) — custom items or library items">Contents</label>
+          <textarea data-c="contents" style="min-height:34px" title="Item ids, one per line">${esc((c.contents || []).join('\n'))}</textarea></div>
+        <div class="checks">
+          <label title="Needs a key item to open"><input type="checkbox" data-c="locked" ${c.locked ? 'checked' : ''}> locked</label>
+          <label title="Refills its contents after being looted"><input type="checkbox" data-c="respawns" ${c.respawns ? 'checked' : ''}> refills</label>
+        </div>
+        ${c.locked ? `<div><label title="Item id of the key that opens it">Key item</label><input type="text" data-c="keyItem" value="${esc(c.keyItem || '')}"></div>` : ''}
+        ${c.respawns ? `<div><label title="Minutes until contents refill after looting">Refill after (min)</label><input type="number" data-c="respawnTime" value="${c.respawnTime ?? 120}"></div>` : ''}
+        <div class="btnrow"><button class="danger" data-cdel title="Remove this container">✕ remove</button></div>`;
+      cbox.querySelectorAll('[data-c]').forEach(el => el.addEventListener('change', () => {
+        const f = el.dataset.c;
+        if (f === 'contents') c.contents = el.value.split('\n').map(s => s.trim()).filter(Boolean);
+        else if (el.type === 'checkbox') c[f] = el.checked;
+        else if (f === 'respawnTime') c.respawnTime = parseInt(el.value || '0', 10);
+        else c[f] = el.value;
+        render();
+      }));
+      cbox.querySelector('[data-cdel]').addEventListener('click', () => { r.containers.splice(ci, 1); render(); });
+      contList.appendChild(cbox);
+    });
+    const list = body.querySelector('#anchorList');
+    if ((r.anchors || []).length) {
+      const head = document.createElement('div');
+      head.className = 'anchor-row';
+      head.innerHTML = `<label style="flex:1;margin:0">creature</label>
+        <label style="flex:0 0 44px;margin:0">level</label>
+        <label style="flex:1;margin:0">boss name (opt.)</label>
+        <span style="width:26px"></span>`;
+      list.appendChild(head);
+    }
+    (r.anchors || []).forEach((a, i) => {
+      const row = document.createElement('div');
+      row.className = 'anchor-row';
+      row.innerHTML = `<input type="text" list="creatureList" value="${esc(a.templateId)}" title="creature templateId (e.g. wolf, troll, bandit)">
+        <input class="lvl" type="number" value="${a.level}" title="level">
+        <input type="text" value="${esc(a.name || '')}" placeholder="name (opt.)" title="named boss override">
+        <button title="remove">✕</button>`;
+      const [tpl, lvl, nm, del] = row.children;
+      tpl.addEventListener('change', () => { a.templateId = tpl.value.trim(); render(); });
+      lvl.addEventListener('change', () => { a.level = parseInt(lvl.value || '1', 10); render(); });
+      nm.addEventListener('change', () => { a.name = nm.value.trim(); render(); });
+      del.addEventListener('click', () => { r.anchors.splice(i, 1); render(); });
+      list.appendChild(row);
+    });
+
+  } else if (selection.kind === 'link') {
+    const link = state.links[selection.id];
+    if (!link) { selection = null; return renderInspector(); }
+    const a = state.rooms[link.a], b = state.rooms[link.b];
+    const dir = linkDir(link);
+    body.innerHTML = `
+      <div><label>Connection</label>
+        <div class="muted">${esc(a?.name || '?')} ⟷ ${esc(b?.name || '?')}</div>
+        <div class="muted">${dir ? `${dir} / ${OPP[dir]}` : '⚠ rooms are no longer adjacent — move them back or delete this link'}</div></div>
+      <div class="checks"><label title="Players need the key item in their possession to pass (the key is reusable, not consumed)"><input type="checkbox" id="lockChk" ${link.locked ? 'checked' : ''}> locked (needs key item)</label></div>
+      <div id="lockFields" style="${link.locked ? '' : 'display:none'}">
+        <label title="The item id that opens this passage — place it somewhere reachable before the lock!">Key item id</label><input type="text" id="keyItem" value="${esc(link.keyItem || '')}" placeholder="e.g. crypt_bone_key" title="The item id that opens this passage">
+        <label style="margin-top:6px" title="What players see when they try to pass without the key">Locked message</label><input type="text" id="keyMsg" value="${esc(link.keyMsg || '')}" placeholder="The iron gate is locked." title="Shown when players lack the key">
+      </div>
+      <div class="btnrow" style="margin-top:8px"><button id="delLink" class="danger" title="Remove this passage in both directions">Delete connection</button></div>`;
+    body.querySelector('#lockChk').addEventListener('change', e => { link.locked = e.target.checked; render(); });
+    const keyEl = body.querySelector('#keyItem'), msgEl = body.querySelector('#keyMsg');
+    if (keyEl) keyEl.addEventListener('change', () => { link.keyItem = keyEl.value.trim(); render(); });
+    if (msgEl) msgEl.addEventListener('change', () => { link.keyMsg = msgEl.value.trim(); saveLocal(); });
+    body.querySelector('#delLink').addEventListener('click', () => {
+      state.links.splice(selection.id, 1); select(null);
+    });
+  }
+}
+function esc(s) { return String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;'); }
+
+/* ---------- zone designer panel (shown when nothing is selected) ---------- */
+const TIERS = ['common', 'dangerous', 'apex'];
+const BEHAVIORS = ['passive', 'territorial', 'aggressive'];
+const MOBILITIES = ['static', 'roaming'];
+const DAMAGE_TYPES = ['physical', 'fire', 'ice', 'lightning', 'holy', 'shadow', 'nature', 'poison', 'arcane'];
+const RARITIES = ['junk', 'common', 'uncommon', 'rare', 'epic', 'legendary'];
+
+const NPC_ROLES = ['citizen', 'shopkeeper', 'innkeeper', 'guard', 'trainer', 'priest'];
+const CLASSES_LIST = ['warrior', 'rogue', 'mage', 'cleric', 'ranger'];
+
+function renderZonePanel(body) {
+  body.className = '';
+  state.customCreatures = state.customCreatures || [];
+  state.customItems = state.customItems || [];
+  state.puzzles = state.puzzles || [];
+  state.customNpcs = state.customNpcs || [];
+
+  body.innerHTML = `
+    <div class="muted">Click a room or connection to edit it — or design zone content below.</div>
+    <h2 title="People who live in your zone — merchants, trainers, guards, or flavor characters">NPCs <span class="muted" style="letter-spacing:0">(merchants, trainers, characters)</span></h2>
+    <div id="npcList"></div>
+    <div class="btnrow"><button id="npcAdd" title="Add an NPC to a room">+ new NPC</button></div>
+    <h2 title="Sequence puzzles: players activate elements in the right order to open a gated passage">Puzzles <span class="muted" style="letter-spacing:0">(activate-in-order → opens a gate)</span></h2>
+    <div id="pzList"></div>
+    <div class="btnrow"><button id="pzAdd" title="Add a sequence puzzle to a room">+ new puzzle</button></div>
+    <h2>Custom monsters <span class="muted" style="letter-spacing:0">(exported as creature templates)</span></h2>
+    <div id="ccList"></div>
+    <div class="btnrow"><button id="ccAdd">+ new monster</button></div>
+    <h2>Custom items <span class="muted" style="letter-spacing:0">(exported + placeable in rooms)</span></h2>
+    <div id="ciList"></div>
+    <div class="btnrow"><button id="ciAdd">+ new item</button></div>
+    <h2 title="Random drops for a creature: when it dies, roll these entries. The table id is the creature templateId it belongs to.">Loot tables <span class="muted" style="letter-spacing:0">(random drops per creature)</span></h2>
+    <div id="ltList"></div>
+    <div class="btnrow"><button id="ltAdd" title="Add a loot table for a creature">+ new loot table</button></div>`;
+
+  renderNpcDesigner(body);
+  renderLootDesigner(body);
+
+  // (NPC designer is rendered by renderNpcDesigner above)
+  const pzList = body.querySelector('#pzList');
+  const roomOpts = (sel) => Object.values(state.rooms)
+    .map(r => `<option value="${r.uid}" ${r.uid === sel ? 'selected' : ''}>${esc(r.name)}</option>`).join('');
+  const gateOpts = (p) => state.links.map((l, i) => {
+    const a = state.rooms[l.a], b = state.rooms[l.b];
+    if (!a || !b) return '';
+    const dir = linkDir(l) ?? '?';
+    const selected = p.gate && ((p.gate.a === l.a && p.gate.b === l.b) || (p.gate.a === l.b && p.gate.b === l.a));
+    return `<option value="${i}" ${selected ? 'selected' : ''}>${esc(a.name)} → ${esc(b.name)} (${dir})</option>`;
+  }).join('');
+
+  state.puzzles.forEach((p, i) => {
+    const box = document.createElement('div');
+    box.style.cssText = 'border:1px solid var(--wood-600);border-radius:4px;padding:8px;margin-bottom:8px;display:flex;flex-direction:column;gap:6px';
+    box.innerHTML = `
+      <div class="row">
+        <div><label title="Unique id for this puzzle">Id</label><input type="text" data-p="id" value="${esc(p.id)}"></div>
+        <div><label title="The word players use to interact, e.g. 'use runes'">Keyword</label><input type="text" data-p="keyword" value="${esc(p.keyword)}"></div>
+      </div>
+      <div><label title="The room containing the puzzle elements">Puzzle room</label>
+        <select data-p="roomUid">${roomOpts(p.roomUid)}</select></div>
+      <div><label title="One element per line, IN THE CORRECT ORDER — players must activate them in this order">Elements <span class="muted">(one per line — listed order = solution)</span></label>
+        <textarea data-p="elements" style="min-height:44px" title="One element name per line, in solution order">${esc((p.elements || []).map(e => e.name).join('\n'))}</textarea></div>
+      <div><label title="The passage that stays sealed until the puzzle is solved">Gated passage</label>
+        <select data-p="gate"><option value="">— none —</option>${gateOpts(p)}</select></div>
+      <div><label title="Shown when players 'use <keyword>' without naming an element">Prompt</label>
+        <input type="text" data-p="prompt" value="${esc(p.prompt)}"></div>
+      <div><label title="The clue — an inscription, a riddle, a mural...">Hint / inscription</label>
+        <input type="text" data-p="hint" value="${esc(p.hint || '')}"></div>
+      <div><label title="Shown when the sequence is completed correctly">Solved text</label>
+        <input type="text" data-p="solvedText" value="${esc(p.solvedText)}"></div>
+      <div><label title="Shown when the full sequence is wrong (progress resets)">Fail text</label>
+        <input type="text" data-p="failText" value="${esc(p.failText)}"></div>
+      <div><label title="Shown when players try the gated passage before solving">Gate-locked text</label>
+        <input type="text" data-p="gateLockedText" value="${esc(p.gateLockedText)}"></div>
+      <div class="checks">
+        <label title="Puzzle re-seals when the player leaves this zone (farmable boss gates, like the sewer)"><input type="checkbox" data-p="resets" ${p.resets ? 'checked' : ''}> reset when leaving zone</label>
+      </div>
+      <div class="btnrow"><button class="danger" data-del>Delete puzzle</button></div>`;
+    box.querySelectorAll('[data-p]').forEach(el => el.addEventListener('change', () => {
+      const f = el.dataset.p;
+      if (f === 'elements') {
+        p.elements = el.value.split('\n').map(s => s.trim()).filter(Boolean)
+          .map(name => ({ id: slugify(name), name }));
+      } else if (f === 'gate') {
+        const link = state.links[parseInt(el.value, 10)];
+        p.gate = link ? { a: link.a, b: link.b } : undefined;
+      } else if (f === 'resets') p.resets = el.checked;
+      else if (f === 'id') p.id = slugify(el.value);
+      else p[f] = el.value;
+      render();
+    }));
+    box.querySelector('[data-del]').addEventListener('click', () => { state.puzzles.splice(i, 1); render(); });
+    pzList.appendChild(box);
+  });
+  body.querySelector('#pzAdd').addEventListener('click', () => {
+    const firstRoom = Object.values(state.rooms)[0];
+    if (!firstRoom) return flashHint('Add a room first — puzzles live in rooms.');
+    const n = state.puzzles.length + 1;
+    state.puzzles.push({
+      id: `${state.meta.prefix}_puzzle_${n}`, roomUid: firstRoom.uid, keyword: 'lever',
+      elements: [{ id: 'first_lever', name: 'first lever' }, { id: 'second_lever', name: 'second lever' }],
+      prompt: 'Two ancient levers are set into the wall.',
+      hint: 'An inscription hints at the correct order.',
+      solvedText: 'A hidden mechanism rumbles — the way is open!',
+      failText: 'The levers snap back to their original positions.',
+      gateLockedText: 'The way is sealed by an ancient mechanism.',
+      resets: false,
+    });
+    render();
+  });
+
+  const ccList = body.querySelector('#ccList');
+  state.customCreatures.forEach((c, i) => {
+    const box = document.createElement('div');
+    box.style.cssText = 'border:1px solid var(--wood-600);border-radius:4px;padding:8px;margin-bottom:8px;display:flex;flex-direction:column;gap:6px';
+    box.innerHTML = `
+      <div class="row">
+        <div><label>Id</label><input type="text" data-c="id" value="${esc(c.id)}"></div>
+        <div><label>Name</label><input type="text" data-c="name" value="${esc(c.name)}"></div>
+      </div>
+      <div class="row">
+        <div><label>Tier</label><select data-c="tier">${TIERS.map(t => `<option ${t === c.tier ? 'selected' : ''}>${t}</option>`).join('')}</select></div>
+        <div><label>Behavior</label><select data-c="behavior">${BEHAVIORS.map(t => `<option ${t === c.behavior ? 'selected' : ''}>${t}</option>`).join('')}</select></div>
+        <div><label>Moves</label><select data-c="mobility">${MOBILITIES.map(t => `<option ${t === c.mobility ? 'selected' : ''}>${t}</option>`).join('')}</select></div>
+      </div>
+      <div class="row">
+        <div><label>HP</label><input type="number" data-c="baseHp" value="${c.baseHp}"></div>
+        <div><label>Level</label><input type="number" data-c="baseLevel" value="${c.baseLevel}"></div>
+        <div><label>Damage</label><select data-c="damageType">${DAMAGE_TYPES.map(t => `<option ${t === c.damageType ? 'selected' : ''}>${t}</option>`).join('')}</select></div>
+      </div>
+      <div class="row">
+        <div><label>Spawn weight <span class="muted">(0 = anchors only)</span></label><input type="number" data-c="spawnWeight" value="${c.spawnWeight}"></div>
+        <div><label>Min depth</label><input type="number" data-c="minDepth" value="${c.minDepth}"></div>
+        <div><label>Max depth <span class="muted">(-1 = ∞)</span></label><input type="number" data-c="maxDepth" value="${c.maxDepth}"></div>
+      </div>
+      <div class="checks">${BIOMES.map(b =>
+        `<label><input type="checkbox" data-biome="${b}" ${(c.biomes || []).includes(b) ? 'checked' : ''}> ${b}</label>`).join('')}</div>
+      <div><label>Idle descriptions <span class="muted">(one per line)</span></label>
+        <textarea data-c="idle" style="min-height:40px">${esc((c.idle || []).join('\n'))}</textarea></div>
+      <div><label>Alert descriptions <span class="muted">(shown when it attacks)</span></label>
+        <textarea data-c="alert" style="min-height:40px">${esc((c.alert || []).join('\n'))}</textarea></div>
+      <div class="btnrow"><button class="danger" data-del>Delete monster</button></div>`;
+    box.querySelectorAll('[data-c]').forEach(el => el.addEventListener('change', () => {
+      const f = el.dataset.c;
+      if (['baseHp', 'baseLevel', 'spawnWeight', 'minDepth', 'maxDepth'].includes(f)) c[f] = parseInt(el.value || '0', 10);
+      else if (f === 'idle' || f === 'alert') c[f] = el.value.split('\n').map(s => s.trim()).filter(Boolean);
+      else if (f === 'id') c.id = slugify(el.value);
+      else c[f] = el.value;
+      saveLocal();
+    }));
+    box.querySelectorAll('[data-biome]').forEach(el => el.addEventListener('change', () => {
+      c.biomes = BIOMES.filter(b => box.querySelector(`[data-biome="${b}"]`).checked);
+      saveLocal();
+    }));
+    box.querySelector('[data-del]').addEventListener('click', () => { state.customCreatures.splice(i, 1); render(); });
+    ccList.appendChild(box);
+  });
+  body.querySelector('#ccAdd').addEventListener('click', () => {
+    const n = state.customCreatures.length + 1;
+    state.customCreatures.push({ id: `${state.meta.prefix}_beast_${n}`, name: `Beast ${n}`,
+      tier: 'common', behavior: 'aggressive', mobility: 'roaming',
+      baseHp: 20, baseLevel: 2, damageType: 'physical',
+      biomes: ['forest'], spawnWeight: 5, minDepth: 1, maxDepth: -1,
+      idle: ['A strange beast lurks here.'], alert: ['The beast lunges at you!'] });
+    render();
+  });
+
+  const ciList = body.querySelector('#ciList');
+  state.customItems.forEach((it, i) => {
+    const box = document.createElement('div');
+    box.style.cssText = 'border:1px solid var(--wood-600);border-radius:4px;padding:8px;margin-bottom:8px;display:flex;flex-direction:column;gap:6px';
+    box.innerHTML = `
+      <div class="row">
+        <div><label>Id</label><input type="text" data-i="id" value="${esc(it.id)}"></div>
+        <div><label>Name</label><input type="text" data-i="name" value="${esc(it.name)}"></div>
+      </div>
+      <div class="row">
+        <div><label>Tags <span class="muted">(comma-sep, e.g. weapon,sword,melee)</span></label>
+          <input type="text" data-i="tags" value="${esc((it.tags || []).join(','))}"></div>
+        <div style="flex:0 0 100px"><label>Rarity</label>
+          <select data-i="rarity">${RARITIES.map(t => `<option ${t === it.rarity ? 'selected' : ''}>${t}</option>`).join('')}</select></div>
+      </div>
+      <div class="row">
+        <div><label title="Base worth in copper — drives shop and loot value">Value (copper)</label><input type="number" data-i="baseValue" value="${it.baseValue ?? 10}"></div>
+        <div><label>Weapon dmg min <span class="muted">(weapons only)</span></label><input type="number" data-i="damageMin" value="${it.damageMin ?? ''}"></div>
+        <div><label>Weapon dmg max</label><input type="number" data-i="damageMax" value="${it.damageMax ?? ''}"></div>
+      </div>
+      <div class="btnrow"><button class="danger" data-del>Delete item</button></div>`;
+    box.querySelectorAll('[data-i]').forEach(el => el.addEventListener('change', () => {
+      const f = el.dataset.i;
+      if (f === 'tags') it.tags = el.value.split(',').map(s => s.trim()).filter(Boolean);
+      else if (f === 'damageMin' || f === 'damageMax') it[f] = el.value === '' ? undefined : parseInt(el.value, 10);
+      else if (f === 'baseValue') it.baseValue = parseInt(el.value || '10', 10);
+      else if (f === 'id') it.id = slugify(el.value);
+      else it[f] = el.value;
+      saveLocal();
+    }));
+    box.querySelector('[data-del]').addEventListener('click', () => { state.customItems.splice(i, 1); render(); });
+    ciList.appendChild(box);
+  });
+  body.querySelector('#ciAdd').addEventListener('click', () => {
+    const n = state.customItems.length + 1;
+    state.customItems.push({ id: `${state.meta.prefix}_trinket_${n}`, name: `Trinket ${n}`,
+      tags: ['trinket'], rarity: 'common' });
+    render();
+  });
+}
+
+/* ---------- editing operations ---------- */
+function addRoom(x, y) {
+  if (roomAt(x, y, floor)) return;
+  const id = uid();
+  const n = Object.keys(state.rooms).length + 1;
+  state.rooms[id] = { uid: id, slug: `room_${n}`, name: `Room ${n}`, x, y, z: floor,
+    biome: 'plains', biome2: undefined, depth: 1, safeZone: false, bossRoom: false, dark: false,
+    description: '', props: [], items: [], npcs: [], anchors: [] };
+  select('room', id);
+}
+function deleteRoom(id) {
+  delete state.rooms[id];
+  state.links = state.links.filter(l => l.a !== id && l.b !== id);
+  if (state.entrance === id) state.entrance = null;
+  select(null);
+}
+function tryConnect(aId, bId) {
+  if (aId === bId || linkBetween(aId, bId)) return;
+  const a = state.rooms[aId], b = state.rooms[bId];
+  const dx = Math.abs(a.x - b.x), dy = Math.abs(a.y - b.y), dz = Math.abs(a.z - b.z);
+  const adjacent = dz === 0 && dx <= 1 && dy <= 1 && (dx + dy > 0); // incl. diagonals
+  if (!adjacent) return flashHint('Rooms must be adjacent on the grid — diagonals allowed (use Connect up/down for floors).');
+  state.links.push({ a: aId, b: bId, locked: false });
+  select('link', state.links.length - 1);
+}
+function connectVertical(room, dz) {
+  const other = roomAt(room.x, room.y, room.z + dz);
+  if (!other) {
+    // create the room above/below and link it
+    const id = uid();
+    state.rooms[id] = Object.assign({}, state.rooms[room.uid],
+      { uid: id, slug: room.slug + (dz > 0 ? '_upper' : '_lower'), name: room.name + (dz > 0 ? ' (upper)' : ' (lower)'),
+        z: room.z + dz, props: [], items: [], npcs: [], anchors: [], description: '' });
+    state.links.push({ a: room.uid, b: id, locked: false });
+    floor = room.z + dz;
+    select('room', id);
+    return;
+  }
+  if (!linkBetween(room.uid, other.uid)) state.links.push({ a: room.uid, b: other.uid, locked: false });
+  render();
+}
+function flashHint(msg) {
+  const el = document.getElementById('hint');
+  const old = el.textContent;
+  el.textContent = '⚠ ' + msg;
+  el.style.color = 'var(--wax-bright)';
+  setTimeout(() => { el.textContent = old; el.style.color = ''; }, 2600);
+}
+
+/* ---------- loot table designer ---------- */
+function renderLootDesigner(body) {
+  state.lootTables = state.lootTables || [];
+  const ltList = body.querySelector('#ltList');
+
+  state.lootTables.forEach((t, i) => {
+    const box = document.createElement('div');
+    box.style.cssText = 'border:1px solid var(--wood-600);border-radius:4px;padding:8px;margin-bottom:8px;display:flex;flex-direction:column;gap:6px';
+    const entryRows = (t.entries || []).map((e, j) => `
+      <div class="anchor-row" data-entry="${j}">
+        <input type="text" list="itemBaseList" value="${esc(e.templateId)}" data-ef="templateId" title="Item id that can drop (custom item or existing template)">
+        <input class="lvl" type="number" value="${e.weight}" data-ef="weight" title="Drop weight — higher = more common relative to other entries">
+        <select data-ef="minRarity" title="Minimum rarity this drop can roll">${RARITIES.map(x => `<option ${x === e.minRarity ? 'selected' : ''}>${x}</option>`).join('')}</select>
+        <select data-ef="maxRarity" title="Maximum rarity this drop can roll">${RARITIES.map(x => `<option ${x === e.maxRarity ? 'selected' : ''}>${x}</option>`).join('')}</select>
+        <button data-ef="del" title="Remove this entry">✕</button>
+      </div>`).join('');
+
+    box.innerHTML = `
+      <div class="row">
+        <div><label title="The creature templateId this table belongs to — when that creature dies, this table rolls">Drops from creature</label>
+          <input type="text" list="creatureList" data-t="id" value="${esc(t.id)}"></div>
+      </div>
+      <div class="row">
+        <div><label title="Chance (0–1) that anything drops at all">Drop chance</label><input type="number" step="0.05" min="0" max="1" data-t="dropChance" value="${t.dropChance}"></div>
+        <div><label title="Fewest items when loot drops">Min items</label><input type="number" data-t="minItems" value="${t.minItems}"></div>
+        <div><label title="Most items when loot drops">Max items</label><input type="number" data-t="maxItems" value="${t.maxItems}"></div>
+      </div>
+      <div class="checks">
+        <label title="Always drop (ignore drop chance) — for bosses"><input type="checkbox" data-t="guarantee" ${t.guarantee ? 'checked' : ''}> guaranteed (boss)</label>
+      </div>
+      <div><label title="What can drop: item, weight, rarity range">Entries</label>
+        <div class="anchor-row" style="margin-bottom:2px">
+          <label style="flex:1;margin:0">item</label>
+          <label style="flex:0 0 44px;margin:0">weight</label>
+          <label style="flex:1;margin:0">min rarity</label>
+          <label style="flex:1;margin:0">max rarity</label>
+          <span style="width:26px"></span>
+        </div>
+        <div data-entries>${entryRows}</div>
+        <div class="btnrow"><button data-t="addEntry" title="Add a possible drop">+ entry</button></div>
+      </div>
+      <div class="btnrow"><button class="danger" data-del title="Delete this loot table">Delete loot table</button></div>`;
+
+    box.querySelectorAll('[data-t]').forEach(el => el.addEventListener(el.tagName === 'BUTTON' ? 'click' : 'change', () => {
+      const f = el.dataset.t;
+      if (f === 'addEntry') {
+        (t.entries = t.entries || []).push({ templateId: '', weight: 20, minRarity: 'common', maxRarity: 'uncommon' });
+        render(); return;
+      }
+      if (f === 'guarantee') t.guarantee = el.checked;
+      else if (f === 'dropChance') t.dropChance = parseFloat(el.value || '0');
+      else if (f === 'minItems' || f === 'maxItems') t[f] = parseInt(el.value || '1', 10);
+      else if (f === 'id') t.id = el.value.trim();
+      else t[f] = el.value;
+      saveLocal();
+    }));
+    box.querySelectorAll('[data-entry]').forEach(row => {
+      const j = parseInt(row.dataset.entry, 10);
+      const e = t.entries[j];
+      row.querySelectorAll('[data-ef]').forEach(el => {
+        if (el.dataset.ef === 'del') { el.addEventListener('click', () => { t.entries.splice(j, 1); render(); }); return; }
+        el.addEventListener('change', () => {
+          const f = el.dataset.ef;
+          if (f === 'weight') e.weight = parseInt(el.value || '1', 10);
+          else e[f] = el.value.trim();
+          saveLocal();
+        });
+      });
+    });
+    box.querySelector('[data-del]').addEventListener('click', () => { state.lootTables.splice(i, 1); render(); });
+    ltList.appendChild(box);
+  });
+
+  body.querySelector('#ltAdd').addEventListener('click', () => {
+    const firstCreature = (state.customCreatures || [])[0];
+    state.lootTables.push({
+      id: firstCreature?.id ?? 'wolf', dropChance: 0.8, minItems: 1, maxItems: 2,
+      guarantee: false,
+      entries: [{ templateId: (state.customItems || [])[0]?.id ?? '', weight: 30, minRarity: 'common', maxRarity: 'uncommon' }],
+    });
+    render();
+  });
+}
+
+/* ---------- NPC designer ---------- */
+function renderNpcDesigner(body) {
+  const npcList = body.querySelector('#npcList');
+  const cat = window.GAME_CATALOG || { spells: [], items: [] };
+  const roomOptions = (sel) => Object.values(state.rooms)
+    .map(r => `<option value="${r.uid}" ${r.uid === sel ? 'selected' : ''}>${esc(r.name)}</option>`).join('');
+
+  state.customNpcs.forEach((n, i) => {
+    const box = document.createElement('div');
+    box.style.cssText = 'border:1px solid var(--wood-600);border-radius:4px;padding:8px;margin-bottom:8px;display:flex;flex-direction:column;gap:6px';
+
+    // trainer spell checkboxes (spells of the chosen class)
+    const classSpells = n.trainsClass
+      ? (cat.spells || []).filter(s => s.classes.includes(n.trainsClass)).sort((a, b) => a.level - b.level)
+      : [];
+    const spellChecks = classSpells.map(s =>
+      `<label style="display:flex;gap:4px;align-items:center;margin:0">
+        <input type="checkbox" data-spell="${esc(s.id)}" ${(n.teachableSpells || []).includes(s.id) ? 'checked' : ''}>
+        ${esc(s.name)} <span class="muted">(L${s.level})</span>
+      </label>`).join('');
+
+    // shop stock rows
+    const stockRows = (n.shopItems || []).map((it, j) => `
+      <div class="anchor-row" data-stock="${j}">
+        <input type="text" list="itemBaseList" value="${esc(it.baseId)}" data-sf="baseId" title="Item base id (pick from library or a custom item id)">
+        <input class="lvl" type="number" value="${it.basePrice}" data-sf="basePrice" title="Price in copper">
+        <input class="lvl" type="number" value="${it.stock ?? ''}" placeholder="∞" data-sf="stock" title="Stock limit — blank = unlimited">
+        <button data-sf="del" title="Remove from stock">✕</button>
+      </div>`).join('');
+
+    box.innerHTML = `
+      <div class="row">
+        <div><label title="Unique NPC id (npc_ prefix added if missing)">Id</label><input type="text" data-n="id" value="${esc(n.id)}"></div>
+        <div><label title="The NPC's name">Name</label><input type="text" data-n="name" value="${esc(n.name)}"></div>
+      </div>
+      <div class="row">
+        <div><label title="Optional title shown before the name, e.g. 'Innkeeper'">Title</label><input type="text" data-n="title" value="${esc(n.title || '')}"></div>
+        <div><label title="Role drives behavior: shopkeepers sell, guards fight, trainers teach">Role</label>
+          <select data-n="role">${NPC_ROLES.map(x => `<option ${x === n.role ? 'selected' : ''}>${x}</option>`).join('')}</select></div>
+      </div>
+      <div><label title="The room this NPC lives in">Room</label><select data-n="roomUid">${roomOptions(n.roomUid)}</select></div>
+      <div><label title="What the NPC says when players talk to them">Greeting</label>
+        <textarea data-n="greeting" style="min-height:40px">${esc(n.greeting || '')}</textarea></div>
+      <div class="row">
+        <div><label title="If set, this NPC trains that class and can teach spells">Trains class</label>
+          <select data-n="trainsClass"><option value="">— not a trainer —</option>
+            ${CLASSES_LIST.map(c => `<option ${c === n.trainsClass ? 'selected' : ''}>${c}</option>`).join('')}</select></div>
+      </div>
+      ${n.trainsClass ? `
+      <div><label title="Tick the spells this trainer offers. None ticked = teaches the full class list.">Teaches <span class="muted">(none ticked = all ${esc(n.trainsClass)} spells)</span></label>
+        <div style="max-height:130px;overflow-y:auto;border:1px solid var(--wood-600);border-radius:3px;padding:6px;display:flex;flex-direction:column;gap:3px">${spellChecks}</div></div>` : ''}
+      <div class="checks">
+        <label title="Give this NPC a shop players can buy from and sell to"><input type="checkbox" data-n="hasShop" ${n.hasShop ? 'checked' : ''}> runs a shop</label>
+      </div>
+      ${n.hasShop ? `
+      <div class="row">
+        <div><label title="Multiplier on base price when players BUY (1.1 = 10% markup)">Buy ×</label><input type="number" step="0.05" data-n="buyMultiplier" value="${n.buyMultiplier ?? 1.1}"></div>
+        <div><label title="Multiplier on base value when players SELL to this shop (0.4 = 40%)">Sell ×</label><input type="number" step="0.05" data-n="sellMultiplier" value="${n.sellMultiplier ?? 0.4}"></div>
+      </div>
+      <div><label title="What the shop sells: item id, price (copper), stock (blank = unlimited)">Stock</label>
+        <div class="anchor-row" style="margin-bottom:2px">
+          <label style="flex:1;margin:0">item id</label>
+          <label style="flex:0 0 44px;margin:0">price</label>
+          <label style="flex:0 0 44px;margin:0">stock</label>
+          <span style="width:26px"></span>
+        </div>
+        <div data-stocklist>${stockRows}</div>
+        <div class="btnrow"><button data-n="addStock" title="Add an item to this shop's stock">+ stock item</button></div>
+      </div>` : ''}
+      <div class="btnrow"><button class="danger" data-del title="Delete this NPC">Delete NPC</button></div>`;
+
+    box.querySelectorAll('[data-n]').forEach(el => el.addEventListener(el.tagName === 'BUTTON' ? 'click' : 'change', () => {
+      const f = el.dataset.n;
+      if (f === 'addStock') { (n.shopItems = n.shopItems || []).push({ baseId: '', basePrice: 10 }); render(); return; }
+      if (f === 'hasShop') n.hasShop = el.checked;
+      else if (f === 'id') n.id = slugify(el.value);
+      else if (f === 'trainsClass') { n.trainsClass = el.value || undefined; n.teachableSpells = []; }
+      else if (f === 'buyMultiplier' || f === 'sellMultiplier') n[f] = parseFloat(el.value || '1');
+      else n[f] = el.value;
+      render();
+    }));
+    box.querySelectorAll('[data-spell]').forEach(el => el.addEventListener('change', () => {
+      n.teachableSpells = [...box.querySelectorAll('[data-spell]')]
+        .filter(c => c.checked).map(c => c.dataset.spell);
+      saveLocal();
+    }));
+    box.querySelectorAll('[data-stock]').forEach(row => {
+      const j = parseInt(row.dataset.stock, 10);
+      const it = n.shopItems[j];
+      row.querySelectorAll('[data-sf]').forEach(el => {
+        if (el.dataset.sf === 'del') { el.addEventListener('click', () => { n.shopItems.splice(j, 1); render(); }); return; }
+        el.addEventListener('change', () => {
+          const f = el.dataset.sf;
+          if (f === 'basePrice') it.basePrice = parseInt(el.value || '0', 10);
+          else if (f === 'stock') it.stock = el.value === '' ? undefined : parseInt(el.value, 10);
+          else it.baseId = el.value.trim();
+          saveLocal();
+        });
+      });
+    });
+    box.querySelector('[data-del]').addEventListener('click', () => { state.customNpcs.splice(i, 1); render(); });
+    npcList.appendChild(box);
+  });
+
+  body.querySelector('#npcAdd').addEventListener('click', () => {
+    const firstRoom = Object.values(state.rooms)[0];
+    if (!firstRoom) return flashHint('Add a room first — NPCs live in rooms.');
+    const k = state.customNpcs.length + 1;
+    state.customNpcs.push({
+      id: `npc_${state.meta.prefix}_${k}`, name: `Villager ${k}`, title: '',
+      roomUid: firstRoom.uid, role: 'citizen',
+      greeting: 'Well met, traveler.',
+    });
+    render();
+  });
+
+  // datalist for shop item base ids
+  let dl = document.getElementById('itemBaseList');
+  if (!dl) { dl = document.createElement('datalist'); dl.id = 'itemBaseList'; document.body.appendChild(dl); }
+  dl.innerHTML = fullCatalog().items.map(it => `<option value="${esc(it.id)}">${esc(it.name)}</option>`).join('');
+}
+
+/* ---------- mouse interaction ---------- */
+let drag = null;
+svg.addEventListener('mousedown', e => {
+  const pt = toGrid(e);
+  if (mode === 'room') { addRoom(pt.gx, pt.gy); return; }
+  if (mode === 'connect') { connectFrom = null; render(); return; }
+  select(null);
+  drag = { kind: 'pan', sx: e.clientX, sy: e.clientY, vx: view.x, vy: view.y };
+  svg.classList.add('panning');
+});
+function onRoomMouseDown(e, r) {
+  if (mode === 'connect') {
+    if (!connectFrom) { connectFrom = r.uid; }
+    else { tryConnect(connectFrom, r.uid); connectFrom = null; }
+    render(); return;
+  }
+  select('room', r.uid);
+  drag = { kind: 'room', id: r.uid, sx: e.clientX, sy: e.clientY, ox: r.x, oy: r.y, moved: false };
+}
+window.addEventListener('mousemove', e => {
+  if (!drag) return;
+  if (drag.kind === 'pan') {
+    view.x = drag.vx + (e.clientX - drag.sx);
+    view.y = drag.vy + (e.clientY - drag.sy);
+    gWorld.setAttribute('transform', `translate(${view.x},${view.y}) scale(${view.k})`);
+  } else if (drag.kind === 'room') {
+    const dx = Math.round((e.clientX - drag.sx) / (CELL * view.k));
+    const dy = Math.round((e.clientY - drag.sy) / (CELL * view.k));
+    const r = state.rooms[drag.id];
+    const nx = drag.ox + dx, ny = drag.oy + dy;
+    if ((nx !== r.x || ny !== r.y) && !roomAt(nx, ny, r.z)) { r.x = nx; r.y = ny; drag.moved = true; render(); }
+  }
+});
+window.addEventListener('mouseup', () => { drag = null; svg.classList.remove('panning'); });
+svg.addEventListener('wheel', e => {
+  e.preventDefault();
+  const k2 = Math.min(2.2, Math.max(0.3, view.k * (e.deltaY < 0 ? 1.12 : 0.89)));
+  const rect = svg.getBoundingClientRect();
+  const mx = e.clientX - rect.left, my = e.clientY - rect.top;
+  view.x = mx - (mx - view.x) * (k2 / view.k);
+  view.y = my - (my - view.y) * (k2 / view.k);
+  view.k = k2;
+  gWorld.setAttribute('transform', `translate(${view.x},${view.y}) scale(${view.k})`);
+}, { passive: false });
+function toGrid(e) {
+  const rect = svg.getBoundingClientRect();
+  const wx = (e.clientX - rect.left - view.x) / view.k;
+  const wy = (e.clientY - rect.top - view.y) / view.k;
+  return { gx: Math.floor(wx / CELL), gy: Math.floor(wy / CELL) };
+}
+window.addEventListener('keydown', e => {
+  if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT') return;
+  if (e.key === 'Delete' || e.key === 'Backspace') {
+    if (selection?.kind === 'room') deleteRoom(selection.id);
+    else if (selection?.kind === 'link') { state.links.splice(selection.id, 1); select(null); }
+  }
+  if (e.key === 'Escape') { connectFrom = null; select(null); }
+  if (e.key === '1') setMode('select');
+  if (e.key === '2') setMode('room');
+  if (e.key === '3') setMode('connect');
+});
+
+/* ---------- modes / toolbar ---------- */
+function setMode(m) {
+  mode = m; connectFrom = null;
+  document.querySelectorAll('button.mode').forEach(b => b.classList.toggle('active', b.dataset.mode === m));
+  svg.className.baseVal = m === 'room' ? 'mode-room' : '';
+  render();
+}
+document.querySelectorAll('button.mode').forEach(b => b.addEventListener('click', () => setMode(b.dataset.mode)));
+document.getElementById('floorUp').addEventListener('click', () => { floor++; select(null); });
+document.getElementById('floorDown').addEventListener('click', () => { floor--; select(null); });
+document.getElementById('zoneName').addEventListener('change', e => { state.meta.name = e.target.value; saveLocal(); });
+document.getElementById('zonePrefix').addEventListener('change', e => {
+  state.meta.prefix = slugify(e.target.value); e.target.value = state.meta.prefix; render();
+});
+document.getElementById('btnNew').addEventListener('click', () => {
+  if (!confirm('Start a new zone? (Current work is kept in localStorage until you overwrite it.)')) return;
+  state = newZone(); floor = 0; select(null); syncMetaInputs(); render();
+});
+
+/* ---------- persistence ---------- */
+let saveFlashTimer = null;
+function saveLocal() {
+  try {
+    localStorage.setItem('solo-mud-cartographer', JSON.stringify(state));
+    const el = document.getElementById('saveState');
+    if (el) {
+      const t = new Date();
+      el.textContent = `✓ autosaved ${String(t.getHours()).padStart(2, '0')}:${String(t.getMinutes()).padStart(2, '0')}:${String(t.getSeconds()).padStart(2, '0')}`;
+      el.style.opacity = '1';
+      clearTimeout(saveFlashTimer);
+      saveFlashTimer = setTimeout(() => { el.style.opacity = '0.55'; }, 900);
+    }
+  } catch {}
+}
+function loadLocal() {
+  try {
+    const raw = localStorage.getItem('solo-mud-cartographer');
+    if (raw) { state = JSON.parse(raw); return true; }
+  } catch {}
+  return false;
+}
+function syncMetaInputs() {
+  document.getElementById('zoneName').value = state.meta.name;
+  document.getElementById('zonePrefix').value = state.meta.prefix;
+}
+
+/* ---------- JSON import/export ---------- */
+document.getElementById('btnExportJson').addEventListener('click', () => {
+  openModal(`${state.meta.prefix}.zone.json`, JSON.stringify(state, null, 2), 'Export JSON');
+});
+document.getElementById('btnImport').addEventListener('click', () => document.getElementById('fileInput').click());
+document.getElementById('fileInput').addEventListener('change', e => {
+  const file = e.target.files[0]; if (!file) return;
+  file.text().then(txt => {
+    try { state = JSON.parse(txt); floor = 0; select(null); syncMetaInputs(); render(); }
+    catch { alert('Not a valid zone JSON file.'); }
+  });
+  e.target.value = '';
+});
+
+/* ---------- library (existing zones) ---------- */
+const LIB = window.ZONE_LIBRARY || {};
+const libSel = document.getElementById('librarySelect');
+for (const key of Object.keys(LIB)) {
+  const opt = document.createElement('option');
+  opt.value = key; opt.textContent = LIB[key].name;
+  libSel.appendChild(opt);
+}
+libSel.addEventListener('change', () => {
+  if (!libSel.value) return;
+  loadLibraryZone(LIB[libSel.value]);
+  libSel.value = '';
+});
+
+/** Auto-layout an existing zone (id-keyed rooms + directed exits) onto the grid. */
+function loadLibraryZone(zone) {
+  state = newZone();
+  state.meta.name = zone.name;
+  state.meta.prefix = zone.prefix || 'zone';
+  const ids = Object.keys(zone.rooms);
+  if (ids.length === 0) { render(); return; }
+
+  // adjacency by direction
+  const out = {}; // fromId -> [{to, label}]
+  for (const ex of zone.exits) (out[ex.from] = out[ex.from] || []).push(ex);
+
+  const startId = zone.entrance && zone.rooms[zone.entrance] ? zone.entrance : ids[0];
+  const placed = {}; // zoneRoomId -> {x,y,z}
+  const taken = new Set();
+  const key = (x, y, z) => `${x},${y},${z}`;
+  function place(id, x, y, z) {
+    // find nearest free cell (spiral) if taken
+    let px = x, py = y, ring = 1;
+    while (taken.has(key(px, py, z))) { px = x + ring; py = y; ring++; }
+    placed[id] = { x: px, y: py, z };
+    taken.add(key(px, py, z));
+  }
+  place(startId, 0, 0, 0);
+  const queue = [startId];
+  const seen = new Set([startId]);
+  while (queue.length) {
+    const cur = queue.shift();
+    const p = placed[cur];
+    for (const ex of (out[cur] || [])) {
+      if (!zone.rooms[ex.to] || seen.has(ex.to)) continue;
+      const v = DIRS[ex.label] || null;
+      if (v) place(ex.to, p.x + v[0], p.y + v[1], p.z + v[2]);
+      else place(ex.to, p.x + 1, p.y + 1, p.z); // named exit: drop nearby
+      seen.add(ex.to); queue.push(ex.to);
+    }
+  }
+  // unreached rooms (shouldn't happen) — park them in a row
+  let park = 0;
+  for (const id of ids) if (!placed[id]) place(id, park++, 5, 0);
+
+  // build editor rooms
+  const idMap = {};
+  for (const id of ids) {
+    const src = zone.rooms[id], pos = placed[id];
+    const ruid = uid();
+    idMap[id] = ruid;
+    const biomes = Object.entries(src.biome || {}).sort((a, b) => (b[1] ?? 0) - (a[1] ?? 0));
+    state.rooms[ruid] = { uid: ruid,
+      slug: id.replace(new RegExp('^' + (zone.prefix || '') + '_?'), '') || id,
+      name: src.name, x: pos.x, y: pos.y, z: pos.z,
+      biome: biomes[0]?.[0] || 'plains', biome2: biomes[1]?.[0],
+      depth: src.depth ?? 0, safeZone: !!src.isSafeZone, bossRoom: !!src.isBossRoom, dark: !!src.isDark,
+      description: src.description || '', props: src.props || [], items: src.items || [],
+      npcs: src.npcs || [], anchors: (zone.anchors || []).filter(a => a.locationId === id)
+        .map(a => ({ templateId: a.templateId, level: a.level, name: a.name || '' })),
+      bridges: (zone.bridges || []).filter(b => b.room === id)
+        .map(b => ({ dir: b.dir, target: b.target, targetName: b.targetName })) };
+  }
+  if (zone.entrance && idMap[zone.entrance]) state.entrance = idMap[zone.entrance];
+
+  // dedupe directed exits into links (puzzle-gated exits are not "locked" —
+  // they're rendered separately via the puzzle's gate)
+  const linkSeen = new Set();
+  for (const ex of zone.exits) {
+    const a = idMap[ex.from], b = idMap[ex.to];
+    if (!a || !b) continue;
+    const k = [a, b].sort().join('|');
+    if (linkSeen.has(k)) continue;
+    linkSeen.add(k);
+    const isPuzzleGate = ex.requirement?.kind === 'puzzle';
+    state.links.push({ a, b, locked: ex.type === 'locked' && !isPuzzleGate,
+      keyItem: ex.requiresItem || (ex.requirement?.kind === 'item' ? ex.requirement.value : undefined),
+      keyMsg: ex.requiresItemMessage });
+  }
+
+  // import containers onto their rooms
+  for (const c of Object.values(zone.containers || {})) {
+    const uid = idMap[c.locationId];
+    if (!uid) continue;
+    (state.rooms[uid].containers = state.rooms[uid].containers || []).push({
+      name: c.name, description: c.description || '',
+      contents: c.contents || [], locked: !!c.locked, keyItem: c.keyId || '',
+      respawns: !!c.respawns, respawnTime: c.respawnTime ?? 120,
+    });
+  }
+
+  // import puzzles (gate = the exit carrying the puzzle requirement)
+  state.puzzles = [];
+  for (const p of Object.values(zone.puzzles || {})) {
+    const roomUid = idMap[p.locationId];
+    if (!roomUid) continue;
+    const gateExit = zone.exits.find(ex => ex.requirement?.kind === 'puzzle' && ex.requirement.value === p.id);
+    state.puzzles.push({
+      id: p.id, roomUid, keyword: p.keyword,
+      elements: (p.elements || []).map(e => ({ id: e.id, name: e.name })),
+      prompt: p.prompt, hint: p.hint,
+      solvedText: p.solvedText, failText: p.failText, gateLockedText: p.gateLockedText,
+      resets: !!p.resetOnLeavePrefix,
+      gate: gateExit && idMap[gateExit.from] && idMap[gateExit.to]
+        ? { a: idMap[gateExit.from], b: idMap[gateExit.to] }
+        : undefined,
+    });
+  }
+  floor = 0; select(null); syncMetaInputs(); fitView(); render();
+}
+
+/** Center + scale the view so all rooms on the current floor fit. */
+function fitView() {
+  const rooms = Object.values(state.rooms).filter(r => r.z === floor);
+  if (rooms.length === 0) { view = { x: 300, y: 220, k: 1 }; return; }
+  const xs = rooms.map(r => r.x), ys = rooms.map(r => r.y);
+  const minX = Math.min(...xs), maxX = Math.max(...xs);
+  const minY = Math.min(...ys), maxY = Math.max(...ys);
+  const w = svg.clientWidth || 1000, h = svg.clientHeight || 700;
+  const zoneW = (maxX - minX + 2) * CELL, zoneH = (maxY - minY + 2) * CELL;
+  const k = Math.min(1.15, Math.max(0.3, Math.min(w / zoneW, h / zoneH)));
+  view = {
+    k,
+    x: w / 2 - ((minX + maxX) / 2 + 0.5) * CELL * k,
+    y: h / 2 - ((minY + maxY) / 2 + 0.5) * CELL * k,
+  };
+}
+
+/* ---------- TypeScript export ---------- */
+document.getElementById('btnExportTs').addEventListener('click', () => {
+  openModal(`${state.meta.prefix || 'zone'}.ts`, generateTs(), 'Export TypeScript zone file');
+});
+
+function constName(slug) { return (state.meta.prefix + '_' + slug).toUpperCase().replace(/[^A-Z0-9]+/g, '_'); }
+function locId(r) { return `${state.meta.prefix}_${r.slug}`; }
+
+function generateTs() {
+  const P = state.meta.prefix.toUpperCase();
+  const rooms = Object.values(state.rooms);
+  const warnings = [];
+  // duplicate slug check
+  const slugs = new Set();
+  for (const r of rooms) {
+    if (slugs.has(r.slug)) warnings.push(`duplicate slug: ${r.slug}`);
+    slugs.add(r.slug);
+  }
+  const lines = [];
+  lines.push(`/**`);
+  lines.push(` * ${state.meta.name} — authored zone (generated by tools/zone-editor).`);
+  lines.push(` *`);
+  lines.push(` * HOW TO WIRE THIS IN:`);
+  lines.push(` * 1. Save as packages/shared/src/data/${state.meta.prefix}.ts`);
+  lines.push(` * 2. Add \`export * from './${state.meta.prefix}';\` to packages/shared/src/data/index.ts`);
+  lines.push(` * 3. In packages/server/src/world/generate.ts, assemble it like the Western Reaches:`);
+  lines.push(` *      clone ${P}_LOCATIONS into locations, ${P}_EXITS into exits + adjacency,`);
+  lines.push(` *      and include the '${state.meta.prefix}_' prefix in the procedural-spawn filter.`);
+  lines.push(` * 4. Rebuild shared: pnpm --filter @solo-mud/shared build`);
+  lines.push(` * The bridge exit below connects the zone to '${state.meta.bridgeFrom}'.`);
+  if (warnings.length) lines.push(` * ⚠ WARNINGS: ${warnings.join('; ')}`);
+  lines.push(` */`);
+  lines.push(``);
+  const hasCreatures = (state.customCreatures || []).length > 0;
+  const hasItems = (state.customItems || []).length > 0;
+  const hasPuzzles = (state.puzzles || []).length > 0;
+  const hasNpcs = (state.customNpcs || []).length > 0;
+  const containerRooms = rooms.filter(r => (r.containers || []).length > 0);
+  const hasContainers = containerRooms.length > 0;
+  const hasLoot = (state.lootTables || []).length > 0;
+  const typeImports = ['Location', 'Exit'];
+  if (hasCreatures) typeImports.push('CreatureTemplate');
+  if (hasItems) typeImports.push('Item');
+  if (hasPuzzles) typeImports.push('SequencePuzzle');
+  if (hasNpcs) typeImports.push('NPC');
+  if (hasContainers) typeImports.push('Container');
+  lines.push(`import type { ${typeImports.join(', ')} } from '../types';`);
+  lines.push(``);
+  lines.push(`// ============ Location IDs ============`);
+  for (const r of rooms) lines.push(`export const ${constName(r.slug)} = '${locId(r)}';`);
+  lines.push(``);
+  lines.push(`// ============ Locations ============`);
+  lines.push(`export const ${P}_LOCATIONS: Record<string, Location> = {`);
+  for (const r of rooms) {
+    const biome = r.biome2
+      ? `{ ${r.biome}: 0.7, ${r.biome2}: 0.3 }`
+      : `{ ${r.biome}: 1 }`;
+    lines.push(`  [${constName(r.slug)}]: {`);
+    lines.push(`    id: ${constName(r.slug)},`);
+    lines.push(`    name: ${q(r.name)},`);
+    if (r.description) lines.push(`    description: ${q(r.description)},`);
+    lines.push(`    biome: ${biome},`);
+    lines.push(`    props: [${(r.props || []).map(q).join(', ')}],`);
+    lines.push(`    items: [${(r.items || []).map(q).join(', ')}],`);
+    lines.push(`    enemies: [],`);
+    lines.push(`    creatures: [],`);
+    lines.push(`    visitState: { visitCount: 0 },`);
+    lines.push(`    depth: ${r.depth},`);
+    if (r.safeZone) lines.push(`    isSafeZone: true,`);
+    if (r.bossRoom) lines.push(`    isBossRoom: true,`);
+    if (r.dark) lines.push(`    isDark: true,`);
+    // Union of hand-listed npc ids and designer NPCs assigned to this room
+    const npcIds = [...new Set([
+      ...(r.npcs || []),
+      ...(state.customNpcs || []).filter(n => n.roomUid === r.uid).map(n => n.id),
+    ])];
+    lines.push(`    npcs: [${npcIds.map(q).join(', ')}],`);
+    lines.push(`  },`);
+  }
+  lines.push(`};`);
+  lines.push(``);
+  lines.push(`// ============ Exits (bidirectional, compass-consistent) ============`);
+  lines.push(`function twoWay(`);
+  lines.push(`  idA: string, from: string, to: string,`);
+  lines.push(`  label: 'north' | 'south' | 'east' | 'west' | 'northeast' | 'northwest' | 'southeast' | 'southwest' | 'up' | 'down',`);
+  lines.push(`  lock?: { keyItem: string; message?: string }`);
+  lines.push(`): Record<string, Exit> {`);
+  lines.push(`  const opposites = {`);
+  lines.push(`    north: 'south', south: 'north', east: 'west', west: 'east',`);
+  lines.push(`    northeast: 'southwest', southwest: 'northeast', northwest: 'southeast', southeast: 'northwest',`);
+  lines.push(`    up: 'down', down: 'up',`);
+  lines.push(`  } as const;`);
+  lines.push(`  const idB = \`\${idA}_return\`;`);
+  lines.push(`  const lockProps = lock ? {`);
+  lines.push(`    type: 'locked' as const,`);
+  lines.push(`    requirement: { kind: 'item' as const, value: lock.keyItem },`);
+  lines.push(`    requiresItem: lock.keyItem,`);
+  lines.push(`    requiresItemMessage: lock.message,`);
+  lines.push(`  } : { type: 'open' as const };`);
+  lines.push(`  return {`);
+  lines.push(`    [idA]: { id: idA, from, to, label, ...lockProps },`);
+  lines.push(`    [idB]: { id: idB, from: to, to: from, label: opposites[label], ...lockProps },`);
+  lines.push(`  };`);
+  lines.push(`}`);
+  lines.push(``);
+  lines.push(`export const ${P}_ENTRANCE = ${state.entrance && state.rooms[state.entrance] ? constName(state.rooms[state.entrance].slug) : `'FIXME_no_entrance_set'`};`);
+  lines.push(``);
+  lines.push(`export const ${P}_EXITS: Record<string, Exit> = {`);
+  // bridge
+  if (state.entrance && state.rooms[state.entrance]) {
+    const ent = state.rooms[state.entrance];
+    lines.push(`  // Bridge from the existing world into this zone`);
+    lines.push(`  ...twoWay('exit_${state.meta.bridgeFrom.replace(/^town_/, '')}_${state.meta.prefix}', '${state.meta.bridgeFrom}', ${constName(ent.slug)}, '${state.meta.bridgeDir}'),`);
+  }
+  let exIdx = 0;
+  for (const link of state.links) {
+    const a = state.rooms[link.a], b = state.rooms[link.b];
+    if (!a || !b) continue;
+    const dir = linkDir(link);
+    if (!dir) { lines.push(`  // ⚠ skipped broken connection: ${a.slug} ⟷ ${b.slug} (rooms not adjacent)`); continue; }
+    const exitId = `exit_${state.meta.prefix}_${a.slug}_${b.slug}`;
+    const lock = link.locked && link.keyItem
+      ? `, { keyItem: ${q(link.keyItem)}${link.keyMsg ? `, message: ${q(link.keyMsg)}` : ''} }`
+      : '';
+    lines.push(`  ...twoWay('${exitId}', ${constName(a.slug)}, ${constName(b.slug)}, '${dir}'${lock}),`);
+    exIdx++;
+  }
+  lines.push(`};`);
+  lines.push(``);
+  lines.push(`// ============ Hand-placed creature anchors ============`);
+  lines.push(`export interface ${P}BossAnchor { templateId: string; level: number; locationId: string; name?: string }`);
+  lines.push(`export const ${P}_BOSS_ANCHORS: readonly ${P}BossAnchor[] = [`);
+  for (const r of rooms) {
+    for (const a of (r.anchors || [])) {
+      const nm = a.name ? `, name: ${q(a.name)}` : '';
+      lines.push(`  { templateId: ${q(a.templateId)}, level: ${a.level}, locationId: ${constName(r.slug)}${nm} },`);
+    }
+  }
+  lines.push(`];`);
+
+  if (hasPuzzles) {
+    lines.push(``);
+    lines.push(`// ============ Puzzles ============`);
+    lines.push(`// Assemble into the world in packages/server/src/world/generate.ts:`);
+    lines.push(`//   puzzles: { ...WILD_PUZZLES, ...${P}_PUZZLES },`);
+    lines.push(`export const ${P}_PUZZLES: Record<string, SequencePuzzle> = {`);
+    for (const p of state.puzzles) {
+      const room = state.rooms[p.roomUid];
+      if (!room) continue;
+      lines.push(`  ${q(p.id)}: {`);
+      lines.push(`    id: ${q(p.id)},`);
+      lines.push(`    locationId: ${constName(room.slug)},`);
+      lines.push(`    keyword: ${q(p.keyword)},`);
+      lines.push(`    elements: [`);
+      for (const e of p.elements) lines.push(`      { id: ${q(e.id)}, name: ${q(e.name)} },`);
+      lines.push(`    ],`);
+      lines.push(`    solution: [${p.elements.map(e => q(e.id)).join(', ')}],`);
+      lines.push(`    prompt: ${q(p.prompt)},`);
+      if (p.hint) lines.push(`    hint: ${q(p.hint)},`);
+      lines.push(`    activateText: ${q('You activate the {name}.')},`);
+      lines.push(`    solvedText: ${q(p.solvedText)},`);
+      lines.push(`    failText: ${q(p.failText)},`);
+      lines.push(`    alreadySolvedText: ${q('The mechanism stands open; nothing more happens.')},`);
+      lines.push(`    gateLockedText: ${q(p.gateLockedText)},`);
+      if (p.resets) lines.push(`    resetOnLeavePrefix: ${q(state.meta.prefix + '_')},`);
+      lines.push(`  },`);
+    }
+    lines.push(`};`);
+    lines.push(``);
+    lines.push(`// Seal the gated passages (one-way: the return trip stays open)`);
+    for (const p of state.puzzles) {
+      if (!p.gate) continue;
+      const link = state.links.find(l =>
+        (l.a === p.gate.a && l.b === p.gate.b) || (l.a === p.gate.b && l.b === p.gate.a));
+      const a = link && state.rooms[link.a], b = link && state.rooms[link.b];
+      if (!link || !a || !b) continue;
+      const baseId = `exit_${state.meta.prefix}_${a.slug}_${b.slug}`;
+      const sealedId = (p.gate.a === link.a) ? baseId : `${baseId}_return`;
+      lines.push(`${P}_EXITS['${sealedId}']!.type = 'locked';`);
+      lines.push(`${P}_EXITS['${sealedId}']!.requirement = { kind: 'puzzle', value: ${q(p.id)} };`);
+    }
+  }
+
+  if (hasNpcs) {
+    lines.push(``);
+    lines.push(`// ============ NPCs ============`);
+    lines.push(`// Merge into the world in packages/server/src/world/generate.ts:`);
+    lines.push(`//   npcs: { ...EASTHOLLOW_NPCS, ...${P}_NPCS },`);
+    lines.push(`export const ${P}_NPCS: Record<string, NPC> = {`);
+    for (const n of state.customNpcs) {
+      const room = state.rooms[n.roomUid];
+      if (!room) continue;
+      lines.push(`  ${q(n.id)}: {`);
+      lines.push(`    id: ${q(n.id)},`);
+      lines.push(`    name: ${q(n.name)},`);
+      if (n.title) lines.push(`    title: ${q(n.title)},`);
+      lines.push(`    locationId: ${constName(room.slug)},`);
+      lines.push(`    role: ${q(n.role)},`);
+      lines.push(`    dialogue: [`);
+      lines.push(`      { id: 'greeting', prompt: 'Say hello', response: ${q(n.greeting || 'Well met, traveler.')} },`);
+      if (n.trainsClass) {
+        lines.push(`      { id: 'training', prompt: 'Ask about training', response: ${q(`I can teach a capable ${n.trainsClass} a thing or two.`)}, action: 'skills_list' },`);
+      }
+      lines.push(`      { id: 'farewell', prompt: 'Farewell', response: 'Safe travels.' },`);
+      lines.push(`    ],`);
+      if (n.trainsClass) {
+        lines.push(`    trainsClass: ${q(n.trainsClass)},`);
+        if ((n.teachableSpells || []).length > 0) {
+          lines.push(`    teachableSpells: [${n.teachableSpells.map(q).join(', ')}],`);
+        }
+      }
+      if (n.hasShop && (n.shopItems || []).length > 0) {
+        lines.push(`    shop: {`);
+        lines.push(`      items: [`);
+        for (const it of n.shopItems) {
+          const stock = it.stock != null ? `, stock: ${it.stock}` : '';
+          lines.push(`        { baseId: ${q(it.baseId)}, basePrice: ${it.basePrice}${stock} },`);
+        }
+        lines.push(`      ],`);
+        lines.push(`      buyMultiplier: ${n.buyMultiplier ?? 1.1},`);
+        lines.push(`      sellMultiplier: ${n.sellMultiplier ?? 0.4},`);
+        lines.push(`    },`);
+      }
+      lines.push(`  },`);
+    }
+    lines.push(`};`);
+  }
+
+  if (hasCreatures) {
+    lines.push(``);
+    lines.push(`// ============ Custom creature templates ============`);
+    lines.push(`// Register these by spreading into CREATURE_TEMPLATES in`);
+    lines.push(`// packages/shared/src/constants/creatures.ts (same pattern as WOODS_CREATURE_TEMPLATES):`);
+    lines.push(`//   ...${P}_CREATURE_TEMPLATES,`);
+    lines.push(`export const ${P}_CREATURE_TEMPLATES: Record<string, CreatureTemplate> = {`);
+    for (const c of state.customCreatures) {
+      lines.push(`  ${q(c.id)}: {`);
+      lines.push(`    id: ${q(c.id)},`);
+      lines.push(`    name: ${q(c.name)},`);
+      lines.push(`    behavior: ${q(c.behavior)},`);
+      lines.push(`    mobility: ${q(c.mobility)},`);
+      lines.push(`    tier: ${q(c.tier)},`);
+      lines.push(`    biomes: [${(c.biomes || []).map(q).join(', ')}],`);
+      lines.push(`    minDepth: ${c.minDepth},`);
+      lines.push(`    maxDepth: ${c.maxDepth},`);
+      lines.push(`    baseHp: ${c.baseHp},`);
+      lines.push(`    baseLevel: ${c.baseLevel},`);
+      lines.push(`    spawnWeight: ${c.spawnWeight},${c.spawnWeight === 0 ? ' // anchors only — never spawns procedurally' : ''}`);
+      lines.push(`    damageType: ${q(c.damageType)},`);
+      lines.push(`    descriptions: {`);
+      lines.push(`      idle: [${(c.idle || []).map(q).join(', ')}],`);
+      lines.push(`      alert: [${(c.alert || []).map(q).join(', ')}],`);
+      lines.push(`    },`);
+      lines.push(`  },`);
+    }
+    lines.push(`};`);
+  }
+
+  if (hasItems) {
+    lines.push(``);
+    lines.push(`// ============ Custom items ============`);
+    lines.push(`// Merge into the world in packages/server/src/world/generate.ts`);
+    lines.push(`// (same pattern as TEMPLE_ITEMS / SEWER_ITEMS):`);
+    lines.push(`//   for (const item of Object.values(${P}_ITEMS)) items[item.id] = { ...item };`);
+    lines.push(`export const ${P}_ITEMS: Record<string, Item> = {`);
+    for (const it of state.customItems) {
+      lines.push(`  ${q(it.id)}: {`);
+      lines.push(`    id: ${q(it.id)},`);
+      lines.push(`    baseId: ${q(it.id)},`);
+      lines.push(`    name: ${q(it.name)},`);
+      lines.push(`    tags: [${(it.tags || []).map(q).join(', ')}],`);
+      lines.push(`    rarity: ${q(it.rarity)},`);
+      lines.push(`    affixes: [],`);
+      lines.push(`  },`);
+    }
+    lines.push(`};`);
+    const weapons = state.customItems.filter(it => it.damageMin != null && it.damageMax != null);
+    if (weapons.length) {
+      lines.push(``);
+      lines.push(`// Weapon damage — add these entries to WEAPON_DAMAGE in`);
+      lines.push(`// packages/shared/src/constants/items.ts:`);
+      for (const w of weapons) {
+        lines.push(`//   ${q(w.id)}: { min: ${w.damageMin}, max: ${w.damageMax} },`);
+      }
+    }
+  }
+
+  if (hasContainers) {
+    lines.push(``);
+    lines.push(`// ============ Containers (lootable objects) ============`);
+    lines.push(`// Merge into world assembly in packages/server/src/world/generate.ts`);
+    lines.push(`// (same pattern as WOODS_CONTAINERS):`);
+    lines.push(`//   { ...EASTHOLLOW_CONTAINERS, ...WOODS_CONTAINERS, ...${P}_CONTAINERS }`);
+    lines.push(`export const ${P}_CONTAINERS: Record<string, Container> = {`);
+    let cIdx = 0;
+    for (const r of containerRooms) {
+      for (const c of r.containers) {
+        const cid = `container_${state.meta.prefix}_${r.slug}_${++cIdx}`;
+        lines.push(`  ${q(cid)}: {`);
+        lines.push(`    id: ${q(cid)},`);
+        lines.push(`    name: ${q(c.name)},`);
+        lines.push(`    description: ${q(c.description || '')},`);
+        lines.push(`    locationId: ${constName(r.slug)},`);
+        lines.push(`    contents: [${(c.contents || []).map(q).join(', ')}],`);
+        lines.push(`    locked: ${!!c.locked},`);
+        if (c.locked && c.keyItem) lines.push(`    keyId: ${q(c.keyItem)},`);
+        lines.push(`    opened: false,`);
+        lines.push(`    respawns: ${!!c.respawns},`);
+        if (c.respawns) lines.push(`    respawnTime: ${c.respawnTime ?? 120},`);
+        lines.push(`  },`);
+      }
+    }
+    lines.push(`};`);
+  }
+
+  if (hasLoot) {
+    const guaranteed = state.lootTables.filter(t => t.guarantee).map(t => q(t.id));
+    lines.push(``);
+    lines.push(`// ============ Creature loot tables ============`);
+    lines.push(`// Register at server startup in packages/server/src/loot/creature-loot.ts:`);
+    lines.push(`//   import { ${P}_LOOT_TABLES, ${P}_LOOT_TEMPLATES } from '@solo-mud/shared';`);
+    lines.push(`//   registerLootSource(makeLootSource(${P}_LOOT_TABLES, ${P}_LOOT_TEMPLATES, [${guaranteed.join(', ')}]));`);
+    lines.push(`// (Shapes match the server's LootTable/ItemTemplate interfaces structurally.)`);
+    lines.push(`export const ${P}_LOOT_TEMPLATES = {`);
+    for (const it of (state.customItems || [])) {
+      lines.push(`  ${q(it.id)}: {`);
+      lines.push(`    id: ${q(it.id)},`);
+      lines.push(`    name: ${q(it.name)},`);
+      lines.push(`    tags: [${(it.tags || []).map(q).join(', ')}],`);
+      lines.push(`    baseValue: ${it.baseValue ?? 10},`);
+      lines.push(`    levelRange: [1, 100] as [number, number],`);
+      lines.push(`    allowedAffixes: [],`);
+      lines.push(`  },`);
+    }
+    lines.push(`};`);
+    lines.push(``);
+    lines.push(`export const ${P}_LOOT_TABLES = {`);
+    for (const t of state.lootTables) {
+      lines.push(`  ${q(t.id)}: {`);
+      lines.push(`    id: ${q(t.id)},`);
+      lines.push(`    dropChance: ${t.dropChance},`);
+      lines.push(`    minItems: ${t.minItems},`);
+      lines.push(`    maxItems: ${t.maxItems},`);
+      lines.push(`    entries: [`);
+      for (const e of (t.entries || [])) {
+        lines.push(`      { templateId: ${q(e.templateId)}, weight: ${e.weight}, minRarity: ${q(e.minRarity)} as const, maxRarity: ${q(e.maxRarity)} as const },`);
+      }
+      lines.push(`    ],`);
+      lines.push(`  },`);
+    }
+    lines.push(`};`);
+  }
+
+  lines.push(``);
+  return lines.join('\n');
+}
+function q(s) { return `'${String(s).replace(/\\/g, '\\\\').replace(/'/g, "\\'")}'`; }
+
+/* ---------- modal ---------- */
+let modalFilename = 'export.txt';
+function openModal(filename, text, title) {
+  modalFilename = filename;
+  document.getElementById('modalTitle').textContent = title;
+  document.getElementById('modalText').value = text;
+  document.getElementById('modal').classList.add('open');
+}
+document.getElementById('modalClose').addEventListener('click', () => document.getElementById('modal').classList.remove('open'));
+document.getElementById('modalCopy').addEventListener('click', () => {
+  navigator.clipboard.writeText(document.getElementById('modalText').value);
+});
+document.getElementById('modalDownload').addEventListener('click', () => {
+  const blob = new Blob([document.getElementById('modalText').value], { type: 'text/plain' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = modalFilename;
+  a.click();
+  URL.revokeObjectURL(a.href);
+});
+
+/* ---------- boot ---------- */
+if (!loadLocal()) {
+  // Seed a tiny starter so the canvas isn't empty
+  state = newZone();
+}
+syncMetaInputs();
+view = { x: 300, y: 220, k: 1 };
+render();
+</script>
+</body>
+</html>

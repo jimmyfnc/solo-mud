@@ -3,10 +3,10 @@
  * and NPCs (guards, shopkeepers, trainers, etc.) defending against them.
  */
 
-import type { World, Creature, OutputLine, NodeId, CreatureTier, Item } from '@solo-mud/shared';
+import type { World, Creature, OutputLine, NodeId, CreatureTier } from '@solo-mud/shared';
 import { createRng, CREATURE_TEMPLATES, getCombatNpcsAtLocation } from '@solo-mud/shared';
 import { handleCreatureDeath } from './ecosystem';
-import { generateWildernessLoot, WILDERNESS_LOOT_TABLES } from '../loot/wilderness-loot';
+import { generateCreatureLoot } from '../loot/creature-loot';
 import { selectNpcAction, applyNpcAction, tickNpcCooldowns, regenNpcMana } from './npc-combat';
 
 /** Result of an incursion event */
@@ -304,11 +304,8 @@ export function processIncursionCombat(
       const tier: CreatureTier = creature.level <= 3 ? 'common' : creature.level <= 6 ? 'dangerous' : 'apex';
 
       // Generate loot for incursion raiders (wolves, goblins, bandits)
-      let lootItems: Item[] = [];
       const lootRng = createRng(`incursion-loot-${Date.now()}`);
-      if (WILDERNESS_LOOT_TABLES[creature.templateId]) {
-        lootItems = generateWildernessLoot(creature.templateId, creature.level, lootRng);
-      }
+      const lootItems = generateCreatureLoot(creature.templateId, creature.level, lootRng);
       const loot: string[] = [];
       for (const item of lootItems) {
         world.items[item.id] = item;

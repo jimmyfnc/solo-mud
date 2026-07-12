@@ -26,6 +26,7 @@
   "scripts": {
     "build": "tsc",
     "dev": "tsc --watch",
+    "lint": "eslint src",
     "test": "vitest run",
     "test:watch": "vitest"
   },

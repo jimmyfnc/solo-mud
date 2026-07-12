@@ -110,13 +110,38 @@ export function xpForLevel(level: number): number {
   return XP_TABLE[level - 1]!;
 }
 
+/** XP multipliers by creature tier */
+const XP_TIER_MULTIPLIER: Record<string, number> = {
+  ambient: 1.0,
+  common: 1.5,
+  dangerous: 2.0,
+  apex: 3.0,
+};
+
+/** XP multipliers by creature behavior */
+const XP_BEHAVIOR_MULTIPLIER: Record<string, number> = {
+  passive: 0.5,
+  territorial: 1.1,
+  aggressive: 1.2,
+};
+
 /**
- * Calculate XP gained from killing a creature.
- * Base: creature.level × 10
- * Penalty: -15% per level when creature is 5+ levels below player (capped at -75%)
+ * Calculate XP gained from killing a creature — the ONE XP formula, used by
+ * every kill path (combat, spells, traps).
+ *
+ * Base: creature.level × 10 × tier × behavior
+ * Gray-mob penalty: -15% per level when the creature is 5+ levels below the
+ * player (capped at -75%), so high-level players can't farm starter zones.
  */
-export function calculateXpGain(playerLevel: number, creatureLevel: number): number {
-  const baseXp = creatureLevel * 10;
+export function calculateXpGain(
+  playerLevel: number,
+  creatureLevel: number,
+  tier: string = 'common',
+  behavior: string = 'aggressive'
+): number {
+  const baseXp = creatureLevel * 10
+    * (XP_TIER_MULTIPLIER[tier] ?? 1.5)
+    * (XP_BEHAVIOR_MULTIPLIER[behavior] ?? 1.0);
 
   // Level difference penalty (only applies when creature is significantly lower)
   const levelDiff = playerLevel - creatureLevel;
@@ -126,7 +151,7 @@ export function calculateXpGain(playerLevel: number, creatureLevel: number): num
     return Math.max(1, Math.floor(baseXp * (1 - penalty)));
   }
 
-  return baseXp;
+  return Math.floor(baseXp);
 }
 
 /** Levels where subclass tiers unlock */

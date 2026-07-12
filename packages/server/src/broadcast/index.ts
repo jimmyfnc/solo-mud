@@ -135,6 +135,6 @@ export function broadcastBotCombatAction(
   locationId: string
 ): void {
   broadcastToLocation(locationId, [
-    { text: action, style: 'combat' },
+    { text: `${botName} ${action}`, style: 'combat' },
   ]);
 }

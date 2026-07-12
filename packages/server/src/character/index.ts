@@ -12,6 +12,7 @@ export {
 
 export {
   calculateCombatStats,
+  computePlayerCombatStats,
   getEffectiveStats,
   recalculatePlayerStats,
   getLevelHitModifier,

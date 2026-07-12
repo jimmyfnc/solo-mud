@@ -4,7 +4,8 @@
  */
 
 import type { CommandContext, CommandResult } from './handlers';
-import { executeCommand, addToInventory } from './handlers';
+import { executeCommand } from './handlers';
+import { addToInventory } from '../game/inventory';
 import type { OutputLine } from '@solo-mud/shared';
 import {
   CREATURE_TEMPLATES,

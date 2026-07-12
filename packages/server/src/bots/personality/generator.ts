@@ -207,7 +207,7 @@ export function selectArchetype(): string {
   }
 
   // Fallback
-  return Object.keys(ARCHETYPES)[0];
+  return Object.keys(ARCHETYPES)[0]!;
 }
 
 /** Generate catchphrases based on personality traits */
@@ -216,29 +216,29 @@ export function generateCatchphrases(traits: Partial<Record<string, number>>): s
 
   // Add phrases based on dominant traits
   if ((traits.bravery ?? 0) > 70) {
-    phrases.push(...pickRandom(CATCHPHRASE_TEMPLATES.brave, 2));
+    phrases.push(...pickRandom(CATCHPHRASE_TEMPLATES.brave ?? [], 2));
   }
   if ((traits.bravery ?? 50) < 40) {
-    phrases.push(...pickRandom(CATCHPHRASE_TEMPLATES.cautious, 2));
+    phrases.push(...pickRandom(CATCHPHRASE_TEMPLATES.cautious ?? [], 2));
   }
   if ((traits.sociability ?? 0) > 70) {
-    phrases.push(...pickRandom(CATCHPHRASE_TEMPLATES.social, 2));
+    phrases.push(...pickRandom(CATCHPHRASE_TEMPLATES.social ?? [], 2));
   }
   if ((traits.sociability ?? 50) < 30) {
-    phrases.push(...pickRandom(CATCHPHRASE_TEMPLATES.loner, 1));
+    phrases.push(...pickRandom(CATCHPHRASE_TEMPLATES.loner ?? [], 1));
   }
   if ((traits.greed ?? 0) > 70) {
-    phrases.push(...pickRandom(CATCHPHRASE_TEMPLATES.greedy, 2));
+    phrases.push(...pickRandom(CATCHPHRASE_TEMPLATES.greedy ?? [], 2));
   }
   if ((traits.aggression ?? 0) > 70) {
-    phrases.push(...pickRandom(CATCHPHRASE_TEMPLATES.aggressive, 1));
+    phrases.push(...pickRandom(CATCHPHRASE_TEMPLATES.aggressive ?? [], 1));
   }
   if ((traits.patience ?? 0) > 70) {
-    phrases.push(...pickRandom(CATCHPHRASE_TEMPLATES.patient, 1));
+    phrases.push(...pickRandom(CATCHPHRASE_TEMPLATES.patient ?? [], 1));
   }
 
   // Always add some generic phrases
-  phrases.push(...pickRandom(CATCHPHRASE_TEMPLATES.generic, 2));
+  phrases.push(...pickRandom(CATCHPHRASE_TEMPLATES.generic ?? [], 2));
 
   // Remove duplicates
   return [...new Set(phrases)];
@@ -248,6 +248,9 @@ export function generateCatchphrases(traits: Partial<Record<string, number>>): s
 export function generatePersonality(): BotPersonality {
   const archetypeId = selectArchetype();
   const archetype = ARCHETYPES[archetypeId];
+  if (!archetype) {
+    throw new Error(`Unknown bot archetype: ${archetypeId}`);
+  }
 
   // Generate traits within archetype ranges
   const bravery = randomInRange(archetype.traits.bravery.min, archetype.traits.bravery.max);

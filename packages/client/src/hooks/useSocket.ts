@@ -100,6 +100,9 @@ export function useSocket(): UseSocketReturn {
       // Auto-resume: if last character exists in the list, auto-load it
       const lastCharId = getLastCharacterId();
       if (lastCharId && message.characters.some(c => c.id === lastCharId)) {
+        // Clear the stored id first — SYNC re-stores it on success. If the
+        // load fails, a refresh won't loop back into the same failing load.
+        useGameStore.getState().clearLastCharacterId();
         socket.emit(CLIENT_EVENTS.LOAD_CHARACTER, {
           type: 'load_character',
           characterId: lastCharId,
@@ -132,6 +135,13 @@ export function useSocket(): UseSocketReturn {
 
     socket.on(SERVER_EVENTS.ERROR, (message: ErrorMessage) => {
       addLines([{ text: `Error: ${message.message}`, style: 'error' }]);
+
+      // If we're not in the game yet (e.g. auto-resume load failed), fall
+      // back to character select instead of stranding the user.
+      const state = useGameStore.getState();
+      if (!state.player && !state.showCharacterSelect && !state.showCharacterCreation) {
+        state.setShowCharacterSelect(true);
+      }
     });
 
     socket.on(SERVER_EVENTS.SYNC, (message: SyncMessage) => {

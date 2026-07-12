@@ -9,33 +9,35 @@ export type SimulationEventType =
   | 'npc_death'
   | 'player_enter_location'
   | 'player_leave_location'
+  | 'shop_shortage'
   | 'time_changed';
 
 export interface SimulationEventData {
   creature_killed: { creatureId: string; killerId: string; locationId: string };
-  player_death: { playerId: string; locationId: string; cause?: string };
+  player_death: { playerId: string; playerName?: string; locationId: string; cause?: string };
   player_levelup: { playerId: string; playerName: string; newLevel: number; locationId: string };
   boss_defeated: { bossName: string; playerName: string; locationId: string };
   npc_death: { npcId: string; npcName: string; locationId: string; cause?: string };
   player_enter_location: { playerId: string; playerName: string; locationId: string; fromLocationId?: string };
   player_leave_location: { playerId: string; playerName: string; locationId: string; toLocationId: string };
+  shop_shortage: { merchantId: string; merchantName: string; itemName: string; quantity: number; locationId: string };
   time_changed: { newTime: string; oldTime: string };
 }
 
 type EventHandler<T extends SimulationEventType> = (data: SimulationEventData[T]) => void;
 
 export class SimulationEventBus {
-  private listeners: Map<SimulationEventType, Set<EventHandler<any>>> = new Map();
+  private listeners = new Map<SimulationEventType, Set<(data: unknown) => void>>();
 
   on<T extends SimulationEventType>(event: T, handler: EventHandler<T>): void {
     if (!this.listeners.has(event)) {
       this.listeners.set(event, new Set());
     }
-    this.listeners.get(event)!.add(handler);
+    this.listeners.get(event)!.add(handler as (data: unknown) => void);
   }
 
   off<T extends SimulationEventType>(event: T, handler: EventHandler<T>): void {
-    this.listeners.get(event)?.delete(handler);
+    this.listeners.get(event)?.delete(handler as (data: unknown) => void);
   }
 
   emit<T extends SimulationEventType>(event: T, data: SimulationEventData[T]): void {
@@ -45,7 +47,7 @@ export class SimulationEventBus {
 
 // Hot topic templates for different event types
 export function createHotTopic(
-  eventType: 'boss_defeated' | 'player_death' | 'npc_death' | 'player_levelup',
+  eventType: 'boss_defeated' | 'player_death' | 'npc_death' | 'player_levelup' | 'shop_shortage',
   data: Record<string, string | number>
 ): HotTopic {
   const now = Date.now();
@@ -139,6 +141,24 @@ export function createHotTopic(
           amused: [
             'Another hero in the making, perhaps.',
             "Let's hope they use that strength wisely.",
+          ],
+        },
+      };
+
+    case 'shop_shortage':
+      return {
+        id,
+        headline: `${data.merchantName}'s shortage of ${data.itemName}`,
+        severity: 'minor',
+        decayHours: 24,
+        createdAt: now,
+        reactions: {
+          curious: [
+            `${data.merchantName} is paying well for ${data.itemName}.`,
+            `The work board says the shops need ${data.itemName}.`,
+          ],
+          amused: [
+            `Another shortage? Easthollow eats supplies faster than adventurers eat rations.`,
           ],
         },
       };

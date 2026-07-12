@@ -7,6 +7,7 @@ import Database from 'better-sqlite3';
 import { readFileSync, mkdirSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
+import { randomBytes, randomInt, randomUUID } from 'crypto';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -59,6 +60,13 @@ function initializeDatabase(): Database.Database {
  * Adds new columns that weren't in the original schema.
  */
 function runMigrations(database: Database.Database): void {
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS schema_migrations (
+      id TEXT PRIMARY KEY,
+      applied_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
+
   // Check which columns exist in characters table
   const columns = database.prepare(`PRAGMA table_info(characters)`).all() as { name: string }[];
   const columnNames = new Set(columns.map(col => col.name));
@@ -113,6 +121,24 @@ function runMigrations(database: Database.Database): void {
     `);
     console.log('Migration: Created bank_storage table');
   }
+
+  // Migration: Create world_snapshot table (shared-world persistence)
+  const snapshotTables = database.prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name='world_snapshot'`).all();
+  if (snapshotTables.length === 0) {
+    database.exec(`
+      CREATE TABLE IF NOT EXISTS world_snapshot (
+        id INTEGER PRIMARY KEY CHECK (id = 1),
+        seed TEXT NOT NULL,
+        data TEXT NOT NULL,
+        saved_at TEXT DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+    console.log('Migration: Created world_snapshot table');
+  }
+
+  database.prepare(`
+    INSERT OR IGNORE INTO schema_migrations (id) VALUES (?)
+  `).run('001_sqlite_baseline');
 }
 
 /**
@@ -130,11 +156,11 @@ export function closeDatabase(): void {
  * Generate a unique ID (UUID v4 style).
  */
 export function generateId(): string {
-  return crypto.randomUUID();
+  return randomUUID();
 }
 
 /**
- * Generate a player code like "BRAVE-WOLF-4829".
+ * Generate a player recovery code like "BRAVE-WOLF-A1B2C3D4".
  */
 export function generatePlayerCode(): string {
   const adjectives = [
@@ -146,9 +172,9 @@ export function generatePlayerCode(): string {
     'HERO', 'BLADE', 'SHIELD', 'CROWN', 'FLAME', 'STORM', 'STAR', 'MOON'
   ];
 
-  const adj = adjectives[Math.floor(Math.random() * adjectives.length)];
-  const noun = nouns[Math.floor(Math.random() * nouns.length)];
-  const num = Math.floor(1000 + Math.random() * 9000);
+  const adj = adjectives[randomInt(adjectives.length)]!;
+  const noun = nouns[randomInt(nouns.length)]!;
+  const suffix = randomBytes(4).toString('hex').toUpperCase();
 
-  return `${adj}-${noun}-${num}`;
+  return `${adj}-${noun}-${suffix}`;
 }
