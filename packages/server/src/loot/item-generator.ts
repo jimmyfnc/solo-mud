@@ -2,7 +2,7 @@
  * Procedural item generation system.
  */
 
-import type { Item, Rarity, Affix, Rng } from '@solo-mud/shared';
+import type { Item, ItemEffect, Rarity, Affix, Rng } from '@solo-mud/shared';
 
 /** Item template definition */
 export interface ItemTemplate {
@@ -12,6 +12,10 @@ export interface ItemTemplate {
   baseValue: number;
   levelRange: [number, number];
   allowedAffixes: string[];
+  /** Base defense for armor items [min, max] - scaled by rarity */
+  baseDefense?: [number, number];
+  /** Special proc/passive effects copied onto generated items */
+  effects?: ItemEffect[];
 }
 
 /** Loot table entry */
@@ -29,6 +33,11 @@ export interface LootTable {
   minItems: number;
   maxItems: number;
   entries: LootTableEntry[];
+  /**
+   * Items that ALWAYS drop (quest items, boss keys) — generated in addition
+   * to the rolled entries and regardless of dropChance.
+   */
+  alwaysDrop?: { templateId: string; rarity: Rarity }[];
 }
 
 /** Options for generating a single item */
@@ -54,17 +63,51 @@ export interface GenerateLootOptions {
 const RARITY_ORDER: Rarity[] = ['junk', 'common', 'uncommon', 'rare', 'epic', 'legendary'];
 
 /** Affix definitions */
-const AFFIX_DEFINITIONS: Record<string, Omit<Affix, 'id'>> = {
+const AFFIX_DEFINITIONS: Record<string, Omit<Affix, 'id'> & { minRarity?: Rarity }> = {
+  // Weapon affixes
   sharp: { name: 'Sharp', type: 'prefix', statMods: { attackPower: 3 } },
+  keen: { name: 'Keen', type: 'prefix', statMods: { attackPower: 5 }, minRarity: 'rare' },
   heavy: { name: 'Heavy', type: 'prefix', statMods: { attackPower: 5, attackSpeed: -100 } },
   swift: { name: 'Swift', type: 'prefix', statMods: { attackSpeed: 200 } },
+
+  // Defense affixes
   sturdy: { name: 'Sturdy', type: 'prefix', statMods: { defense: 3 } },
   reinforced: { name: 'Reinforced', type: 'prefix', statMods: { defense: 5 } },
+  fortified: { name: 'Fortified', type: 'prefix', statMods: { defense: 8 }, minRarity: 'rare' },
+  defender: { name: 'of the Defender', type: 'suffix', statMods: { defense: 4 } },
+
+  // Holy affixes (priest loot)
+  blessed: { name: 'Blessed', type: 'prefix', statMods: { wis: 2, spellPower: 2 } },
+
+  // Elemental resistance affixes (suffixes)
+  fireproof: { name: 'of Flame Ward', type: 'suffix', statMods: { fireResist: 10 } },
+  flameward: { name: 'of the Inferno', type: 'suffix', statMods: { fireResist: 20 }, minRarity: 'rare' },
+  frostproof: { name: 'of Frost Ward', type: 'suffix', statMods: { iceResist: 10 } },
+  frostward: { name: 'of the Glacier', type: 'suffix', statMods: { iceResist: 20 }, minRarity: 'rare' },
+  insulated: { name: 'of Grounding', type: 'suffix', statMods: { lightningResist: 10 } },
+  stormward: { name: 'of the Storm', type: 'suffix', statMods: { lightningResist: 20 }, minRarity: 'rare' },
+  venomproof: { name: 'of Antivenom', type: 'suffix', statMods: { poisonResist: 10 } },
+  venomward: { name: 'of Immunity', type: 'suffix', statMods: { poisonResist: 20 }, minRarity: 'rare' },
+
+  // Stat bonus suffixes
   'str-bonus': { name: 'of Strength', type: 'suffix', statMods: { str: 2 } },
   'dex-bonus': { name: 'of Dexterity', type: 'suffix', statMods: { dex: 2 } },
   'con-bonus': { name: 'of Vitality', type: 'suffix', statMods: { con: 2 } },
   'int-bonus': { name: 'of Intelligence', type: 'suffix', statMods: { int: 2 } },
   'wis-bonus': { name: 'of Wisdom', type: 'suffix', statMods: { wis: 2 } },
+
+  // Jewelry-specific prefixes (HP/MP)
+  healthy: { name: 'Healthy', type: 'prefix', statMods: { maxHp: 15 } },
+  vigorous: { name: 'Vigorous', type: 'prefix', statMods: { maxHp: 30 }, minRarity: 'rare' },
+  mystical: { name: 'Mystical', type: 'prefix', statMods: { maxMp: 10 } },
+  arcane: { name: 'Arcane', type: 'prefix', statMods: { maxMp: 20 }, minRarity: 'rare' },
+
+  // Jewelry stat prefixes
+  warriors: { name: "Warrior's", type: 'prefix', statMods: { str: 2 } },
+  scholars: { name: "Scholar's", type: 'prefix', statMods: { int: 2 } },
+  sages: { name: "Sage's", type: 'prefix', statMods: { wis: 2 } },
+  nimble: { name: 'Nimble', type: 'prefix', statMods: { dex: 2 } },
+  hardy: { name: 'Hardy', type: 'prefix', statMods: { con: 2 } },
 };
 
 /** Number of affixes by rarity */
@@ -96,7 +139,20 @@ function getRarityIndex(rarity: Rarity): number {
 }
 
 /**
+ * Check if an affix can be used at a given rarity.
+ */
+function canUseAffix(affixId: string, rarity: Rarity): boolean {
+  const def = AFFIX_DEFINITIONS[affixId];
+  if (!def || !def.minRarity) return true;
+
+  const itemRarityIndex = getRarityIndex(rarity);
+  const minRarityIndex = getRarityIndex(def.minRarity);
+  return itemRarityIndex >= minRarityIndex;
+}
+
+/**
  * Select affixes for an item.
+ * Epic+ items can have multiple prefixes or suffixes.
  */
 function selectAffixes(
   allowedAffixes: string[],
@@ -117,7 +173,9 @@ function selectAffixes(
       if (def) {
         affixes.push({
           id: affixId,
-          ...def,
+          name: def.name,
+          type: def.type,
+          statMods: def.statMods,
         });
       }
     }
@@ -132,35 +190,48 @@ function selectAffixes(
     return [];
   }
 
-  // Select random affixes
-  const available = [...allowedAffixes];
-  const selectedPrefixes: string[] = [];
-  const selectedSuffixes: string[] = [];
+  // Filter affixes by rarity requirement
+  const available = allowedAffixes.filter(id => canUseAffix(id, rarity));
+  if (available.length === 0) {
+    return [];
+  }
+
+  // Epic+ items can have multiple of the same type
+  const isEpicOrHigher = getRarityIndex(rarity) >= getRarityIndex('epic');
+  const maxPrefixes = isEpicOrHigher ? 2 : 1;
+  const maxSuffixes = isEpicOrHigher ? 2 : 1;
+
+  let prefixCount = 0;
+  let suffixCount = 0;
+  const usedAffixIds = new Set<string>();
 
   for (let i = 0; i < affixCount && available.length > 0; i++) {
-    const index = Math.floor(rng.next() * available.length);
-    const affixId = available.splice(index, 1)[0]!;
-    const def = AFFIX_DEFINITIONS[affixId];
+    // Filter to valid affixes we haven't used
+    const validAffixes = available.filter(id => {
+      if (usedAffixIds.has(id)) return false;
+      const def = AFFIX_DEFINITIONS[id];
+      if (!def) return false;
+      if (def.type === 'prefix' && prefixCount >= maxPrefixes) return false;
+      if (def.type === 'suffix' && suffixCount >= maxSuffixes) return false;
+      return true;
+    });
 
-    if (def) {
-      // Ensure we don't have more than one prefix/suffix
-      if (def.type === 'prefix' && selectedPrefixes.length === 0) {
-        selectedPrefixes.push(affixId);
-        affixes.push({ id: affixId, ...def });
-      } else if (def.type === 'suffix' && selectedSuffixes.length === 0) {
-        selectedSuffixes.push(affixId);
-        affixes.push({ id: affixId, ...def });
-      } else if (selectedPrefixes.length === 0 || selectedSuffixes.length === 0) {
-        // Try to add if we still have room
-        if (def.type === 'prefix' && selectedPrefixes.length === 0) {
-          selectedPrefixes.push(affixId);
-          affixes.push({ id: affixId, ...def });
-        } else if (def.type === 'suffix' && selectedSuffixes.length === 0) {
-          selectedSuffixes.push(affixId);
-          affixes.push({ id: affixId, ...def });
-        }
-      }
-    }
+    if (validAffixes.length === 0) break;
+
+    const index = Math.floor(rng.next() * validAffixes.length);
+    const affixId = validAffixes[index]!;
+    const def = AFFIX_DEFINITIONS[affixId]!;
+
+    usedAffixIds.add(affixId);
+    if (def.type === 'prefix') prefixCount++;
+    if (def.type === 'suffix') suffixCount++;
+
+    affixes.push({
+      id: affixId,
+      name: def.name,
+      type: def.type,
+      statMods: def.statMods,
+    });
   }
 
   return affixes;
@@ -184,6 +255,16 @@ function buildItemName(baseName: string, affixes: Affix[]): string {
   return name;
 }
 
+/** Rarity multipliers for base defense */
+const DEFENSE_RARITY_MULTIPLIER: Record<Rarity, number> = {
+  junk: 0.5,
+  common: 1.0,
+  uncommon: 1.25,
+  rare: 1.5,
+  epic: 2.0,
+  legendary: 2.5,
+};
+
 /**
  * Generate a single item.
  */
@@ -193,6 +274,15 @@ export function generateItem(options: GenerateItemOptions): Item {
   const affixes = selectAffixes(template.allowedAffixes, rarity, rng, forceAffixes);
   const name = buildItemName(template.name, affixes);
 
+  // Calculate base defense for armor items
+  let baseDefense: number | undefined;
+  if (template.baseDefense) {
+    const [minDef, maxDef] = template.baseDefense;
+    const baseDef = minDef + Math.floor(rng.next() * (maxDef - minDef + 1));
+    const multiplier = DEFENSE_RARITY_MULTIPLIER[rarity];
+    baseDefense = Math.floor(baseDef * multiplier);
+  }
+
   return {
     id: generateItemId(template.id),
     baseId: template.id,
@@ -200,6 +290,8 @@ export function generateItem(options: GenerateItemOptions): Item {
     tags: [...template.tags],
     rarity,
     affixes,
+    baseDefense,
+    effects: template.effects ? template.effects.map(e => ({ ...e })) : undefined,
   };
 }
 
@@ -263,15 +355,34 @@ const DEFAULT_TEMPLATES: Record<string, ItemTemplate> = {
     tags: ['weapon', 'sword', 'melee'],
     baseValue: 50,
     levelRange: [1, 10],
-    allowedAffixes: ['sharp', 'heavy', 'swift', 'str-bonus', 'dex-bonus'],
+    allowedAffixes: ['sharp', 'keen', 'heavy', 'swift', 'str-bonus', 'dex-bonus'],
   },
   'leather-armor': {
     id: 'leather-armor',
     name: 'Leather Armor',
-    tags: ['armor', 'chest', 'light'],
+    tags: ['armor', 'chest', 'leather'],
     baseValue: 40,
     levelRange: [1, 10],
-    allowedAffixes: ['sturdy', 'reinforced', 'con-bonus', 'dex-bonus'],
+    allowedAffixes: ['sturdy', 'reinforced', 'fortified', 'con-bonus', 'dex-bonus', 'fireproof', 'frostproof', 'insulated', 'venomproof'],
+    baseDefense: [5, 10],
+  },
+  'iron-helm': {
+    id: 'iron-helm',
+    name: 'Iron Helm',
+    tags: ['armor', 'head', 'mail'],
+    baseValue: 30,
+    levelRange: [1, 10],
+    allowedAffixes: ['sturdy', 'reinforced', 'con-bonus', 'fireproof', 'frostproof', 'insulated', 'venomproof'],
+    baseDefense: [2, 5],
+  },
+  'leather-boots': {
+    id: 'leather-boots',
+    name: 'Leather Boots',
+    tags: ['armor', 'feet', 'leather'],
+    baseValue: 25,
+    levelRange: [1, 10],
+    allowedAffixes: ['sturdy', 'swift', 'dex-bonus', 'fireproof', 'frostproof', 'insulated', 'venomproof'],
+    baseDefense: [2, 4],
   },
   'health-potion': {
     id: 'health-potion',
@@ -281,6 +392,22 @@ const DEFAULT_TEMPLATES: Record<string, ItemTemplate> = {
     levelRange: [1, 100],
     allowedAffixes: [],
   },
+  'copper-ring': {
+    id: 'copper-ring',
+    name: 'Copper Ring',
+    tags: ['jewelry', 'ring'],
+    baseValue: 15,
+    levelRange: [1, 10],
+    allowedAffixes: ['healthy', 'mystical', 'warriors', 'scholars', 'sages', 'nimble', 'hardy', 'fireproof', 'frostproof', 'insulated', 'venomproof'],
+  },
+  'silver-amulet': {
+    id: 'silver-amulet',
+    name: 'Silver Amulet',
+    tags: ['jewelry', 'necklace'],
+    baseValue: 30,
+    levelRange: [1, 15],
+    allowedAffixes: ['healthy', 'vigorous', 'mystical', 'arcane', 'warriors', 'scholars', 'sages', 'nimble', 'hardy', 'fireproof', 'frostproof', 'insulated', 'venomproof', 'flameward', 'frostward', 'stormward', 'venomward'],
+  },
 };
 
 /**
@@ -289,24 +416,64 @@ const DEFAULT_TEMPLATES: Record<string, ItemTemplate> = {
 export function generateLootDrop(options: GenerateLootOptions): Item[] {
   const { lootTable, level, rng, luckModifier = 0, guaranteeDrop = false, templates = DEFAULT_TEMPLATES } = options;
 
+  // Guaranteed drops (quest items, boss keys) — independent of dropChance
+  const alwaysItems: Item[] = [];
+  for (const ad of lootTable.alwaysDrop ?? []) {
+    const template = templates[ad.templateId];
+    if (!template) continue;
+    alwaysItems.push(generateItem({ template, rarity: ad.rarity, level, rng }));
+  }
+
   // Check drop chance
   if (!guaranteeDrop && rng.next() > lootTable.dropChance) {
-    return [];
+    return alwaysItems;
   }
 
   // Determine number of items
   const range = lootTable.maxItems - lootTable.minItems;
   const itemCount = lootTable.minItems + Math.floor(rng.next() * (range + 1));
 
-  const items: Item[] = [];
+  const items: Item[] = [...alwaysItems];
+  const droppedUniqueIds = new Set<string>(
+    // Guaranteed uniques shouldn't also roll from the entries
+    alwaysItems
+      .filter(i => i.tags.includes('unique'))
+      .map(i => i.baseId)
+  );
 
   for (let i = 0; i < itemCount; i++) {
-    // Select template
-    const entry = selectTemplate(lootTable.entries, rng);
-    if (!entry) continue;
+    // Try to select a valid template (re-roll if we get a duplicate unique)
+    let entry: LootTableEntry | null = null;
+    let template: ItemTemplate | undefined;
+    let attempts = 0;
+    const maxAttempts = 10;
+    let selected = false;
 
-    const template = templates[entry.templateId];
-    if (!template) continue;
+    while (attempts < maxAttempts) {
+      attempts++;
+      entry = selectTemplate(lootTable.entries, rng);
+      if (!entry) break;
+
+      template = templates[entry.templateId];
+      if (!template) break;
+
+      // Check if this is a unique item we've already dropped
+      const isUnique = template.tags.includes('unique');
+      if (isUnique && droppedUniqueIds.has(entry.templateId)) {
+        // Re-roll for a different item
+        continue;
+      }
+
+      // Valid selection
+      if (isUnique) {
+        droppedUniqueIds.add(entry.templateId);
+      }
+      selected = true;
+      break;
+    }
+
+    // Skip if no valid selection (including exhausting re-rolls on a duplicate unique)
+    if (!selected || !entry || !template) continue;
 
     // Roll rarity
     const rarity = rollRarity(entry.minRarity, entry.maxRarity, rng, luckModifier);

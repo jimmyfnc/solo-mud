@@ -15,7 +15,6 @@ import {
   createCharacter,
   getCharactersByPlayerId,
   findCharacterById,
-  updateCharacter,
 } from './db/repositories/CharacterRepository';
 import { recordVisit } from './db/repositories/WorldStateRepository';
 import {
@@ -23,10 +22,9 @@ import {
   formatCurrency,
   type OutputLine,
   type ClassName,
-  type Item,
-  type Player,
-  type World,
 } from '@solo-mud/shared';
+import { MAX_COMMAND_LENGTH, MAX_TELNET_BUFFER_LENGTH } from './config/runtime';
+import { getOwnedItems, saveCharacterState } from './game/character-persistence';
 
 // ANSI color codes
 const ANSI = {
@@ -82,31 +80,6 @@ interface TelnetClient {
 
 const clients: Map<string, TelnetClient> = new Map();
 let clientIdCounter = 0;
-
-/**
- * Extract all items owned by a player (equipped + inventory) from the world.
- */
-function getOwnedItems(player: Player, world: World): Record<string, Item> {
-  const owned: Record<string, Item> = {};
-
-  // Collect equipped items
-  for (const itemId of Object.values(player.equipment)) {
-    const item = itemId ? world.items[itemId] : undefined;
-    if (item) {
-      owned[itemId] = item;
-    }
-  }
-
-  // Collect inventory items
-  for (const slot of player.inventory) {
-    const item = slot.itemId ? world.items[slot.itemId] : undefined;
-    if (item) {
-      owned[slot.itemId] = item;
-    }
-  }
-
-  return owned;
-}
 
 /**
  * Create the telnet server.
@@ -191,6 +164,11 @@ ${ANSI.CYAN}╔═════════════════════�
 function handleInput(client: TelnetClient, data: string): void {
   // Accumulate input and look for line endings
   client.inputBuffer += data;
+  if (client.inputBuffer.length > MAX_TELNET_BUFFER_LENGTH) {
+    send(client, `${ANSI.BRIGHT_RED}Input buffer limit exceeded.${ANSI.RESET}\n`);
+    client.socket.destroy();
+    return;
+  }
 
   // Process complete lines
   let newlineIndex: number;
@@ -208,6 +186,10 @@ function handleInput(client: TelnetClient, data: string): void {
  * Process a command from the client.
  */
 function processCommand(client: TelnetClient, input: string): void {
+  if (input.length > MAX_COMMAND_LENGTH) {
+    send(client, `${ANSI.BRIGHT_RED}Commands may not exceed ${MAX_COMMAND_LENGTH} characters.${ANSI.RESET}\n`);
+    return;
+  }
   switch (client.state) {
     case 'identify':
       handleIdentify(client, input);
@@ -437,6 +419,12 @@ function loadCharacter(client: TelnetClient, characterId: string): void {
     return;
   }
 
+  if (sessionManager.hasActiveCharacter(character.id)) {
+    send(client, `${ANSI.BRIGHT_RED}That character is already active in another session.${ANSI.RESET}\n`);
+    showCharacterMenu(client);
+    return;
+  }
+
   try {
     const session = restoreSession(client.id, character);
     sessionManager.setSession(client.id, session);
@@ -546,28 +534,6 @@ function sendPrompt(client: TelnetClient): void {
 
   send(client, `\n${ANSI.DIM}[${ANSI.RESET}${hp} ${mp} ${xp} ${currency}${ANSI.DIM}]${ANSI.RESET}${combatStatus}\n`);
   send(client, `${ANSI.BRIGHT_WHITE}> ${ANSI.RESET}`);
-}
-
-/**
- * Save character state to database.
- */
-function saveCharacterState(session: GameSession): void {
-  if (!session.characterId) return;
-
-  updateCharacter(session.characterId, {
-    level: session.player.level,
-    xp: session.player.xp,
-    currency: session.player.currency,
-    currentHp: session.player.currentHp,
-    maxHp: session.player.maxHp,
-    currentMp: session.player.currentMp,
-    maxMp: session.player.maxMp,
-    locationId: session.player.locationId,
-    gameTime: session.world.time.totalMinutes,
-    equipment: session.player.equipment,
-    inventory: session.player.inventory,
-    ownedItems: getOwnedItems(session.player, session.world),
-  });
 }
 
 /**

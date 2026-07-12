@@ -5,11 +5,13 @@
 
 import type { Server as SocketServer, Socket } from 'socket.io';
 import type { Creature, NPC, OutputLine, World, Player, DamageType } from '@solo-mud/shared';
-import { createRng, CREATURE_TEMPLATES, CHASE_CHANCE, EVENLY_MATCHED_THRESHOLD, ZONE_ACTIVITY, getWeaponDamage, xpForLevel, calculateXpGain, CLASSES, type Item, addCopper, formatPrice, getTotalCopper, currencyFromCopper, getResistanceForDamageType, applyResistance } from '@solo-mud/shared';
-import { generateSewerLoot, SEWER_LOOT_TABLES } from '../loot/sewer-loot';
-import { generateWildernessLoot, WILDERNESS_LOOT_TABLES } from '../loot/wilderness-loot';
+import { createRng, CREATURE_TEMPLATES, CHASE_CHANCE, EVENLY_MATCHED_THRESHOLD, ZONE_ACTIVITY, getWeaponDamage, xpForLevel, calculateXpGain, CLASSES, addCopper, formatPrice, getTotalCopper, currencyFromCopper, getResistanceForDamageType, applyResistance } from '@solo-mud/shared';
+import { generateCreatureLoot } from '../loot/creature-loot';
+import { applyOnHitEffects, applyOnKillEffects } from '../combat/item-effects';
+import { pruneExpiredBuffs, absorbPlayerDamage } from '../character/buffs';
 import { sessionManager, type GameSession } from './session';
 import { SimulationEngine, getZoneType } from '../npc/simulation';
+import { simulationEventBus } from '../npc/simulation/events';
 import {
   getDistanceFromPlayer,
   findPreyInAdjacentLocations,
@@ -20,10 +22,13 @@ import {
   isInTerritory,
   resolveInstantCombat,
 } from './ecosystem';
-import { tickIncursion, createIncursionState } from './incursion';
+import { tickIncursion, createIncursionState, type IncursionState } from './incursion';
+import { worldManager, advanceWorldTime } from '../world/world-manager';
 import { selectNpcAction, applyNpcAction, tickNpcCooldowns, regenNpcMana } from './npc-combat';
-import { saveCharacterState } from '../socket';
-import { getLevelHitModifier, getLevelDamageModifier } from '../character';
+import { saveCharacterState } from './character-persistence';
+import { getItemDisplayName, processEconomyTick } from '../economy/economy-manager';
+import { saveWorldSnapshot } from '../db';
+import { getLevelHitModifier, getLevelDamageModifier, computePlayerCombatStats } from '../character';
 import { getCombatNpcsAtLocation } from '@solo-mud/shared';
 import type { BotManager } from '../bots';
 
@@ -41,6 +46,9 @@ const AFK_TIMEOUT_MS = parseInt(process.env['AFK_TIMEOUT_MS'] ?? '900000', 10);
 
 /** Chance for a roaming creature to move each tick */
 const ROAM_CHANCE = 0.3;
+
+/** Game minutes the shared world clock advances per world tick (30s real) */
+const GAME_MINUTES_PER_WORLD_TICK = 5;
 
 /** Store for socket.io server reference */
 let ioServer: SocketServer | null = null;
@@ -105,6 +113,7 @@ export function stopGameLoop(): void {
   }
   simulationEngine = null;
   lastSimulationTick.clear();
+  worldIncursionState = null;
   console.log('Game loop stopped');
 }
 
@@ -127,22 +136,50 @@ let tickCount = 0;
 
 /**
  * World tick - handles creature movement, respawns, etc.
+ *
+ * Player-scoped systems run per session; world-scoped systems run exactly
+ * once against the shared world regardless of how many players are online.
  */
 async function worldTick(): Promise<void> {
   const sessions = sessionManager.getAllSessions();
+  const world = worldManager.getWorld();
   tickCount++;
 
+  // Advance the shared world clock
+  advanceWorldTime(world, GAME_MINUTES_PER_WORLD_TICK);
+
+  // Player-scoped processing
   for (const session of sessions) {
     checkAfkTimeout(session);
-    processCorpses(session);
-    processRespawns(session);
-    processHunting(session);
-    processCreatureMovement(session);
-    processIncursions(session, tickCount);
-    processTownDefense(session);
     processRegeneration(session);
     processLightSources(session);
-    processContainerRespawns(session);
+  }
+
+  // Bots regenerate too (no AFK/light handling needed)
+  for (const botSession of botManager?.getAllBots() ?? []) {
+    processRegeneration(botSession);
+  }
+
+  // World-scoped processing (once per tick)
+  processCorpses(world);
+  processRespawns(world);
+  processHunting(world);
+  processCreatureMovement(world);
+  processIncursions(world, tickCount);
+  processTownDefense(world);
+  processContainerRespawns(world);
+  const economyEvents = processEconomyTick(world);
+  for (const event of economyEvents) {
+    if (event.type !== 'shortage') continue;
+    const merchant = world.npcs[event.merchantId];
+    if (!merchant) continue;
+    simulationEventBus.emit('shop_shortage', {
+      merchantId: merchant.id,
+      merchantName: merchant.name,
+      itemName: getItemDisplayName(event.baseId),
+      quantity: event.quantity,
+      locationId: merchant.locationId,
+    });
   }
 
   // Run NPC simulation tick
@@ -150,13 +187,17 @@ async function worldTick(): Promise<void> {
 
   // Bot AI tick
   if (botManager) {
-    const gameTime = sessions[0]?.world.time.totalMinutes ?? 0;
-    await botManager.tick(gameTime);
+    await botManager.tick(world.time.totalMinutes);
   }
 
   // Periodic auto-save (every AUTO_SAVE_INTERVAL_TICKS world ticks)
   if (tickCount % AUTO_SAVE_INTERVAL_TICKS === 0) {
     autoSaveAllSessions(sessions);
+    try {
+      saveWorldSnapshot(world);
+    } catch (err) {
+      console.error('World snapshot auto-save failed:', err);
+    }
   }
 }
 
@@ -207,14 +248,115 @@ function checkAfkTimeout(session: GameSession): void {
  */
 function combatTick(): void {
   const sessions = sessionManager.getAllSessions();
+  const world = worldManager.getWorld();
 
-  for (const session of sessions) {
+  // Player-scoped combat — bots fight through the same pipeline (no socket)
+  const combatants: GameSession[] = [
+    ...sessions,
+    ...(botManager?.getAllBots() ?? []),
+  ];
+  for (const session of combatants) {
     processCooldowns(session);
-    processTrappedCreatures(session);
     processCreatureAggression(session);
     processPlayerCombat(session);
-    processCreatureVsCreatureCombat(session);
-    processCreatureVsNpcCombat(session);
+  }
+
+  // World-scoped combat (once per tick)
+  processTrappedCreatures(world);
+  processCreatureDots(world);
+  processCreatureVsCreatureCombat(world);
+  processCreatureVsNpcCombat(world);
+}
+
+/**
+ * Tick damage-over-time effects on creatures (Rend, Serpent Sting...).
+ * Kill credit and XP go to the player who applied the killing DOT.
+ */
+function processCreatureDots(world: World): void {
+  const now = Date.now();
+
+  for (const creature of Object.values(world.creatures)) {
+    if (!creature.dots?.length) continue;
+
+    // Drop expired effects
+    creature.dots = creature.dots.filter((d) => now < d.expiresAt);
+    if (creature.dots.length === 0) {
+      creature.dots = undefined;
+      continue;
+    }
+
+    // Apply tick damage
+    let total = 0;
+    const names = new Set<string>();
+    for (const dot of creature.dots) {
+      total += dot.damage;
+      names.add(dot.name);
+    }
+    creature.currentHp -= total;
+
+    notifyAt(creature.locationId, {
+      text: `The ${creature.name} suffers ${total} damage from ${[...names].join(', ')}. (${Math.max(0, creature.currentHp)}/${creature.maxHp} HP)`,
+      style: 'combat',
+    });
+
+    if (creature.currentHp > 0) continue;
+
+    // Death by DOT — credit the applier
+    const sourceId = creature.dots[0]!.sourcePlayerId;
+    creature.dots = undefined;
+    const ownerSession = sessionManager.getAllSessions().find((s) => s.player.id === sourceId);
+
+    const template = CREATURE_TEMPLATES[creature.templateId];
+    const tier = template?.tier ?? 'common';
+    const lootRng = createRng(`dot-loot-${Date.now()}`);
+    const lootItems = generateCreatureLoot(creature.templateId, creature.level, lootRng);
+    const loot: string[] = [];
+    for (const item of lootItems) {
+      world.items[item.id] = item;
+      loot.push(item.id);
+    }
+
+    notifyAt(creature.locationId, {
+      text: `The ${creature.name} succumbs to its wounds!`,
+      style: 'success',
+    });
+    handleCreatureDeath(world, creature, 'player', tier, loot);
+
+    if (ownerSession) {
+      const player = ownerSession.player;
+      const output: OutputLine[] = [];
+      const xpGain = calculateXpGain(player.level, creature.level, tier, creature.behavior);
+      player.xp += xpGain;
+      output.push({ text: `You gain ${xpGain} XP.`, style: 'success' });
+
+      let leveledUp = false;
+      while (player.xp >= player.xpToNextLevel) {
+        player.level++;
+        player.xpToNextLevel = xpForLevel(player.level + 1);
+        const classDef = CLASSES[player.class];
+        player.maxHp += classDef.hpPerLevel;
+        player.maxMp += classDef.mpPerLevel;
+        player.currentHp = player.maxHp;
+        player.currentMp = player.maxMp;
+        leveledUp = true;
+        output.push({ text: `★ LEVEL UP! You are now level ${player.level}!`, style: 'success' });
+      }
+      if (leveledUp) {
+        ownerSession.combatStats = computePlayerCombatStats(player, world.items);
+      }
+
+      if (player.targetId === creature.id) {
+        player.inCombat = false;
+        player.autoAttack = false;
+        player.targetId = undefined;
+      }
+
+      const socket = getSocketForSession(ownerSession);
+      if (socket) {
+        sendNotifications(socket, output);
+        sendPlayerUpdate(socket, ownerSession);
+      }
+    }
   }
 }
 
@@ -225,6 +367,19 @@ function combatTick(): void {
 function processCooldowns(session: GameSession): void {
   const { player } = session;
   const deltaMs = COMBAT_TICK_INTERVAL;
+
+  // Expire timed combat buffs and refresh stats when something fades
+  const faded = pruneExpiredBuffs(player);
+  if (faded.length > 0) {
+    session.combatStats = computePlayerCombatStats(player, session.world.items);
+    const socket = getSocketForSession(session);
+    if (socket) {
+      for (const name of faded) {
+        sendNotification(socket, { text: `Your ${name} fades.`, style: 'system' });
+      }
+      sendPlayerUpdate(socket, session);
+    }
+  }
 
   // Decrement GCD
   if (player.globalCooldown > 0) {
@@ -365,12 +520,10 @@ function formatSimulationMessage(message: {
 
 /**
  * Process trapped creatures - DOT damage and break attempts.
+ * Trap messages and XP go to the trap's owner; other players in the room
+ * see the same events.
  */
-function processTrappedCreatures(session: GameSession): void {
-  const { world, player } = session;
-  const socket = getSocketForSession(session);
-  if (!socket) return;
-
+function processTrappedCreatures(world: World): void {
   const now = Date.now();
 
   // Check all creatures in the world for trapped state
@@ -379,14 +532,28 @@ function processTrappedCreatures(session: GameSession): void {
 
     const trapped = creature.trapped;
 
+    // The player whose trap caught this creature (may have logged off)
+    const ownerSession = sessionManager.getAllSessions().find(
+      (s) => s.player.id === trapped.trappedByPlayerId
+    );
+    const ownerSocket = ownerSession ? getSocketForSession(ownerSession) : null;
+
+    // Sends trap events to the owner, or to the room if the owner is gone
+    const deliver = (lines: OutputLine[]): void => {
+      if (ownerSocket) {
+        sendNotifications(ownerSocket, lines);
+      } else {
+        notifyManyAt(creature.locationId, lines);
+      }
+    };
+
     // Check if trap effect has expired
     if (now >= trapped.expiresAt) {
-      const output: OutputLine[] = [{
-        text: `The ${creature.name} breaks free from the trap!`,
-        style: 'combat',
-      }];
+      const freeText = trapped.kind === 'root'
+        ? `The roots wither and the ${creature.name} tears free!`
+        : `The ${creature.name} breaks free from the trap!`;
       creature.trapped = undefined;
-      sendNotifications(socket, output);
+      deliver([{ text: freeText, style: 'combat' }]);
       continue;
     }
 
@@ -414,13 +581,8 @@ function processTrappedCreatures(session: GameSession): void {
         const tier = template?.tier ?? 'common';
 
         // Generate loot for trap DOT kills
-        let lootItems: Item[] = [];
         const lootRng = createRng(`trap-dot-loot-${Date.now()}`);
-        if (SEWER_LOOT_TABLES[creature.templateId]) {
-          lootItems = generateSewerLoot(creature.templateId, creature.level, lootRng);
-        } else if (WILDERNESS_LOOT_TABLES[creature.templateId]) {
-          lootItems = generateWildernessLoot(creature.templateId, creature.level, lootRng);
-        }
+        const lootItems = generateCreatureLoot(creature.templateId, creature.level, lootRng);
         const loot: string[] = [];
         for (const item of lootItems) {
           world.items[item.id] = item;
@@ -429,39 +591,47 @@ function processTrappedCreatures(session: GameSession): void {
 
         handleCreatureDeath(world, creature, 'player', tier, loot);
 
-        // Grant XP to player (with level difference penalty)
-        const xpGain = calculateXpGain(player.level, creature.level);
-        player.xp += xpGain;
-        output.push({ text: `You gain ${xpGain} XP.`, style: 'success' });
+        // Grant XP to the trap owner if they're still online
+        if (ownerSession) {
+          const player = ownerSession.player;
+          const xpGain = calculateXpGain(player.level, creature.level, tier, creature.behavior);
+          player.xp += xpGain;
+          output.push({ text: `You gain ${xpGain} XP.`, style: 'success' });
 
-        // Check for level up
-        while (player.xp >= player.xpToNextLevel) {
-          player.level++;
-          player.xpToNextLevel = xpForLevel(player.level + 1);
-          const classDef = CLASSES[player.class];
-          player.maxHp += classDef.hpPerLevel;
-          player.maxMp += classDef.mpPerLevel;
-          player.currentHp = player.maxHp;
-          player.currentMp = player.maxMp;
+          // Check for level up
+          let leveledUp = false;
+          while (player.xp >= player.xpToNextLevel) {
+            player.level++;
+            player.xpToNextLevel = xpForLevel(player.level + 1);
+            const classDef = CLASSES[player.class];
+            player.maxHp += classDef.hpPerLevel;
+            player.maxMp += classDef.mpPerLevel;
+            player.currentHp = player.maxHp;
+            player.currentMp = player.maxMp;
+            leveledUp = true;
+            output.push({
+              text: `★ LEVEL UP! You are now level ${player.level}!`,
+              style: 'success',
+            });
+          }
+          if (leveledUp) {
+            ownerSession.combatStats = computePlayerCombatStats(player, world.items);
+          }
+
           output.push({
-            text: `★ LEVEL UP! You are now level ${player.level}!`,
-            style: 'success',
+            text: `Use "loot ${creature.name.toLowerCase()}" to check the corpse.`,
+            style: 'system',
           });
+
+          // Exit combat if this was the owner's target
+          if (player.targetId === creature.id) {
+            player.inCombat = false;
+            player.autoAttack = false;
+            player.targetId = undefined;
+          }
         }
 
-        output.push({
-          text: `Use "loot ${creature.name.toLowerCase()}" to check the corpse.`,
-          style: 'system',
-        });
-
-        // Exit combat if this was target
-        if (player.targetId === creature.id) {
-          player.inCombat = false;
-          player.autoAttack = false;
-          player.targetId = undefined;
-        }
-
-        sendNotifications(socket, output);
+        deliver(output);
         continue;
       }
     }
@@ -492,7 +662,7 @@ function processTrappedCreatures(session: GameSession): void {
     }
 
     if (output.length > 0) {
-      sendNotifications(socket, output);
+      deliver(output);
     }
   }
 }
@@ -509,8 +679,8 @@ function processPlayerCombat(session: GameSession): void {
     return;
   }
 
+  // Socket is null for bot sessions — they fight without receiving output
   const socket = getSocketForSession(session);
-  if (!socket) return;
 
   // Find the creature the player is fighting
   const creature = world.creatures[player.targetId];
@@ -538,8 +708,8 @@ function processPlayerCombat(session: GameSession): void {
     // Level-based hit modifier (harder to hit higher level enemies)
     const levelHitMod = getLevelHitModifier(player.level, creature.level);
 
-    // Roll to hit (85% base + DEX bonus, modified by level difference)
-    const baseHitChance = 0.85 + (combatStats.hitChance / 100) * 0.15;
+    // Roll to hit (hitChance is a fraction ~0.9+, modified by level difference)
+    const baseHitChance = Math.min(0.99, 0.85 + combatStats.hitChance * 0.1);
     const hitChance = baseHitChance * levelHitMod;
     const playerHits = rng.next() < hitChance;
 
@@ -554,9 +724,8 @@ function processPlayerCombat(session: GameSession): void {
       const baseDamage = weaponDamage.min + Math.floor(rng.next() * (weaponDamage.max - weaponDamage.min + 1));
       const attackBonus = Math.floor(combatStats.attackPower / 10);
 
-      // Check for crit
-      const critChance = combatStats.critChance / 100;
-      const isCrit = rng.next() < critChance;
+      // Check for crit (critChance is a fraction, ~0.05-0.1)
+      const isCrit = rng.next() < combatStats.critChance;
       const critMultiplier = isCrit ? 2 : 1;
 
       // Level-based damage modifier (deal less damage to higher level enemies)
@@ -579,24 +748,24 @@ function processPlayerCombat(session: GameSession): void {
         });
       }
 
+      // Weapon proc effects (boss uniques etc.) — may finish the kill
+      const procs = applyOnHitEffects(player, world, creature, damage, isCrit, () => rng.next());
+      output.push(...procs.output);
+
       // Check if creature died
       if (creature.currentHp <= 0) {
         output.push({
           text: `The ${creature.name} collapses and dies!`,
           style: 'success',
         });
+        output.push(...applyOnKillEffects(player, world, () => rng.next()));
 
         // Get template for tier and XP
         const template = CREATURE_TEMPLATES[creature.templateId];
         const tier = template?.tier ?? 'common';
 
         // Generate loot
-        let lootItems: Item[] = [];
-        if (SEWER_LOOT_TABLES[creature.templateId]) {
-          lootItems = generateSewerLoot(creature.templateId, creature.level, rng);
-        } else if (WILDERNESS_LOOT_TABLES[creature.templateId]) {
-          lootItems = generateWildernessLoot(creature.templateId, creature.level, rng);
-        }
+        const lootItems = generateCreatureLoot(creature.templateId, creature.level, rng);
 
         // Add loot to world
         const loot: string[] = [];
@@ -608,12 +777,17 @@ function processPlayerCombat(session: GameSession): void {
         // Handle creature death
         handleCreatureDeath(world, creature, 'player', tier, loot);
 
-        // Calculate XP reward
-        const tierMultiplier = tier === 'apex' ? 3.0 : tier === 'dangerous' ? 2.0 : tier === 'common' ? 1.5 : 1.0;
-        const behaviorMultiplier = creature.behavior === 'aggressive' ? 1.2 :
-                                    creature.behavior === 'territorial' ? 1.1 : 0.5;
-        const baseXp = creature.level * 10;
-        const xpReward = Math.floor(baseXp * tierMultiplier * behaviorMultiplier);
+        // Boss kills become major gossip
+        if (creature.isBossAnchor) {
+          simulationEventBus.emit('boss_defeated', {
+            bossName: creature.name,
+            playerName: player.name,
+            locationId: creature.locationId,
+          });
+        }
+
+        // Calculate XP reward (one formula: tier × behavior × gray-mob penalty)
+        const xpReward = calculateXpGain(player.level, creature.level, tier, creature.behavior);
 
         // Copper reward (no coins from passive creatures)
         const copperReward = creature.behavior === 'passive' ? 0 : Math.floor(creature.level * (2 + rng.next() * 3));
@@ -682,6 +856,9 @@ function processPlayerCombat(session: GameSession): void {
             text: '╚═══════════════════════════════════════╝',
             style: 'success',
           });
+
+          // Level bonus affects primary stat — refresh combat stats
+          session.combatStats = computePlayerCombatStats(player, world.items);
         }
 
         output.push({
@@ -714,8 +891,10 @@ function processPlayerCombat(session: GameSession): void {
           }
         }
 
-        sendNotifications(socket, output);
-        sendPlayerUpdate(socket, session); // Immediate UI update for XP/level changes
+        if (socket) {
+          sendNotifications(socket, output);
+          sendPlayerUpdate(socket, session); // Immediate UI update for XP/level changes
+        }
         return;
       } else {
         // Show creature HP
@@ -731,7 +910,9 @@ function processPlayerCombat(session: GameSession): void {
   // === CREATURE ATTACKS PLAYER ===
   // Passive creatures don't attack - they just wait to die
   if (creature.behavior !== 'passive' && creature.currentHp > 0) {
-    const creatureHitChance = 0.75;
+    // Player dodge (from DEX + buffs like Evasion) reduces creature accuracy
+    const dodge = Math.min(0.5, combatStats.dodgeChance);
+    const creatureHitChance = 0.75 * (1 - dodge);
     const creatureHits = rng.next() < creatureHitChance;
 
     if (!creatureHits) {
@@ -741,7 +922,7 @@ function processPlayerCombat(session: GameSession): void {
       });
     } else {
       const minDmg = Math.max(1, creature.level);
-      const maxDmg = Math.max(2, creature.level * 2 + 2);
+      const maxDmg = Math.max(2, Math.floor(creature.level * 1.6) + 2);
       const rawDamage = minDmg + Math.floor(rng.next() * (maxDmg - minDmg + 1));
 
       // Get creature's damage type from template (default to physical)
@@ -758,10 +939,13 @@ function processPlayerCombat(session: GameSession): void {
           style: 'system',
         });
       } else {
-        player.currentHp -= damage;
+        // Absorb shields (Ice Barrier, Holy Shield) soak damage first
+        const shielded = absorbPlayerDamage(player, damage);
+        output.push(...shielded.messages);
+        player.currentHp -= shielded.taken;
 
         output.push({
-          text: `The ${creature.name} attacks you for ${damage} damage!`,
+          text: `The ${creature.name} attacks you for ${shielded.taken} damage!`,
           style: 'combat',
         });
 
@@ -784,17 +968,16 @@ function processPlayerCombat(session: GameSession): void {
     }
   }
 
-  sendNotifications(socket, output);
-  sendPlayerUpdate(socket, session);
+  if (socket) {
+    sendNotifications(socket, output);
+    sendPlayerUpdate(socket, session);
+  }
 }
 
 /**
  * Process creature-vs-creature combat for tick-based fights.
  */
-function processCreatureVsCreatureCombat(session: GameSession): void {
-  const { world, player } = session;
-  const socket = getSocketForSession(session);
-
+function processCreatureVsCreatureCombat(world: World): void {
   // Find creatures in combat with other creatures (not player)
   const creaturesInCombat = Object.values(world.creatures).filter(
     (c) => c.inCombat && c.targetId && !c.targetId.startsWith('player')
@@ -824,14 +1007,11 @@ function processCreatureVsCreatureCombat(session: GameSession): void {
     defender.currentHp -= attackerDmg;
     attacker.currentHp -= defenderDmg;
 
-    // Notify if player is watching
-    const distance = getDistanceFromPlayer(world, player.locationId, attacker.locationId);
-    if (socket && distance === 0) {
-      sendNotification(socket, {
-        text: `The ${attacker.name} and ${defender.name} exchange blows!`,
-        style: 'combat',
-      });
-    }
+    // Notify players watching the fight
+    notifyAt(attacker.locationId, {
+      text: `The ${attacker.name} and ${defender.name} exchange blows!`,
+      style: 'combat',
+    });
 
     // Check for deaths
     if (defender.currentHp <= 0) {
@@ -840,12 +1020,10 @@ function processCreatureVsCreatureCombat(session: GameSession): void {
       attacker.inCombat = false;
       attacker.targetId = undefined;
 
-      if (socket && distance === 0) {
-        sendNotification(socket, {
-          text: `The ${attacker.name} kills the ${defender.name}!`,
-          style: 'combat',
-        });
-      }
+      notifyAt(attacker.locationId, {
+        text: `The ${attacker.name} kills the ${defender.name}!`,
+        style: 'combat',
+      });
     }
 
     if (attacker.currentHp <= 0) {
@@ -856,12 +1034,10 @@ function processCreatureVsCreatureCombat(session: GameSession): void {
         defender.targetId = undefined;
       }
 
-      if (socket && distance === 0) {
-        sendNotification(socket, {
-          text: `The ${defender.name} kills the ${attacker.name}!`,
-          style: 'combat',
-        });
-      }
+      notifyAt(attacker.locationId, {
+        text: `The ${defender.name} kills the ${attacker.name}!`,
+        style: 'combat',
+      });
     }
   }
 }
@@ -869,23 +1045,17 @@ function processCreatureVsCreatureCombat(session: GameSession): void {
 /**
  * Process corpse decay - remove faded corpses and notify players.
  */
-function processCorpses(session: GameSession): void {
-  const { world, player } = session;
-  const socket = getSocketForSession(session);
-
+function processCorpses(world: World): void {
   const toRemove: string[] = [];
 
   for (const [id, corpse] of Object.entries(world.corpses)) {
     if (shouldCorpseFade(corpse)) {
       toRemove.push(id);
 
-      // Notify player if in same room
-      if (socket && corpse.locationId === player.locationId) {
-        sendNotification(socket, {
-          text: `The ${corpse.name}'s remains are picked clean by scavengers.`,
-          style: 'normal',
-        });
-      }
+      notifyAt(corpse.locationId, {
+        text: `The ${corpse.name}'s remains are picked clean by scavengers.`,
+        style: 'normal',
+      });
     }
   }
 
@@ -897,18 +1067,16 @@ function processCorpses(session: GameSession): void {
 /**
  * Process respawn queue - spawn creatures whose timer has elapsed.
  */
-function processRespawns(session: GameSession): void {
-  const { world, player } = session;
+function processRespawns(world: World): void {
   const now = Date.now();
-  const socket = getSocketForSession(session);
 
   const toProcess: number[] = [];
 
   for (let i = 0; i < world.respawnQueue.length; i++) {
     const entry = world.respawnQueue[i]!;
     if (now >= entry.respawnAt) {
-      // Delay if player is at spawn location
-      if (entry.spawnLocationId === player.locationId) {
+      // Delay if any player is at the spawn location
+      if (sessionsAt(entry.spawnLocationId).length > 0) {
         entry.respawnAt = now + WORLD_TICK_INTERVAL;
         continue;
       }
@@ -936,10 +1104,10 @@ function processRespawns(session: GameSession): void {
     const creature: Creature = {
       id: creatureId,
       templateId: entry.templateId,
-      name: template.name,
+      name: entry.name ?? template.name,
       level: entry.level,
       behavior: template.behavior,
-      mobility: template.mobility,
+      mobility: entry.mobility ?? template.mobility,
       currentHp: hp,
       maxHp: hp,
       locationId: entry.spawnLocationId,
@@ -947,6 +1115,7 @@ function processRespawns(session: GameSession): void {
       spawnLocationId: entry.spawnLocationId,
       inCombat: false,
       description: idleDesc,
+      isBossAnchor: entry.isBossAnchor,
     };
 
     world.creatures[creatureId] = creature;
@@ -958,9 +1127,11 @@ function processRespawns(session: GameSession): void {
 
     world.respawnQueue.splice(idx, 1);
 
-    // Notify player if in adjacent room (ambient hint)
-    if (socket) {
-      const distance = getDistanceFromPlayer(world, player.locationId, entry.spawnLocationId);
+    // Notify players in adjacent rooms (ambient hint)
+    for (const session of sessionManager.getAllSessions()) {
+      const socket = getSocketForSession(session);
+      if (!socket) continue;
+      const distance = getDistanceFromPlayer(world, session.player.locationId, entry.spawnLocationId);
       if (distance === 1) {
         sendNotification(socket, {
           text: `You sense movement nearby.`,
@@ -974,9 +1145,7 @@ function processRespawns(session: GameSession): void {
 /**
  * Process active hunting - predators seek prey in adjacent locations.
  */
-function processHunting(session: GameSession): void {
-  const { world } = session;
-
+function processHunting(world: World): void {
   // Get all predators (aggressive/territorial, alive, not in combat)
   const predators = Object.values(world.creatures).filter(
     (c) =>
@@ -1012,7 +1181,7 @@ function processHunting(session: GameSession): void {
 
     // Move predator to prey location
     const oldLocationId = predator.locationId;
-    moveCreature(session, predator, oldLocationId, bestPrey.locationId);
+    moveCreature(world, predator, oldLocationId, bestPrey.locationId);
 
     // Resolve combat between predator and prey
     const prey = bestPrey.creature;
@@ -1028,22 +1197,18 @@ function processHunting(session: GameSession): void {
     // Clear combat state for predator
     predator.inCombat = false;
 
-    // Notify player if they witness the hunt
-    const socket = getSocketForSession(session);
-    if (socket && bestPrey.locationId === session.player.locationId) {
-      sendNotification(socket, {
-        text: `A ${predator.name} catches and kills a ${prey.name}!`,
-        style: 'combat',
-      });
-    }
+    // Notify players who witness the hunt
+    notifyAt(bestPrey.locationId, {
+      text: `A ${predator.name} catches and kills a ${prey.name}!`,
+      style: 'combat',
+    });
   }
 }
 
 /**
- * Process creature movement for a session's world.
+ * Process creature movement in the shared world.
  */
-function processCreatureMovement(session: GameSession): void {
-  const { world } = session;
+function processCreatureMovement(world: World): void {
   const rng = createRng(`creature-move-${Date.now()}`);
 
   // Get all roaming creatures (trapped creatures can't move)
@@ -1076,21 +1241,19 @@ function processCreatureMovement(session: GameSession): void {
     const newLocationId = chosenExit.to;
 
     // Move creature
-    moveCreature(session, creature, oldLocationId, newLocationId);
+    moveCreature(world, creature, oldLocationId, newLocationId);
   }
 }
 
 /**
- * Move a creature between locations and notify players.
+ * Move a creature between locations and notify players in either room.
  */
 function moveCreature(
-  session: GameSession,
+  world: World,
   creature: Creature,
   fromLocationId: string,
   toLocationId: string
 ): void {
-  const { world, player } = session;
-
   // Get location data
   const fromLocation = world.locations[fromLocationId];
   const toLocation = world.locations[toLocationId];
@@ -1107,30 +1270,34 @@ function moveCreature(
   toLocation.creatures.push(creature.id);
   creature.locationId = toLocationId;
 
-  // Notify player if they're in either location
-  const socket = getSocketForSession(session);
-  if (!socket) return;
+  // Players in the old room see it leave
+  const direction = getExitDirection(world, fromLocationId, toLocationId);
+  notifyAt(fromLocationId, getLeaveMessage(creature, direction));
 
-  if (player.locationId === fromLocationId) {
-    // Player sees creature leaving
-    const direction = getExitDirection(world, fromLocationId, toLocationId);
-    const leaveMessage = getLeaveMessage(creature, direction);
-    sendNotification(socket, leaveMessage);
-  } else if (player.locationId === toLocationId) {
-    // Player sees creature arriving
-    const direction = getExitDirection(world, toLocationId, fromLocationId);
-    const arriveMessage = getArriveMessage(creature, direction);
-    sendNotification(socket, arriveMessage);
+  // Players in the new room see it arrive
+  const fromDirection = getExitDirection(world, toLocationId, fromLocationId);
+  const arrivals = sessionsAt(toLocationId);
+  for (const session of arrivals) {
+    const socket = getSocketForSession(session);
+    if (socket) {
+      sendNotification(socket, getArriveMessage(creature, fromDirection));
+    }
+  }
 
-    // Aggressive creatures attack on sight
-    if (creature.behavior === 'aggressive' && !player.inCombat) {
-      initiateCreatureAggro(session, creature, socket);
+  // Aggressive creatures attack the first non-combat player present
+  if (creature.behavior === 'aggressive' && !creature.inCombat) {
+    const target = arrivals.find((s) => !s.player.inCombat);
+    if (target) {
+      const socket = getSocketForSession(target);
+      if (socket) {
+        initiateCreatureAggro(target, creature, socket);
+      }
     }
   }
 
   // After creature arrives, check for flee response
   if (creature.behavior !== 'passive') {
-    triggerFleeResponse(session, creature, toLocationId);
+    triggerFleeResponse(world, creature, toLocationId);
   }
 }
 
@@ -1138,7 +1305,7 @@ function moveCreature(
  * Get the direction label for an exit between two locations.
  */
 function getExitDirection(
-  world: GameSession['world'],
+  world: World,
   fromId: string,
   toId: string
 ): string {
@@ -1240,6 +1407,56 @@ function sendNotifications(socket: Socket, lines: OutputLine[]): void {
     type: 'output',
     lines,
   });
+}
+
+/**
+ * Get all sessions whose player is at a location.
+ */
+function sessionsAt(locationId: string): GameSession[] {
+  return sessionManager.getAllSessions().filter(
+    (s) => s.player.locationId === locationId
+  );
+}
+
+/**
+ * Broadcast a notification line to every player at a location.
+ */
+function notifyAt(locationId: string, line: OutputLine): void {
+  for (const session of sessionsAt(locationId)) {
+    const socket = getSocketForSession(session);
+    if (socket) sendNotification(socket, line);
+  }
+}
+
+/**
+ * Broadcast multiple notification lines to every player at a location.
+ */
+function notifyManyAt(locationId: string, lines: OutputLine[]): void {
+  for (const session of sessionsAt(locationId)) {
+    const socket = getSocketForSession(session);
+    if (socket) sendNotifications(socket, lines);
+  }
+}
+
+/**
+ * Broadcast a town-combat line: players at the location hear it directly;
+ * players elsewhere in town hear gate events with a distance prefix.
+ */
+function notifyTownCombat(locationId: string, line: OutputLine): void {
+  for (const session of sessionManager.getAllSessions()) {
+    const socket = getSocketForSession(session);
+    if (!socket) continue;
+
+    const playerLoc = session.player.locationId;
+    if (playerLoc === locationId) {
+      sendNotification(socket, line);
+    } else if (playerLoc.startsWith('town_') && locationId === 'town_gate') {
+      sendNotification(socket, {
+        text: `From the town gate: ${line.text}`,
+        style: line.style,
+      });
+    }
+  }
 }
 
 /**
@@ -1365,11 +1582,9 @@ function processLightSources(session: GameSession): void {
 }
 
 /**
- * Process container respawns for a session.
+ * Process container respawns in the shared world.
  */
-function processContainerRespawns(session: GameSession): void {
-  const { world } = session;
-
+function processContainerRespawns(world: World): void {
   if (!world.containers) return;
 
   const currentTime = world.time.totalMinutes;
@@ -1410,6 +1625,13 @@ const DEATH_GOLD_PENALTY = 0.1; // Lose 10% of gold
 export function handlePlayerDeath(session: GameSession): OutputLine[] {
   const { world, player } = session;
   const output: OutputLine[] = [];
+
+  // Deaths become tavern gossip (bots and players alike)
+  simulationEventBus.emit('player_death', {
+    playerId: player.id,
+    playerName: player.name,
+    locationId: player.locationId,
+  });
 
   // Find respawn location (temple or fallback to inn)
   let respawnLocationId = DEFAULT_RESPAWN_LOCATION;
@@ -1487,12 +1709,10 @@ export function handlePlayerDeath(session: GameSession): OutputLine[] {
  * When a predator arrives at a location, prey may flee.
  */
 function triggerFleeResponse(
-  session: GameSession,
+  world: World,
   predator: Creature,
   locationId: string
 ): void {
-  const { world, player } = session;
-  const socket = getSocketForSession(session);
   const location = world.locations[locationId];
   if (!location) return;
 
@@ -1512,20 +1732,18 @@ function triggerFleeResponse(
     const fleeOptions = getAdjacentLocations(world, locationId);
     if (fleeOptions.length === 0) {
       // Trapped - combat begins
-      initiateCreatureCombat(session, predator, prey);
+      initiateCreatureCombat(world, predator, prey);
       continue;
     }
 
     const rng = createRng(`flee-${prey.id}-${Date.now()}`);
     const fleeToId = fleeOptions[Math.floor(rng.next() * fleeOptions.length)]!;
 
-    // Notify player
-    if (socket && player.locationId === locationId) {
-      sendNotification(socket, {
-        text: `The ${prey.name} bolts away in fear!`,
-        style: 'normal',
-      });
-    }
+    // Notify players in the room
+    notifyAt(locationId, {
+      text: `The ${prey.name} bolts away in fear!`,
+      style: 'normal',
+    });
 
     // Move prey
     moveCreatureInternal(world, prey, locationId, fleeToId);
@@ -1534,12 +1752,10 @@ function triggerFleeResponse(
     if (rng.next() < CHASE_CHANCE) {
       moveCreatureInternal(world, predator, locationId, fleeToId);
 
-      if (socket && player.locationId === locationId) {
-        sendNotification(socket, {
-          text: `The ${predator.name} gives chase!`,
-          style: 'combat',
-        });
-      }
+      notifyAt(locationId, {
+        text: `The ${predator.name} gives chase!`,
+        style: 'combat',
+      });
     }
   }
 }
@@ -1569,14 +1785,10 @@ function moveCreatureInternal(
  * Initiate combat between two creatures.
  */
 function initiateCreatureCombat(
-  session: GameSession,
+  world: World,
   attacker: Creature,
   defender: Creature
 ): void {
-  const { world, player } = session;
-  const socket = getSocketForSession(session);
-
-  const distance = getDistanceFromPlayer(world, player.locationId, attacker.locationId);
   const attackerTemplate = CREATURE_TEMPLATES[attacker.templateId];
   const defenderTemplate = CREATURE_TEMPLATES[defender.templateId];
 
@@ -1590,19 +1802,19 @@ function initiateCreatureCombat(
     defender.behavior === 'territorial' &&
     isInTerritory(world, defender, defender.locationId);
 
-  if (distance === 0 && isEvenlyMatched) {
-    // Same room, evenly matched - tick-based combat
+  const watchers = sessionsAt(attacker.locationId);
+
+  if (watchers.length > 0 && isEvenlyMatched) {
+    // Players watching, evenly matched - tick-based combat
     attacker.inCombat = true;
     attacker.targetId = defender.id;
     defender.inCombat = true;
     defender.targetId = attacker.id;
 
-    if (socket) {
-      sendNotification(socket, {
-        text: `The ${attacker.name} attacks the ${defender.name}!`,
-        style: 'combat',
-      });
-    }
+    notifyAt(attacker.locationId, {
+      text: `The ${attacker.name} attacks the ${defender.name}!`,
+      style: 'combat',
+    });
     // Combat will resolve in combatTick
   } else {
     // Instant resolution
@@ -1619,8 +1831,12 @@ function initiateCreatureCombat(
     const loserTemplate = CREATURE_TEMPLATES[loser.templateId];
     handleCreatureDeath(world, loser, 'creature', loserTemplate?.tier ?? 'common');
 
-    // Notify based on distance
-    if (socket) {
+    // Notify each player based on their distance
+    for (const session of sessionManager.getAllSessions()) {
+      const socket = getSocketForSession(session);
+      if (!socket) continue;
+
+      const distance = getDistanceFromPlayer(world, session.player.locationId, attacker.locationId);
       if (distance === 0) {
         sendNotification(socket, {
           text: `The ${winner.name} kills the ${loser.name}!`,
@@ -1785,18 +2001,14 @@ function processCreatureAggression(session: GameSession): void {
   // The first aggressive creature attacks the player
   const attacker = aggressiveCreatures[0]!;
   const socket = getSocketForSession(session);
-  if (socket) {
-    initiateCreatureAggro(session, attacker, socket);
-  }
+  initiateCreatureAggro(session, attacker, socket);
 }
 
 /**
  * Process creature vs NPC combat in town locations.
  * Aggressive creatures that aren't fighting players will attack NPCs.
  */
-function processCreatureVsNpcCombat(session: GameSession): void {
-  const { world, player } = session;
-  const socket = getSocketForSession(session);
+function processCreatureVsNpcCombat(world: World): void {
   const rng = createRng(`creature-vs-npc-${Date.now()}`);
 
   // Check all town locations for hostile creatures not in combat
@@ -1824,11 +2036,10 @@ function processCreatureVsNpcCombat(session: GameSession): void {
 
     if (npcsAtLocation.length === 0) continue;
 
-    // Each hostile creature attacks an NPC (if player isn't there)
+    // Each hostile creature attacks an NPC (unless a free player is present —
+    // creatures prefer players, handled by processCreatureAggression)
     for (const creature of hostileCreatures) {
-      // If player is at this location and not in combat, creature should target player
-      // (handled by processCreatureAggression)
-      if (player.locationId === locationId && !player.inCombat) continue;
+      if (sessionsAt(locationId).some((s) => !s.player.inCombat)) continue;
 
       // Pick a random NPC to attack
       const targetNpc = npcsAtLocation[Math.floor(rng.next() * npcsAtLocation.length)];
@@ -1847,25 +2058,16 @@ function processCreatureVsNpcCombat(session: GameSession): void {
         }
       }
 
-      // Notify player if nearby
-      const isPlayerHere = player.locationId === locationId;
-      const canHearFromGate = player.locationId.startsWith('town_') && locationId === 'town_gate';
+      notifyTownCombat(locationId, {
+        text: `The ${creature.name} attacks ${targetNpc.name}!`,
+        style: 'combat',
+      });
 
-      if (socket && (isPlayerHere || canHearFromGate)) {
-        // Add location context for distant combat
-        const locationPrefix = isPlayerHere ? '' : 'From the town gate: ';
-
-        sendNotification(socket, {
-          text: `${locationPrefix}The ${creature.name} attacks ${targetNpc.name}!`,
+      if (targetNpc.combat && targetNpc.combat.currentHp <= 10) {
+        notifyTownCombat(locationId, {
+          text: `${targetNpc.name} cries out for help!`,
           style: 'combat',
         });
-
-        if (targetNpc.combat && targetNpc.combat.currentHp <= 10) {
-          sendNotification(socket, {
-            text: `${locationPrefix}${targetNpc.name} cries out for help!`,
-            style: 'combat',
-          });
-        }
       }
     }
   }
@@ -1877,7 +2079,7 @@ function processCreatureVsNpcCombat(session: GameSession): void {
 function initiateCreatureAggro(
   session: GameSession,
   creature: Creature,
-  socket: Socket
+  socket: Socket | null
 ): void {
   const { player, combatStats } = session;
   const rng = createRng(`aggro-tick-${Date.now()}`);
@@ -1905,7 +2107,7 @@ function initiateCreatureAggro(
       player.inCombat = false;
       player.autoAttack = false;
       player.targetId = undefined;
-      sendNotifications(socket, output);
+      if (socket) sendNotifications(socket, output);
       return;
     }
   }
@@ -1921,7 +2123,7 @@ function initiateCreatureAggro(
     });
   } else {
     const minDmg = Math.max(1, creature.level);
-    const maxDmg = Math.max(2, creature.level * 2 + 2);
+    const maxDmg = Math.max(2, Math.floor(creature.level * 1.6) + 2);
     const rawDamage = minDmg + Math.floor(rng.next() * (maxDmg - minDmg + 1));
 
     // Get creature's damage type from template (default to physical)
@@ -1938,10 +2140,13 @@ function initiateCreatureAggro(
         style: 'system',
       });
     } else {
-      player.currentHp -= damage;
+      // Absorb shields soak damage first
+      const shielded = absorbPlayerDamage(player, damage);
+      output.push(...shielded.messages);
+      player.currentHp -= shielded.taken;
 
       output.push({
-        text: `The ${creature.name} hits you for ${damage} damage!`,
+        text: `The ${creature.name} hits you for ${shielded.taken} damage!`,
         style: 'combat',
       });
 
@@ -1959,48 +2164,44 @@ function initiateCreatureAggro(
     }
   }
 
-  sendNotifications(socket, output);
+  if (socket) sendNotifications(socket, output);
 }
+
+/** World-level incursion state (one incursion timeline for the shared world) */
+let worldIncursionState: IncursionState | null = null;
 
 /**
  * Process town incursions - creatures attacking near the town gate.
  */
-function processIncursions(session: GameSession, currentTick: number): void {
-  const { world, player } = session;
-  const socket = getSocketForSession(session);
-
-  // Initialize incursion state if missing
-  if (!session.incursionState) {
-    session.incursionState = createIncursionState();
+function processIncursions(world: World, currentTick: number): void {
+  if (!worldIncursionState) {
+    worldIncursionState = createIncursionState();
   }
 
-  // Process incursion tick
-  const events = tickIncursion(
-    world,
-    session.incursionState,
-    currentTick,
-    session.worldSeed ?? 'default'
-  );
+  // Process incursion tick once for the world
+  const events = tickIncursion(world, worldIncursionState, currentTick, world.seed);
+  if (events.length === 0) return;
 
-  // Send events to player if they're in town or nearby
-  if (socket && events.length > 0) {
-    const playerLocation = player.locationId;
-    const isInTown = playerLocation.startsWith('town_');
+  // Deliver events to every player in town
+  for (const session of sessionManager.getAllSessions()) {
+    const socket = getSocketForSession(session);
+    if (!socket) continue;
+
+    const playerLocation = session.player.locationId;
+    if (!playerLocation.startsWith('town_')) continue;
+
     const isNearGate = playerLocation === 'town_gate' || playerLocation === 'town_square';
 
     for (const event of events) {
-      // Only send messages if player is in town
-      if (isInTown) {
-        // Send all messages for gate events, or just alerts for others
-        if (isNearGate || event.type === 'guard_attack' || event.type === 'creature_death') {
-          sendNotifications(socket, event.messages);
-        } else {
-          // Distant alert for incursion events player isn't near
-          sendNotification(socket, {
-            text: 'You hear shouts from the town gate!',
-            style: 'combat',
-          });
-        }
+      // Send all messages for gate events, or just alerts for others
+      if (isNearGate || event.type === 'guard_attack' || event.type === 'creature_death') {
+        sendNotifications(socket, event.messages);
+      } else {
+        // Distant alert for incursion events player isn't near
+        sendNotification(socket, {
+          text: 'You hear shouts from the town gate!',
+          style: 'combat',
+        });
       }
     }
   }
@@ -2010,9 +2211,7 @@ function processIncursions(session: GameSession, currentTick: number): void {
  * Process town defense - NPCs fight hostile creatures in town locations.
  * Unlike incursions, this handles ANY hostile creature in town areas.
  */
-function processTownDefense(session: GameSession): void {
-  const { world, player } = session;
-  const socket = getSocketForSession(session);
+function processTownDefense(world: World): void {
   const rng = createRng(`town-defense-${Date.now()}`);
 
   // Check all town locations for hostile creatures
@@ -2072,16 +2271,7 @@ function processTownDefense(session: GameSession): void {
         target.currentHp -= action.damage;
       }
 
-      // Notify player if nearby
-      const isPlayerHere = player.locationId === locationId;
-      const canHearFromGate = player.locationId.startsWith('town_') && locationId === 'town_gate';
-      const shouldNotify = isPlayerHere || canHearFromGate;
-      const locationPrefix = isPlayerHere ? '' : 'From the town gate: ';
-
-      if (socket && shouldNotify) {
-        const prefixedMessage = isPlayerHere ? action.message : `${locationPrefix}${action.message}`;
-        sendNotification(socket, { text: prefixedMessage, style: 'combat' });
-      }
+      notifyTownCombat(locationId, { text: action.message, style: 'combat' });
 
       // Check if creature died
       if (target.currentHp <= 0) {
@@ -2090,13 +2280,8 @@ function processTownDefense(session: GameSession): void {
         const tier = template?.tier ?? 'common';
 
         // Generate loot
-        let lootItems: Item[] = [];
         const lootRng = createRng(`town-defense-loot-${Date.now()}`);
-        if (SEWER_LOOT_TABLES[target.templateId]) {
-          lootItems = generateSewerLoot(target.templateId, target.level, lootRng);
-        } else if (WILDERNESS_LOOT_TABLES[target.templateId]) {
-          lootItems = generateWildernessLoot(target.templateId, target.level, lootRng);
-        }
+        const lootItems = generateCreatureLoot(target.templateId, target.level, lootRng);
         const loot: string[] = [];
         for (const item of lootItems) {
           world.items[item.id] = item;
@@ -2105,18 +2290,16 @@ function processTownDefense(session: GameSession): void {
 
         handleCreatureDeath(world, target, 'player', tier, loot);
 
-        if (socket && shouldNotify) {
-          sendNotification(socket, {
-            text: `${locationPrefix}The ${target.name} has been slain by the town defenders!`,
-            style: 'success'
+        notifyTownCombat(locationId, {
+          text: `The ${target.name} has been slain by the town defenders!`,
+          style: 'success',
+        });
+        // Only mention looting to players at the location
+        if (loot.length > 0) {
+          notifyAt(locationId, {
+            text: `The ${target.name}'s corpse can be looted.`,
+            style: 'system',
           });
-          // Only mention looting if player is at the location
-          if (isPlayerHere && loot.length > 0) {
-            sendNotification(socket, {
-              text: `The ${target.name}'s corpse can be looted.`,
-              style: 'system',
-            });
-          }
         }
 
         // Remove from our local list to avoid double-processing
@@ -2127,22 +2310,18 @@ function processTownDefense(session: GameSession): void {
         const creatureDamage = Math.floor(target.level * 3 * (0.7 + rng.next() * 0.6));
         defender.combat.currentHp -= creatureDamage;
 
-        if (socket && shouldNotify) {
-          sendNotification(socket, {
-            text: `${locationPrefix}The ${target.name} strikes ${defender.name} for ${creatureDamage} damage!`,
-            style: 'combat',
-          });
-        }
+        notifyTownCombat(locationId, {
+          text: `The ${target.name} strikes ${defender.name} for ${creatureDamage} damage!`,
+          style: 'combat',
+        });
 
         // NPCs don't die from creature attacks, they just get injured
         if (defender.combat.currentHp <= 0) {
           defender.combat.currentHp = 1;
-          if (socket && shouldNotify) {
-            sendNotification(socket, {
-              text: `${locationPrefix}${defender.name} is badly wounded but continues fighting!`,
-              style: 'combat',
-            });
-          }
+          notifyTownCombat(locationId, {
+            text: `${defender.name} is badly wounded but continues fighting!`,
+            style: 'combat',
+          });
         }
       }
     }

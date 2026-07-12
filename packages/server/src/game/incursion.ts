@@ -3,10 +3,11 @@
  * and NPCs (guards, shopkeepers, trainers, etc.) defending against them.
  */
 
-import type { World, Creature, OutputLine, NodeId, CreatureTier, Item } from '@solo-mud/shared';
+import type { World, Creature, OutputLine, NodeId, CreatureTier } from '@solo-mud/shared';
 import { createRng, CREATURE_TEMPLATES, getCombatNpcsAtLocation } from '@solo-mud/shared';
 import { handleCreatureDeath } from './ecosystem';
-import { generateWildernessLoot, WILDERNESS_LOOT_TABLES } from '../loot/wilderness-loot';
+import { generateCreatureLoot } from '../loot/creature-loot';
+import { selectNpcAction, applyNpcAction, tickNpcCooldowns, regenNpcMana } from './npc-combat';
 
 /** Result of an incursion event */
 export interface IncursionEvent {
@@ -190,13 +191,30 @@ export function processIncursionCombat(
       continue;
     }
 
-    // Each defender attacks
+    // Each defender uses AI to select and execute an action
     for (const defender of defenders) {
       if (!defender.combat) continue;
 
-      // Defender attacks creature
-      const damage = Math.floor(defender.combat.damage * (0.8 + rng.next() * 0.4));
-      creature.currentHp -= damage;
+      // Tick cooldowns and regen mana for this defender
+      defender.combat = tickNpcCooldowns(defender.combat, 10); // 10 second tick
+      defender.combat = regenNpcMana(defender.combat, 10);
+
+      // Use AI to select the best action
+      const action = selectNpcAction({
+        npc: defender,
+        combat: defender.combat,
+        target: creature,
+        allies: defenders.filter(d => d.id !== defender.id),
+        rng,
+      });
+
+      // Apply the action to the NPC's combat state (mana cost, cooldowns, buffs)
+      defender.combat = applyNpcAction(defender.combat, action, world.time.totalMinutes);
+
+      // Apply damage to creature
+      if (action.damage && action.damage > 0) {
+        creature.currentHp -= action.damage;
+      }
 
       const messages = INCURSION_MESSAGES[creature.templateId as keyof typeof INCURSION_MESSAGES];
 
@@ -206,7 +224,7 @@ export function processIncursionCombat(
         creatureId: incursion.creatureId,
         guardId: defender.id,
         messages: [
-          { text: `${defender.title ?? ''} ${defender.name} strikes the ${creature.name} for ${damage} damage!`.trim(), style: 'combat' },
+          { text: action.message, style: 'combat' },
         ],
       });
 
@@ -286,11 +304,8 @@ export function processIncursionCombat(
       const tier: CreatureTier = creature.level <= 3 ? 'common' : creature.level <= 6 ? 'dangerous' : 'apex';
 
       // Generate loot for incursion raiders (wolves, goblins, bandits)
-      let lootItems: Item[] = [];
       const lootRng = createRng(`incursion-loot-${Date.now()}`);
-      if (WILDERNESS_LOOT_TABLES[creature.templateId]) {
-        lootItems = generateWildernessLoot(creature.templateId, creature.level, lootRng);
-      }
+      const lootItems = generateCreatureLoot(creature.templateId, creature.level, lootRng);
       const loot: string[] = [];
       for (const item of lootItems) {
         world.items[item.id] = item;

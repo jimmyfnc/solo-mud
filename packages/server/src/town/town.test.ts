@@ -28,7 +28,7 @@ function createTestSession(): GameSession {
     id: 'test-session',
     playerId: 'test-player',
     player,
-    combatStats: { attackPower: 10, spellPower: 5, defense: 5, magicResist: 5, hitChance: 0.9, dodgeChance: 0.1, critChance: 0.1, critDamage: 1.5, attackSpeed: 2 },
+    combatStats: { attackPower: 10, spellPower: 5, defense: 5, fireResist: 5, iceResist: 5, lightningResist: 5, poisonResist: 5, hitChance: 0.9, dodgeChance: 0.1, critChance: 0.1, critDamage: 1.5, attackSpeed: 2 },
     world,
     createdAt: Date.now(),
     lastActivity: Date.now(),

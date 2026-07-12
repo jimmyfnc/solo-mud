@@ -25,7 +25,9 @@ export interface CharacterRecord {
   gameTime: number;
   equipment: Equipment;
   inventory: InventorySlot[];
-  /** Full Item objects owned by this character (equipment + inventory) */
+  /** Item IDs of keys stored on keyring */
+  keyring: string[];
+  /** Full Item objects owned by this character (equipment + inventory + keyring) */
   ownedItems: Record<string, Item>;
   /** Known spell IDs */
   knownSpells: string[];
@@ -73,8 +75,8 @@ export function createCharacter(
       id, player_id, name, class, level, xp, copper, silver, gold,
       base_stats, current_hp, max_hp, current_mp, max_mp,
       world_seed, location_id, game_time,
-      equipment, inventory, owned_items, known_spells, created_at, last_played
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      equipment, inventory, keyring, owned_items, known_spells, created_at, last_played
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     id,
     playerId,
@@ -95,6 +97,7 @@ export function createCharacter(
     gameTime,
     JSON.stringify(player.equipment),
     JSON.stringify(player.inventory),
+    JSON.stringify(player.keyring ?? []),
     JSON.stringify(ownedItems),
     JSON.stringify(player.spells.known),
     now,
@@ -119,6 +122,7 @@ export function createCharacter(
     gameTime,
     equipment: player.equipment,
     inventory: player.inventory,
+    keyring: player.keyring ?? [],
     ownedItems,
     knownSpells: player.spells.known,
     createdAt: now,
@@ -165,13 +169,14 @@ export function findCharacterById(characterId: string): CharacterRecord | null {
       base_stats as baseStats, current_hp as currentHp, max_hp as maxHp,
       current_mp as currentMp, max_mp as maxMp,
       world_seed as worldSeed, location_id as locationId, game_time as gameTime,
-      equipment, inventory, owned_items as ownedItems, known_spells as knownSpells,
+      equipment, inventory, keyring, owned_items as ownedItems, known_spells as knownSpells,
       created_at as createdAt, last_played as lastPlayed
     FROM characters WHERE id = ?
-  `).get(characterId) as (Omit<CharacterRecord, 'baseStats' | 'equipment' | 'inventory' | 'ownedItems' | 'knownSpells' | 'currency'> & {
+  `).get(characterId) as (Omit<CharacterRecord, 'baseStats' | 'equipment' | 'inventory' | 'keyring' | 'ownedItems' | 'knownSpells' | 'currency'> & {
     baseStats: string;
     equipment: string;
     inventory: string;
+    keyring: string | null;
     ownedItems: string | null;
     knownSpells: string | null;
     copper: number;
@@ -188,6 +193,7 @@ export function findCharacterById(characterId: string): CharacterRecord | null {
     baseStats: JSON.parse(row.baseStats),
     equipment: JSON.parse(row.equipment),
     inventory: JSON.parse(row.inventory),
+    keyring: row.keyring ? JSON.parse(row.keyring) : [],
     ownedItems: row.ownedItems ? JSON.parse(row.ownedItems) : {},
     knownSpells: row.knownSpells ? JSON.parse(row.knownSpells) : [],
   };
@@ -205,13 +211,14 @@ export function findCharacterByName(playerId: string, name: string): CharacterRe
       base_stats as baseStats, current_hp as currentHp, max_hp as maxHp,
       current_mp as currentMp, max_mp as maxMp,
       world_seed as worldSeed, location_id as locationId, game_time as gameTime,
-      equipment, inventory, owned_items as ownedItems, known_spells as knownSpells,
+      equipment, inventory, keyring, owned_items as ownedItems, known_spells as knownSpells,
       created_at as createdAt, last_played as lastPlayed
     FROM characters WHERE player_id = ? AND name = ?
-  `).get(playerId, name) as (Omit<CharacterRecord, 'baseStats' | 'equipment' | 'inventory' | 'ownedItems' | 'knownSpells' | 'currency'> & {
+  `).get(playerId, name) as (Omit<CharacterRecord, 'baseStats' | 'equipment' | 'inventory' | 'keyring' | 'ownedItems' | 'knownSpells' | 'currency'> & {
     baseStats: string;
     equipment: string;
     inventory: string;
+    keyring: string | null;
     ownedItems: string | null;
     knownSpells: string | null;
     copper: number;
@@ -228,6 +235,7 @@ export function findCharacterByName(playerId: string, name: string): CharacterRe
     baseStats: JSON.parse(row.baseStats),
     equipment: JSON.parse(row.equipment),
     inventory: JSON.parse(row.inventory),
+    keyring: row.keyring ? JSON.parse(row.keyring) : [],
     ownedItems: row.ownedItems ? JSON.parse(row.ownedItems) : {},
     knownSpells: row.knownSpells ? JSON.parse(row.knownSpells) : [],
   };
@@ -250,6 +258,7 @@ export function updateCharacter(
     gameTime: number;
     equipment: Equipment;
     inventory: InventorySlot[];
+    keyring: string[];
     ownedItems: Record<string, Item>;
     knownSpells: string[];
   }>
@@ -309,6 +318,10 @@ export function updateCharacter(
   if (updates.ownedItems !== undefined) {
     setClauses.push('owned_items = ?');
     values.push(JSON.stringify(updates.ownedItems));
+  }
+  if (updates.keyring !== undefined) {
+    setClauses.push('keyring = ?');
+    values.push(JSON.stringify(updates.keyring));
   }
   if (updates.knownSpells !== undefined) {
     setClauses.push('known_spells = ?');

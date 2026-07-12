@@ -5,8 +5,8 @@
 import type { ClassName, BotPersonality, BotMemory, BotProfile, World, NamedBotDefinition, BotRelationship } from '@solo-mud/shared';
 import { CLASSES, xpForLevel, getStarterSpellId, generateStarterGear } from '@solo-mud/shared';
 import { calculateMaxHp, calculateMaxMp, calculateMaxCarryWeight } from '../character/player-factory';
-import { calculateCombatStats } from '../character/stats';
-import { generateWorld } from '../world/generate';
+import { computePlayerCombatStats } from '../character/stats';
+import { worldManager } from '../world/world-manager';
 import type { BotPlayer } from './bot-player';
 import type { BotSession } from './bot-session';
 
@@ -230,13 +230,14 @@ export function createBotPlayer(options: CreateBotPlayerOptions): BotPlayer {
 export function createBotSession(bot: BotPlayer, existingWorld?: World): BotSession {
   const now = Date.now();
 
-  // Generate world if not provided
-  const world = existingWorld ?? generateWorld({
-    seed: `bot-${bot.id}-${now}`,
-    nodeCount: 20,
-    extraEdges: 5,
-    lockedEdges: 2,
-  });
+  // Bots live in the shared authoritative world (override only in tests)
+  const world = existingWorld ?? worldManager.getWorld();
+
+  // Use the world's start location if bot's location doesn't exist
+  if (!world.locations[bot.locationId]) {
+    bot.locationId = world.startId;
+    bot.boundTownId = world.startId;
+  }
 
   // Generate starter gear and add to world/player
   const { items, equipmentIds, inventoryIds } = generateStarterGear(bot.class);
@@ -256,7 +257,7 @@ export function createBotSession(bot: BotPlayer, existingWorld?: World): BotSess
   }
 
   // Calculate combat stats
-  const combatStats = calculateCombatStats(bot.baseStats);
+  const combatStats = computePlayerCombatStats(bot, world.items);
 
   return {
     id: bot.id,

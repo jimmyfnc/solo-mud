@@ -106,8 +106,8 @@ export interface ZoneActivityConfig {
 }
 
 export const ZONE_ACTIVITY: Record<string, ZoneActivityConfig> = {
-  social: { minInterval: 30000, maxInterval: 60000, enabled: true },
-  transitional: { minInterval: 90000, maxInterval: 120000, enabled: true },
-  quiet: { minInterval: 180000, maxInterval: 300000, enabled: true },
+  social: { minInterval: 15000, maxInterval: 30000, enabled: true },       // 15-30s (more active)
+  transitional: { minInterval: 30000, maxInterval: 60000, enabled: true }, // 30-60s (more active)
+  quiet: { minInterval: 60000, maxInterval: 120000, enabled: true },       // 60-120s (more active)
   dungeon: { minInterval: 0, maxInterval: 0, enabled: false },
 };

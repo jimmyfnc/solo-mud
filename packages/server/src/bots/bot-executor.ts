@@ -40,6 +40,7 @@
  */
 
 import type { BotSession } from './bot-session';
+import { getTotalCopper } from '@solo-mud/shared';
 import { getNextAction, completeAction } from './goap/planner';
 import { getActionCommand } from './goap/actions';
 import {
@@ -49,6 +50,7 @@ import {
   generateLowHpCall,
   generateIdleChat,
 } from './conversation';
+import { getItemDisplayName, getOpenWorkOrders } from '../economy/economy-manager';
 
 /**
  * Minimum time between AI ticks in ms.
@@ -81,13 +83,53 @@ export interface TriggerContext {
 
 /** Get random exit from current location */
 function getRandomExit(session: BotSession): string | null {
-  const location = session.world.locations[session.player.locationId];
-  if (!location || !location.exits || location.exits.length === 0) {
+  const { world, player } = session;
+
+  // Get exit IDs for this location from adjacency list
+  const exitIds = world.adjacency[player.locationId];
+  if (!exitIds || exitIds.length === 0) {
     return null;
   }
 
-  const exit = location.exits[Math.floor(Math.random() * location.exits.length)];
-  return exit.direction;
+  // Get actual exit objects
+  const exits = exitIds
+    .map(id => world.exits[id])
+    .filter(exit => exit && exit.type !== 'locked');
+
+  if (exits.length === 0) {
+    return null;
+  }
+
+  const exit = exits[Math.floor(Math.random() * exits.length)];
+  if (!exit) return null;
+
+  // Prefix with "go" so named exits ("out", "inn", "passage") parse as
+  // movement — the parser only accepts bare compass words.
+  return `go ${exit.label}`;
+}
+
+function getStepToward(session: BotSession, destinationId: string): string | null {
+  const { world, player } = session;
+  if (player.locationId === destinationId) return null;
+  const queue: Array<{ locationId: string; firstExitId?: string }> = [{ locationId: player.locationId }];
+  const visited = new Set([player.locationId]);
+
+  while (queue.length > 0) {
+    const current = queue.shift()!;
+    for (const exitId of world.adjacency[current.locationId] ?? []) {
+      const exit = world.exits[exitId];
+      if (!exit || exit.type === 'locked' || exit.requirement) continue;
+      if (visited.has(exit.to)) continue;
+      const firstExitId = current.firstExitId ?? exit.id;
+      if (exit.to === destinationId) {
+        const firstExit = world.exits[firstExitId];
+        return firstExit ? `go ${firstExit.label}` : null;
+      }
+      visited.add(exit.to);
+      queue.push({ locationId: exit.to, firstExitId });
+    }
+  }
+  return null;
 }
 
 export class BotExecutor {
@@ -99,6 +141,52 @@ export class BotExecutor {
     const bot = session.player;
     const now = Date.now();
     return now - bot.lastAiTick >= MIN_TICK_INTERVAL;
+  }
+
+  getEconomyCommand(session: BotSession): string | null {
+    const bot = session.player;
+    if (bot.botProfile.personality.greed < 55) return null;
+    const order = getOpenWorkOrders(session.world)[0];
+    if (!order) return null;
+
+    const materialName = getItemDisplayName(order.materialBaseId);
+    const carried = bot.inventory.some(slot =>
+      session.world.items[slot.itemId]?.baseId === order.materialBaseId
+    );
+    if (carried) {
+      const merchantLocation = session.world.npcs[order.merchantId]?.locationId;
+      if (!merchantLocation) return null;
+      return bot.locationId === merchantLocation
+        ? `turnin ${materialName}`
+        : getStepToward(session, merchantLocation);
+    }
+
+    const node = Object.values(session.world.economy?.resourceNodes ?? {}).find(candidate =>
+      candidate.materialBaseId === order.materialBaseId && candidate.quantity > 0
+    );
+    if (!node) return null;
+
+    if (node.requiredToolTag) {
+      const hasTool = bot.inventory.some(slot =>
+        session.world.items[slot.itemId]?.tags.includes(node.requiredToolTag!)
+      ) || Object.values(bot.equipment).some(itemId =>
+        itemId ? session.world.items[itemId]?.tags.includes(node.requiredToolTag!) : false
+      );
+      if (!hasTool) {
+        const toolMerchantId = node.requiredToolTag === 'pickaxe' ? 'npc_thom' : 'npc_kira';
+        const toolBaseId = node.requiredToolTag === 'pickaxe' ? 'mining_pick' : 'iron_axe';
+        const toolMerchantLocation = session.world.npcs[toolMerchantId]?.locationId;
+        if (!toolMerchantLocation) return null;
+        return bot.locationId === toolMerchantLocation
+          ? `buy ${getItemDisplayName(toolBaseId)}`
+          : getStepToward(session, toolMerchantLocation);
+      }
+    }
+
+    if (bot.locationId === node.locationId) {
+      return `${node.gatherVerb} ${materialName}`;
+    }
+    return getStepToward(session, node.locationId);
   }
 
   /** Get the next command for a bot to execute */
@@ -133,11 +221,25 @@ export class BotExecutor {
       }
     }
 
+    // For carouse: buy ale → drink ale → lament being broke
+    if (actionId === 'carouse') {
+      const world = session.world;
+      const hasAle = bot.inventory.some(slot => world.items[slot.itemId]?.baseId === 'ale');
+      if (hasAle) {
+        context.subcommand = 'drink ale';
+      } else if (getTotalCopper(bot.currency) >= 2) {
+        context.subcommand = 'buy ale';
+      } else {
+        context.subcommand = 'say Another round! ...ah, forget it, no coin left.';
+      }
+    }
+
     // For say action, pick a catchphrase
     if (actionId === 'say') {
       const catchphrases = bot.botProfile.personality.catchphrases;
-      if (catchphrases.length > 0) {
-        context.message = catchphrases[Math.floor(Math.random() * catchphrases.length)];
+      const phrase = catchphrases[Math.floor(Math.random() * catchphrases.length)];
+      if (phrase) {
+        context.message = phrase;
       }
     }
 

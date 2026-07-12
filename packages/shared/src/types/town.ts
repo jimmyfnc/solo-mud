@@ -4,6 +4,25 @@
 
 import type { NodeId, TimeOfDay } from './world';
 import type { NPCSimulation } from './simulation';
+import type { ClassName, StatusEffect } from './character';
+
+/** AI priority for NPC combat behavior */
+export type NpcAiPriority = 'defensive' | 'aggressive' | 'support';
+
+/** Full NPC combat stats (for combat-capable NPCs like guards, trainers) */
+export interface NpcCombatStats {
+  level: number;
+  maxHp: number;
+  currentHp: number;
+  maxMp: number;
+  currentMp: number;
+  damage: number; // Base damage for auto-attacks
+  class: ClassName;
+  knownSpells: string[];
+  abilityCooldowns: Record<string, number>;
+  activeBuffs: StatusEffect[];
+  aiPriority: NpcAiPriority;
+}
 
 /** Special action that a dialogue option can trigger */
 export type DialogueAction = 'heal' | 'train' | 'rest' | 'teach_track' | 'teach_trap' | 'skills_list';
@@ -40,6 +59,12 @@ export interface ShopInventory {
   items: ShopItem[];
   buyMultiplier: number;
   sellMultiplier: number;
+  /** Copper available for buying items and fulfilling work orders. */
+  cash?: number;
+  /** Production inputs held by this merchant, keyed by item baseId. */
+  materials?: Record<string, number>;
+  /** Next game-minute each recipe may complete. */
+  productionReadyAt?: Record<string, number>;
 }
 
 /** Schedule entry for time-based NPC location */
@@ -71,15 +96,15 @@ export interface NPC {
   role?: NpcRole;
   /** Time-based schedule (overrides locationId if present) */
   schedule?: NpcSchedule;
-  /** For guards: combat stats */
-  combat?: {
-    level: number;
-    maxHp: number;
-    currentHp: number;
-    damage: number;
-  };
+  /** Full combat stats for combat-capable NPCs (guards, trainers, priests) */
+  combat?: NpcCombatStats;
   /** Class this NPC can train (for trainers) */
   trainsClass?: string;
+  /**
+   * If set, this trainer only teaches these spell ids (a subset of the
+   * class's spells). Unset = teaches the full class progression.
+   */
+  teachableSpells?: string[];
 }
 
 /** Tutorial progress tracker */

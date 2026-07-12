@@ -10,7 +10,12 @@
     "lint": "pnpm -r run lint"
   },
   "devDependencies": {
-    "typescript": "^5.3.3"
+    "@eslint/js": "^9.39.4",
+    "eslint": "^9.39.4",
+    "eslint-plugin-react-hooks": "^5.2.0",
+    "globals": "^16.5.0",
+    "typescript": "^5.3.3",
+    "typescript-eslint": "^8.63.0"
   },
   "engines": {
     "node": ">=20.0.0"

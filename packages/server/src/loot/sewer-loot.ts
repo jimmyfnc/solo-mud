@@ -59,8 +59,8 @@ export const SEWER_ITEM_TEMPLATES: Record<string, ItemTemplate> = {
     allowedAffixes: [],
   },
   // Uncommon drops
-  'sewer-rusty-key': {
-    id: 'sewer-rusty-key',
+  'sewer_rusty_key': {
+    id: 'sewer_rusty_key',
     name: 'Rusty Key',
     tags: ['key', 'sewer', 'quest'],
     baseValue: 0,
@@ -109,6 +109,22 @@ export const SEWER_ITEM_TEMPLATES: Record<string, ItemTemplate> = {
     levelRange: [5, 10],
     allowedAffixes: [],
   },
+  'rat-kings-mantle': {
+    id: 'rat-kings-mantle',
+    name: "Rat King's Mantle",
+    tags: ['armor', 'chest', 'cloth', 'unique'],
+    baseValue: 80,
+    levelRange: [5, 10],
+    allowedAffixes: ['int-bonus', 'wis-bonus'],
+  },
+  'rat-kings-treads': {
+    id: 'rat-kings-treads',
+    name: "Rat King's Treads",
+    tags: ['armor', 'feet', 'leather', 'unique'],
+    baseValue: 60,
+    levelRange: [5, 10],
+    allowedAffixes: ['swift', 'dex-bonus'],
+  },
 };
 
 // ============ Loot Tables ============
@@ -141,11 +157,11 @@ export const LARGE_RAT_LOOT_TABLE: LootTable = {
     { templateId: 'tattered-leather', weight: 10, minRarity: 'common', maxRarity: 'uncommon' },
     { templateId: 'minor-health-potion', weight: 10, minRarity: 'common', maxRarity: 'common' },
     { templateId: 'copper-coin', weight: 15, minRarity: 'junk', maxRarity: 'common' },
-    { templateId: 'sewer-rusty-key', weight: 5, minRarity: 'uncommon', maxRarity: 'uncommon' },
+    { templateId: 'sewer_rusty_key', weight: 5, minRarity: 'uncommon', maxRarity: 'uncommon' },
   ],
 };
 
-/** King Rat loot (guaranteed unique weapon) */
+/** King Rat loot (guaranteed unique drops) */
 export const KING_RAT_LOOT_TABLE: LootTable = {
   id: 'king_rat',
   dropChance: 1.0, // Always drops
@@ -153,6 +169,8 @@ export const KING_RAT_LOOT_TABLE: LootTable = {
   maxItems: 5,
   entries: [
     { templateId: 'rat-kings-fang', weight: 100, minRarity: 'rare', maxRarity: 'rare' },
+    { templateId: 'rat-kings-mantle', weight: 80, minRarity: 'rare', maxRarity: 'rare' },
+    { templateId: 'rat-kings-treads', weight: 80, minRarity: 'rare', maxRarity: 'rare' },
     { templateId: 'rat-kings-crown', weight: 50, minRarity: 'uncommon', maxRarity: 'uncommon' },
     { templateId: 'rat-fang', weight: 30, minRarity: 'common', maxRarity: 'uncommon' },
     { templateId: 'minor-health-potion', weight: 20, minRarity: 'common', maxRarity: 'uncommon' },

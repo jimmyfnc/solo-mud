@@ -140,12 +140,22 @@ export function generateStarterGear(className: ClassName): {
 
 /** Base damage for weapons by baseId */
 export const WEAPON_DAMAGE: Record<string, { min: number; max: number }> = {
-  // Starter weapons
+  // Starter weapons (level 1)
   rusty_sword: { min: 3, max: 6 },
   chipped_dagger: { min: 2, max: 5 },
   gnarled_staff: { min: 2, max: 4 },
   wooden_mace: { min: 3, max: 5 },
   shortbow: { min: 2, max: 6 },
+  // Shop weapons (level 5+)
+  iron_sword: { min: 5, max: 10 },
+  iron_axe: { min: 6, max: 11 },
+  // Sewer dungeon drops
+  'rat-kings-fang': { min: 6, max: 12 }, // Level 6 boss unique dagger
+  // Whispering Woods boss uniques (L10-18 epics)
+  flickerblade: { min: 8, max: 15 },
+  bloodcap_cleaver: { min: 10, max: 18 },
+  venomweave_wand: { min: 7, max: 16 },
+  bramblewood_bow: { min: 8, max: 17 },
   // Default for unknown
   default: { min: 1, max: 3 },
 };

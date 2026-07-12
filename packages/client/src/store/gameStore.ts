@@ -11,6 +11,7 @@ import type {
 
 // Local storage keys
 const PLAYER_ID_KEY = 'solo-mud-player-id';
+const LAST_CHARACTER_KEY = 'solo-mud-last-character';
 
 interface GameState {
   // Connection state
@@ -57,6 +58,9 @@ interface GameState {
   setTime: (time: GameTime) => void;
   setWeather: (weather: WeatherState) => void;
   getStoredPlayerId: () => string | null;
+  getLastCharacterId: () => string | null;
+  setLastCharacterId: (id: string) => void;
+  clearLastCharacterId: () => void;
   enterGame: () => void;
 
   // Legacy compatibility (maps to new state)
@@ -153,6 +157,18 @@ export const useGameStore = create<GameState>((set, get) => ({
   setWeather: (weather) => set({ weather }),
 
   getStoredPlayerId: () => getStoredPlayerId(),
+
+  getLastCharacterId: () => {
+    try { return localStorage.getItem(LAST_CHARACTER_KEY); } catch { return null; }
+  },
+
+  setLastCharacterId: (id) => {
+    try { localStorage.setItem(LAST_CHARACTER_KEY, id); } catch { /* ignore */ }
+  },
+
+  clearLastCharacterId: () => {
+    try { localStorage.removeItem(LAST_CHARACTER_KEY); } catch { /* ignore */ }
+  },
 
   // Called when entering the game (character selected/created)
   enterGame: () =>

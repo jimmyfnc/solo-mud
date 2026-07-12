@@ -3,7 +3,7 @@
  * Covers registry functions, prop helpers, and interaction handlers.
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect } from 'vitest';
 import {
   PROP_REGISTRY,
   LOCATION_PROPS,
@@ -16,7 +16,7 @@ import {
   SQUARE_PROPS,
   TEMPLE_PROPS,
 } from '@solo-mud/shared';
-import type { PropDefinition, Player, World } from '@solo-mud/shared';
+import type { Player, World } from '@solo-mud/shared';
 import {
   isPropOnCooldown,
   setPropCooldown,

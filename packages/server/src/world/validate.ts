@@ -63,6 +63,10 @@ function canTraverse(exit: { type: string; requirement?: Requirement }, inventor
     if (exit.requirement.kind === 'item') {
       return inventory.has(exit.requirement.value as string);
     }
+    if (exit.requirement.kind === 'puzzle') {
+      // Puzzles are always solvable in place — no item needed
+      return true;
+    }
     // TODO: Handle level/quest requirements
   }
   return false;

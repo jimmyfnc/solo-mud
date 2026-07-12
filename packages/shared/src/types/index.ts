@@ -5,3 +5,4 @@ export * from './town';
 export * from './simulation';
 export * from './spells';
 export * from './bot';
+export * from './economy';

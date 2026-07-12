@@ -26,7 +26,7 @@ export function createApp(options: AppOptions = {}): FastifyInstance {
   app.get('/api', async () => {
     return {
       name: 'Solo MUD Server',
-      version: '0.1.0',
+      version: process.env['npm_package_version'] ?? '0.2.0',
       endpoints: {
         health: '/health',
         socket: '/socket.io',

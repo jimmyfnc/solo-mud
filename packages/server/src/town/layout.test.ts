@@ -11,6 +11,8 @@ import {
   EASTHOLLOW_EXITS,
   EASTHOLLOW_ADJACENCY,
   EASTHOLLOW_NPCS,
+  WOODS_EXITS,
+  WOODS_LOCATIONS,
   TOWN_INN,
   TOWN_SQUARE,
   TOWN_TRAINING,
@@ -45,10 +47,10 @@ describe('Town Layout Validation', () => {
       }
     });
 
-    it('should have 12 town locations and 9 sewer locations', () => {
+    it('should have 13 town locations and 9 sewer locations', () => {
       const townLocs = Object.keys(EASTHOLLOW_LOCATIONS).filter(id => id.startsWith('town_'));
       const sewerLocs = Object.keys(EASTHOLLOW_LOCATIONS).filter(id => id.startsWith('sewer_'));
-      expect(townLocs.length).toBe(12);
+      expect(townLocs.length).toBe(13);
       expect(sewerLocs.length).toBe(9);
     });
 
@@ -182,16 +184,20 @@ describe('Town Layout Validation', () => {
     });
 
     it('all exits should have valid from/to locations', () => {
+      // Combine Easthollow and Woods locations since exits can cross zones
+      const allLocations = { ...EASTHOLLOW_LOCATIONS, ...WOODS_LOCATIONS };
       for (const [exitId, exit] of Object.entries(EASTHOLLOW_EXITS)) {
-        expect(EASTHOLLOW_LOCATIONS[exit.from], `Exit ${exitId} has invalid 'from' location: ${exit.from}`).toBeDefined();
-        expect(EASTHOLLOW_LOCATIONS[exit.to], `Exit ${exitId} has invalid 'to' location: ${exit.to}`).toBeDefined();
+        expect(allLocations[exit.from], `Exit ${exitId} has invalid 'from' location: ${exit.from}`).toBeDefined();
+        expect(allLocations[exit.to], `Exit ${exitId} has invalid 'to' location: ${exit.to}`).toBeDefined();
       }
     });
 
     it('bidirectional exits should exist for all connections', () => {
       // For each exit A->B, there should be a return exit B->A
+      // Check both Easthollow and Woods exits since they connect
+      const allExits = { ...EASTHOLLOW_EXITS, ...WOODS_EXITS };
       for (const [_exitId, exit] of Object.entries(EASTHOLLOW_EXITS)) {
-        const returnExits = Object.values(EASTHOLLOW_EXITS).filter(
+        const returnExits = Object.values(allExits).filter(
           e => e.from === exit.to && e.to === exit.from
         );
         expect(returnExits.length, `No return exit from ${exit.to} to ${exit.from}`).toBeGreaterThan(0);

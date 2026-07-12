@@ -2,7 +2,7 @@
  * BotManager - manages bot population and lifecycle.
  */
 
-import type { BotSpawnConfig, ClassName } from '@solo-mud/shared';
+import type { BotSpawnConfig, BotZonePopulation, ClassName } from '@solo-mud/shared';
 import type { BotSession } from './bot-session';
 import { createBotPlayer, createBotSession, createNamedBot } from './bot-factory';
 import { NAMED_BOTS } from './roster/named-bots';
@@ -11,12 +11,12 @@ import { BotExecutor } from './bot-executor';
 /** Command handler type for executing bot commands */
 export type CommandHandler = (session: BotSession, command: string) => Promise<void>;
 
-/** Random bot names for generic bots */
-const BOT_NAMES = [
-  'Wanderer', 'Traveler', 'Adventurer', 'Seeker', 'Explorer',
-  'Drifter', 'Nomad', 'Pilgrim', 'Wayfarer', 'Rover',
-  'Scout', 'Hunter', 'Tracker', 'Ranger', 'Guardian',
-  'Sentinel', 'Watcher', 'Keeper', 'Defender', 'Protector',
+/** Regular human names for generic bots (red shirts) */
+const FIRST_NAMES = [
+  'Bob', 'Janet', 'Steve', 'Carol', 'Dave', 'Linda', 'Mike', 'Susan',
+  'Tom', 'Nancy', 'Jim', 'Betty', 'Frank', 'Helen', 'Gary', 'Debbie',
+  'Ron', 'Barbara', 'Dan', 'Sharon', 'Bill', 'Karen', 'Joe', 'Donna',
+  'Rick', 'Patricia', 'Larry', 'Diane', 'Jeff', 'Margaret',
 ];
 
 /** Classes for random selection */
@@ -109,18 +109,46 @@ export class BotManager {
     return this.bots.get(botId);
   }
 
+  /** Which hub each generic bot belongs to */
+  private botZones: Map<string, string> = new Map();
+
   /** Remove a bot by ID */
   removeBot(botId: string): boolean {
+    this.botZones.delete(botId);
     return this.bots.delete(botId);
   }
 
-  /** Spawn a generic bot */
-  spawnGenericBot(): BotSession {
+  /**
+   * The population zones in effect. When config.zones is absent, the legacy
+   * top-level fields act as a single default zone.
+   */
+  getZones(): BotZonePopulation[] {
+    if (this.config.zones && this.config.zones.length > 0) {
+      return this.config.zones;
+    }
+    return [{
+      id: 'default',
+      spawnLocations: this.config.spawnLocations,
+      minPopulation: this.config.minPopulation,
+      maxPopulation: this.config.maxPopulation,
+      levelRange: this.config.levelRange,
+    }];
+  }
+
+  /** Generic bots currently assigned to a hub */
+  private botsInZone(zoneId: string): BotSession[] {
+    return Array.from(this.bots.values())
+      .filter(session => this.botZones.get(session.id) === zoneId);
+  }
+
+  /** Spawn a generic bot (into a specific hub, or the first configured one) */
+  spawnGenericBot(zone?: BotZonePopulation): BotSession {
+    const z = zone ?? this.getZones()[0]!;
     const id = `bot_generic_${this.nextBotId++}`;
-    const name = `${pickRandom(BOT_NAMES)} #${this.nextBotId}`;
+    const name = pickRandom(FIRST_NAMES);
     const className = pickRandom(CLASSES);
-    const level = randomInRange(this.config.levelRange[0], this.config.levelRange[1]);
-    const startLocation = pickRandom(this.config.spawnLocations);
+    const level = randomInRange(z.levelRange[0], z.levelRange[1]);
+    const startLocation = pickRandom(z.spawnLocations);
 
     const bot = createBotPlayer({
       id,
@@ -133,39 +161,46 @@ export class BotManager {
 
     const session = createBotSession(bot);
     this.bots.set(id, session);
+    this.botZones.set(id, z.id);
 
     return session;
   }
 
   /** Check if generic bot count exceeds max population */
   isOverPopulated(): boolean {
-    return this.bots.size > this.config.maxPopulation;
+    return this.getZones().some(z => this.botsInZone(z.id).length > z.maxPopulation);
   }
 
   /** Get idle generic bots sorted by idle time (longest idle first) */
-  private getIdleBots(): BotSession[] {
-    return Array.from(this.bots.values())
+  private getIdleBots(zoneId?: string): BotSession[] {
+    const pool = zoneId ? this.botsInZone(zoneId) : Array.from(this.bots.values());
+    return pool
       .filter(bot => !bot.player.inCombat)
       .sort((a, b) => a.lastActivity - b.lastActivity);
   }
 
-  /** Maintain population at configured levels */
+  /**
+   * Maintain population per hub: small wilderness towns stay scarce, big
+   * hubs stay busy — each within its own [min, max] band.
+   */
   maintainPopulation(): void {
-    // Spawn bots until we reach minimum
-    while (this.bots.size < this.config.minPopulation) {
-      this.spawnGenericBot();
-    }
-
-    // Despawn bots if over maximum
-    while (this.bots.size > this.config.maxPopulation) {
-      const idleBots = this.getIdleBots();
-      if (idleBots.length === 0) {
-        // All bots are in combat, can't despawn any
-        break;
+    for (const zone of this.getZones()) {
+      // Spawn until this hub reaches its minimum
+      while (this.botsInZone(zone.id).length < zone.minPopulation) {
+        this.spawnGenericBot(zone);
       }
-      // Remove the most idle bot (first in the sorted list)
-      const botToRemove = idleBots[0]!;
-      this.bots.delete(botToRemove.id);
+
+      // Despawn idle bots if this hub is over its maximum
+      while (this.botsInZone(zone.id).length > zone.maxPopulation) {
+        const idleBots = this.getIdleBots(zone.id);
+        if (idleBots.length === 0) {
+          // All in combat, can't despawn any
+          break;
+        }
+        const botToRemove = idleBots[0]!;
+        this.bots.delete(botToRemove.id);
+        this.botZones.delete(botToRemove.id);
+      }
     }
   }
 
@@ -200,7 +235,7 @@ export class BotManager {
           session.player.currentMp = session.player.maxMp;
 
           // Move to a spawn location
-          session.player.currentLocation = pickRandom(this.config.spawnLocations);
+          session.player.locationId = pickRandom(this.config.spawnLocations);
 
           respawnedNames.push(session.player.name);
         }
@@ -261,8 +296,8 @@ export class BotManager {
         continue;
       }
 
-      // Get next command
-      const command = this.executor.getNextCommand(session);
+      // Economy labor takes precedence for suitable bots while work is available.
+      const command = this.executor.getEconomyCommand(session) ?? this.executor.getNextCommand(session);
       if (!command) {
         continue;
       }

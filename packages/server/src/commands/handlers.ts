@@ -6,18 +6,29 @@ import type { OutputLine, Exit, Item, EquipSlot, Creature, Corpse, Container, Lo
 import { createRng, getWeaponDamage, CREATURE_TEMPLATES, TUTORIAL_STEPS, SHOP_ITEM_TEMPLATES, CONSUMABLE_EFFECTS, getDrunkLevel, checkDrunkStumble, getRandomStumbleText, xpForLevel, calculateXpGain, CLASSES, getNpcsAtLocation, getNpcActivity, SEWER_VALVE_ROOM, SPELLS, getClassSpells, getLearnableSpells, getFutureSpells, formatCurrency, addCopper, canAfford, spendCurrency, formatPrice, getCombatNpcsAtLocation, findPropByName, TAG_INTERACTIONS } from '@solo-mud/shared';
 import { handleCreatureDeath } from '../game/ecosystem';
 import { handlePlayerDeath } from '../game/game-loop';
-import { generateSewerLoot, SEWER_LOOT_TABLES, SEWER_ITEM_TEMPLATES } from '../loot/sewer-loot';
-import { generateWildernessLoot, WILDERNESS_LOOT_TABLES } from '../loot/wilderness-loot';
+import { SEWER_ITEM_TEMPLATES } from '../loot/sewer-loot';
+import { generateCreatureLoot } from '../loot/creature-loot';
 import { generateNpcLoot, calculateNpcGoldDrop } from '../loot/npc-loot';
 import { addAssaultBounty, addMurderBounty, getInfamyDisplay } from '../game/infamy';
 import { selectNpcAction, applyNpcAction } from '../game/npc-combat';
+import { findPuzzleAt, targetsPuzzle, handlePuzzleUse, isPuzzleSolved, resetPuzzlesOnMove } from '../game/puzzles';
+import { applyOnHitEffects, applyOnKillEffects, getHealingBoost } from '../combat/item-effects';
+import { absorbPlayerDamage } from '../character/buffs';
+import { simulationEventBus } from '../npc/simulation/events';
+import { getResistanceForDamageType, applyResistance } from '@solo-mud/shared';
 import { sessionManager, type GameSession } from '../game/session';
 import { getBotManager } from '../game/game-loop';
 import { parseCommand, getDirection, isPropVerb, type ParsedCommand } from './parser';
 import { isPropOnCooldown, setPropCooldown, formatCooldownMessage, applyPropRewards, pickRandomText, getRemainingCooldown } from './prop-helpers';
 import { generateDescription, generateExitProse, generateCreatureProse, type Biome, type Weather, type ExitInfo } from '../descriptions';
 import { adminHandlers } from './admin-handlers';
-import { calculateCombatStats, getEffectiveStats, getLevelHitModifier, getLevelDamageModifier } from '../character';
+import { adminCommandsEnabled } from '../config/runtime';
+import { computePlayerCombatStats, getEffectiveStats, getLevelHitModifier, getLevelDamageModifier, recalculatePlayerStats } from '../character';
+import { addToInventory } from '../game/inventory';
+import { getResourceNodesAt, recordMerchantPurchase, canMerchantAfford, recordMerchantAcquisition } from '../economy/economy-manager';
+import { handleGatherResource, handleTurnIn, handleWorkOrders } from './economy-handlers';
+
+export { addToInventory, isStackable } from '../game/inventory';
 
 export interface CommandContext {
   session: GameSession;
@@ -74,6 +85,13 @@ const handlers: Record<string, CommandHandler> = {
   list: handleList,
   buy: handleBuy,
   sell: handleSell,
+  orders: handleWorkOrders,
+  workorders: handleWorkOrders,
+  turnin: handleTurnIn,
+  gather: handleGatherResource,
+  mine: handleGatherResource,
+  harvest: handleGatherResource,
+  chop: handleGatherResource,
   map: handleMap,
   cast: handleCast,
   c: handleCast,
@@ -118,6 +136,9 @@ export function executeCommand(session: GameSession, input: string): CommandResu
 
   // Admin commands: prefixed with "/"
   if (trimmed.startsWith('/')) {
+    if (!adminCommandsEnabled()) {
+      return { output: [{ text: 'Admin commands are disabled on this server.', style: 'error' }] };
+    }
     const adminInput = trimmed.slice(1);
     const adminParsed = parseCommand(adminInput);
 
@@ -186,83 +207,6 @@ function hasLight(player: Player, gameTime: number): boolean {
   return false;
 }
 
-/**
- * Tags that indicate an item should stack in inventory.
- * Equipment (weapons, armor) and unique/quest items should NOT stack.
- */
-const STACKABLE_TAGS = new Set([
-  'consumable', 'potion', 'food', 'drink', 'beverage',
-  'material', 'crafting',
-  'currency', 'junk', 'trophy',
-  'healing', 'container',
-]);
-
-/**
- * Tags that explicitly prevent stacking even if other stackable tags are present.
- */
-const NON_STACKABLE_TAGS = new Set([
-  'weapon', 'armor', 'unique', 'key', 'quest',
-  'head', 'chest', 'legs', 'feet', 'hands', 'ring', 'neck',
-]);
-
-/**
- * Check if an item should stack with others of the same baseId.
- */
-export function isStackable(item: Item): boolean {
-  // If any non-stackable tag is present, don't stack
-  if (item.tags.some(tag => NON_STACKABLE_TAGS.has(tag.toLowerCase()))) {
-    return false;
-  }
-  // If any stackable tag is present, stack it
-  return item.tags.some(tag => STACKABLE_TAGS.has(tag.toLowerCase()));
-}
-
-/**
- * Add an item to the player's inventory with proper stacking.
- * For stackable items (consumables, materials), stacks by baseId.
- * For non-stackable items (weapons, armor), creates a new slot.
- * Returns true if added successfully, false if inventory is full.
- */
-export function addToInventory(player: Player, world: GameSession['world'], itemId: string): boolean {
-  const item = world.items[itemId];
-  if (!item) return false;
-
-  // Keys go to keyring automatically (no duplicates by baseId)
-  if (item.tags.includes('key')) {
-    // Check if we already have this key type on the keyring
-    const alreadyHasKey = player.keyring.some(keyId => {
-      const existingKey = world.items[keyId];
-      return existingKey && existingKey.baseId === item.baseId;
-    });
-    if (alreadyHasKey) {
-      return false; // Don't pick up duplicate keys
-    }
-    player.keyring.push(itemId);
-    return true;
-  }
-
-  if (isStackable(item)) {
-    // For stackable items, find existing stack by baseId
-    const existingSlot = player.inventory.find(slot => {
-      const slotItem = world.items[slot.itemId];
-      return slotItem && slotItem.baseId === item.baseId;
-    });
-
-    if (existingSlot) {
-      existingSlot.quantity++;
-      return true;
-    }
-  }
-
-  // No existing stack or non-stackable: create new slot if space available
-  if (player.inventory.length >= player.inventorySlots) {
-    return false;
-  }
-
-  player.inventory.push({ itemId, quantity: 1 });
-  return true;
-}
-
 function generateRoomOutput(
   session: GameSession,
   detailed: boolean,
@@ -292,6 +236,14 @@ function generateRoomOutput(
   // Location name (without debug ID)
   output.push({ text: `[ ${location.name} ]`, style: 'system' });
 
+  const resourceNodes = getResourceNodesAt(world, location.id);
+  if (resourceNodes.length > 0) {
+    const resources = resourceNodes.map(node =>
+      `${node.name}${node.quantity <= 0 ? ' (depleted)' : ''}`
+    );
+    output.push({ text: `Resources: ${resources.join(', ')}`, style: 'normal' });
+  }
+
   // If dark without light, show limited information
   if (isDarkHere) {
     output.push({ text: 'It is pitch dark. You cannot see anything.', style: 'combat' });
@@ -312,21 +264,27 @@ function generateRoomOutput(
     return output;
   }
 
-  // Get dominant biome
-  const biomeEntries = Object.entries(location.biome) as [string, number][];
-  biomeEntries.sort((a, b) => (b[1] ?? 0) - (a[1] ?? 0));
-  const dominantBiome = (biomeEntries[0]?.[0] ?? 'plains') as Biome;
+  // Use location's description if provided, otherwise generate one from biome
+  let description: string;
+  if (location.description) {
+    description = location.description;
+  } else {
+    // Get dominant biome
+    const biomeEntries = Object.entries(location.biome) as [string, number][];
+    biomeEntries.sort((a, b) => (b[1] ?? 0) - (a[1] ?? 0));
+    const dominantBiome = (biomeEntries[0]?.[0] ?? 'plains') as Biome;
 
-  // Generate dynamic description using template system
-  const descriptionCtx = {
-    biome: dominantBiome,
-    timeOfDay: world.time.timeOfDay,
-    weather: world.weather.type as Weather,
-    visitCount: location.visitState.visitCount,
-    props: location.props,
-    rng: createRng(`${world.seed}-${location.id}-${location.visitState.visitCount}`),
-  };
-  const description = generateDescription(descriptionCtx);
+    // Generate dynamic description using template system
+    const descriptionCtx = {
+      biome: dominantBiome,
+      timeOfDay: world.time.timeOfDay,
+      weather: world.weather.type as Weather,
+      visitCount: location.visitState.visitCount,
+      props: location.props,
+      rng: createRng(`${world.seed}-${location.id}-${location.visitState.visitCount}`),
+    };
+    description = generateDescription(descriptionCtx);
+  }
   output.push({ text: description, style: 'normal' });
 
   // Get exits for prose generation
@@ -413,14 +371,54 @@ function generateRoomOutput(
   // NPCs (using schedule-aware lookup)
   const timeOfDay = world.time.timeOfDay;
   const npcs = getNpcsAtLocation(world.npcs, location.npcs ?? [], location.id, timeOfDay);
-  if (npcs.length > 0) {
-    const npcList = npcs.map(n => {
-      const title = n.title ? `${n.title} ` : '';
-      const activity = getNpcActivity(n, timeOfDay);
-      const activityText = activity ? ` (${activity})` : '';
-      return `${title}${n.name}${activityText}`;
-    }).join(', ');
-    output.push({ text: `People: ${npcList}`, style: 'normal' });
+
+  // Bots at this location (both named and generic)
+  const botManager = getBotManager();
+  const botsHere = (botManager?.getAllBots() ?? [])
+    .filter(bs => bs.player.locationId === player.locationId);
+
+  // Combine NPCs and bots into "People:" section
+  const peopleList: string[] = [];
+
+  // Add NPCs
+  for (const n of npcs) {
+    const title = n.title ? `${n.title} ` : '';
+    const activity = getNpcActivity(n, timeOfDay);
+    const activityText = activity ? ` (${activity})` : '';
+    peopleList.push(`${title}${n.name}${activityText}`);
+  }
+
+  // Add bots (adventurers) - just show name
+  for (const botSession of botsHere) {
+    const bot = botSession.player;
+    peopleList.push(bot.name);
+  }
+
+  // Display people, breaking into multiple lines if too long (max ~70 chars per line)
+  if (peopleList.length > 0) {
+    const maxLineLength = 70;
+    let currentLine = 'People: ';
+    const lines: string[] = [];
+
+    for (let i = 0; i < peopleList.length; i++) {
+      const person = peopleList[i]!;
+      const separator = i === 0 ? '' : ', ';
+      const addition = separator + person;
+
+      if (currentLine.length + addition.length > maxLineLength && currentLine !== 'People: ') {
+        lines.push(currentLine);
+        currentLine = '  ' + person; // Indent continuation lines
+      } else {
+        currentLine += addition;
+      }
+    }
+    if (currentLine.length > 0) {
+      lines.push(currentLine);
+    }
+
+    for (const line of lines) {
+      output.push({ text: line, style: 'normal' });
+    }
   }
 
   // Detailed mode: show tactical breakdown (items, creature levels)
@@ -453,22 +451,12 @@ function generateRoomOutput(
       output.push({ text: `Corpses: ${corpseList}`, style: 'normal' });
     }
 
-    // Show other players at this location
+    // Show other real players at this location
     const otherPlayers = sessionManager.getAllSessions()
       .filter(s => s.player.locationId === player.locationId && s.id !== session.id);
 
     for (const other of otherPlayers) {
-      output.push({ text: `**${other.player.name}** (Level ${other.player.level} ${other.player.class}) is here.`, style: 'normal' });
-    }
-
-    // Show bots at this location
-    const botManager = getBotManager();
-    const botsHere = (botManager?.getAllBotSessions() || [])
-      .filter(bs => bs.player.locationId === player.locationId);
-
-    for (const botSession of botsHere) {
-      const bot = botSession.player;
-      output.push({ text: `**${bot.name}** (Level ${bot.level} ${bot.class}) is here.`, style: 'normal' });
+      output.push({ text: `${other.player.name} the ${other.player.class} (Level ${other.player.level}) is here.`, style: 'normal' });
     }
   }
 
@@ -691,6 +679,22 @@ function handleUse(ctx: CommandContext): CommandResult {
   }
 
   let targetLower = parsed.target.toLowerCase();
+
+  // Data-driven sequence puzzles (rune gates, levers, etc.)
+  // Match against the full argument string — parsed.target is only the first word
+  const puzzleHere = findPuzzleAt(world, player.locationId);
+  const puzzleTarget = (parsed.args.join(' ') || targetLower).toLowerCase();
+  if (puzzleHere && targetsPuzzle(puzzleHere, puzzleTarget)) {
+    return { output: handlePuzzleUse(session, puzzleHere, puzzleTarget) };
+  }
+
+  // Sanctum altar: assemble the Dryad's Heart Key from the five fragments
+  if (
+    player.locationId === 'woods_sanctum_altar' &&
+    ['altar', 'fragment', 'slot', 'key'].some(w => puzzleTarget.includes(w))
+  ) {
+    return handleSanctumAltar(session);
+  }
 
   // Check if target is a slot reference (q1-q4)
   const slotMatch = targetLower.match(/^q([1-4])$/);
@@ -1205,6 +1209,99 @@ function handleSpecialItem(ctx: CommandContext, item: Item, flavorText: string):
   return { output };
 }
 
+/** Spells that apply damage-over-time after their initial hit */
+const DOT_SPELLS = new Set(['rend', 'serpent_sting', 'blizzard', 'consecrate']);
+
+/** Attach a damage-over-time effect to a creature (refreshes if reapplied) */
+function attachDot(creature: Creature, spell: Spell, sourcePlayerId: string): void {
+  creature.dots = (creature.dots ?? []).filter(d => d.spellId !== spell.id);
+  creature.dots.push({
+    spellId: spell.id,
+    name: spell.name,
+    damage: spell.baseValue,
+    expiresAt: Date.now() + spell.duration * 1000,
+    sourcePlayerId,
+  });
+}
+
+/** The five fragments that forge the Dryad's Heart Key at the Sanctum altar */
+const SANCTUM_FRAGMENTS: { baseId: string; name: string }[] = [
+  { baseId: 'fragment_innocence', name: 'Fragment of Innocence' },
+  { baseId: 'fragment_fury', name: 'Fragment of Fury' },
+  { baseId: 'fragment_spirit', name: 'Fragment of Spirit' },
+  { baseId: 'fragment_hunger', name: 'Fragment of Hunger' },
+  { baseId: 'fragment_growth', name: 'Fragment of Growth' },
+];
+
+/**
+ * Handle the Sanctum altar: with all five fragments in hand, forge the
+ * Dryad's Heart Key that opens the root gate to the Matriarch.
+ */
+function handleSanctumAltar(session: GameSession): CommandResult {
+  const { world, player } = session;
+
+  const hasKey =
+    player.inventory.some(slot => world.items[slot.itemId]?.baseId === 'dryads_heart_key') ||
+    (player.keyring ?? []).some(keyId => world.items[keyId]?.baseId === 'dryads_heart_key');
+  if (hasKey) {
+    return {
+      output: [
+        { text: 'The five slots in the altar sit empty — the Dryad\'s Heart Key already thrums at your side.', style: 'normal' },
+        { text: 'The gate of twisted roots to the south stands ready to part before it.', style: 'system' },
+      ],
+    };
+  }
+
+  // Which fragments does the player carry?
+  const missing = SANCTUM_FRAGMENTS.filter(f =>
+    !player.inventory.some(slot => world.items[slot.itemId]?.baseId === f.baseId)
+  );
+
+  if (missing.length > 0) {
+    return {
+      output: [
+        { text: 'Five slots are carved into the ancient altar, each shaped for a shard of crystallized memory.', style: 'normal' },
+        { text: `You are missing: ${missing.map(f => f.name).join(', ')}.`, style: 'system' },
+        { text: 'The five guardians of these woods each carry a fragment.', style: 'system' },
+      ],
+    };
+  }
+
+  // Consume one of each fragment
+  for (const f of SANCTUM_FRAGMENTS) {
+    const idx = player.inventory.findIndex(slot => world.items[slot.itemId]?.baseId === f.baseId);
+    const slot = player.inventory[idx]!;
+    if (slot.quantity > 1) {
+      slot.quantity--;
+    } else {
+      player.inventory.splice(idx, 1);
+    }
+  }
+
+  // Forge the key
+  const keyId = `dryads_heart_key_${Date.now()}`;
+  world.items[keyId] = {
+    id: keyId,
+    baseId: 'dryads_heart_key',
+    name: "Dryad's Heart Key",
+    tags: ['quest', 'key'],
+    rarity: 'epic',
+    affixes: [],
+  };
+  addToInventory(player, world, keyId);
+
+  return {
+    output: [
+      { text: 'One by one, you press the fragments into the carved slots.', style: 'normal' },
+      { text: 'They flare — innocence, fury, spirit, hunger, growth — and melt together into a single shape.', style: 'normal' },
+      { text: '', style: 'normal' },
+      { text: '✨ The Dryad\'s Heart Key is forged. It thrums with the forest\'s heartbeat.', style: 'success' },
+      { text: 'To the south, the gate of twisted roots shudders and begins to loosen.', style: 'system' },
+    ],
+    updatePlayer: true,
+  };
+}
+
 /** Puzzle hints mapped to their solutions */
 const PUZZLE_HINTS: { hint: string; solution: string[] }[] = [
   { hint: 'Blood before sky, sky before earth', solution: ['red', 'blue', 'green'] },
@@ -1355,6 +1452,9 @@ function handleHelp(_ctx: CommandContext): CommandResult {
       { text: '  list - View shop inventory', style: 'normal' },
       { text: '  buy <item> - Purchase from shop', style: 'normal' },
       { text: '  sell <item> - Sell to shop', style: 'normal' },
+      { text: '  orders - Read open work orders in town square', style: 'normal' },
+      { text: '  gather/mine/harvest/chop <resource> - Collect crafting materials', style: 'normal' },
+      { text: '  turnin <material> [quantity] - Fulfill a merchant work order', style: 'normal' },
       { text: '  tutorial - Check tutorial progress', style: 'normal' },
       { text: '  map - Show a mini-map of nearby areas', style: 'normal' },
       { text: '  quit (logout, exit) - Save and return to character select', style: 'normal' },
@@ -2258,6 +2358,19 @@ function handleMove(ctx: CommandContext): CommandResult {
       return {
         output: [{ text: `The way ${direction} is locked. You need ${keyName}.`, style: 'error' }],
       };
+    } else if (exit.requirement?.kind === 'puzzle') {
+      // Data-driven sequence puzzle gate — per-player solved state
+      const puzzleId = exit.requirement.value as string;
+      if (!isPuzzleSolved(session, puzzleId)) {
+        const puzzle = world.puzzles?.[puzzleId];
+        return {
+          output: [{
+            text: puzzle?.gateLockedText ?? `The way ${direction} is sealed by some mechanism.`,
+            style: 'error',
+          }],
+        };
+      }
+      // Puzzle solved — can pass through
     } else if (exit.requirement?.kind === 'quest') {
       // Check if player has completed the required quest/puzzle
       const questFlag = exit.requirement.value as string;
@@ -2274,10 +2387,21 @@ function handleMove(ctx: CommandContext): CommandResult {
         }
         // Gate is open - can pass through
       } else if (!player.questFlags.includes(questFlag)) {
-        // Other quests use permanent flags
-        return {
-          output: [{ text: `The way ${direction} is blocked. Something must be done to open it.`, style: 'error' }],
-        };
+        // A carried token whose baseId matches the flag also satisfies the
+        // gate (e.g. the Dryad's Heart Key) — tokens persist across sessions.
+        // Keys live on the keyring; other tokens in the inventory.
+        const hasToken =
+          player.inventory.some(slot => world.items[slot.itemId]?.baseId === questFlag) ||
+          (player.keyring ?? []).some(keyId => world.items[keyId]?.baseId === questFlag);
+        if (!hasToken) {
+          return {
+            output: [{
+              text: exit.requiresItemMessage
+                ?? `The way ${direction} is blocked. Something must be done to open it.`,
+              style: 'error',
+            }],
+          };
+        }
       }
       // Quest/puzzle complete - can pass through
     }
@@ -2299,8 +2423,8 @@ function handleMove(ctx: CommandContext): CommandResult {
     // Player has the item - they can pass (item is not consumed, it's reusable)
   }
 
-  // Check for leaving town through gate (before moving)
-  if (player.locationId === 'town_gate' && exit.to === 'loc_0') {
+  // Check for leaving town into the wilderness (before moving)
+  if (exit.to.startsWith('wild_') && !player.locationId.startsWith('wild_')) {
     if (!player.tutorial.completedSteps.includes('leave_town')) {
       player.tutorial.completedSteps.push('leave_town');
 
@@ -2358,6 +2482,9 @@ function handleMove(ctx: CommandContext): CommandResult {
     session.puzzleSolution = undefined;
     session.valveSequence = undefined;
   }
+
+  // Reset data-driven puzzles that reset on leaving their area
+  resetPuzzlesOnMove(session, world, exit.from, exit.to);
 
   // Brief description of new location (not detailed)
   const roomOutput = generateRoomOutput(session, false, true);
@@ -2669,6 +2796,10 @@ function handleEquip(ctx: CommandContext): CommandResult {
   // Equip the item
   player.equipment[targetSlot] = inventorySlot.itemId;
 
+  // Refresh derived stats (max HP/MP, carry weight) and combat stats
+  recalculatePlayerStats(player, world.items);
+  session.combatStats = computePlayerCombatStats(player, world.items);
+
   const output: OutputLine[] = [
     { text: `You equip the ${item.name}.`, style: 'success' },
   ];
@@ -2755,6 +2886,10 @@ function handleUnequip(ctx: CommandContext): CommandResult {
       output: [{ text: 'Your inventory is full. Drop something first.', style: 'error' }],
     };
   }
+
+  // Refresh derived stats (max HP/MP, carry weight) and combat stats
+  recalculatePlayerStats(player, world.items);
+  session.combatStats = computePlayerCombatStats(player, world.items);
 
   return {
     output: [{ text: `You unequip the ${item.name}.`, style: 'normal' }],
@@ -2857,10 +2992,14 @@ function handleAttack(ctx: CommandContext): CommandResult {
 
     const ambushRng = createRng(`${world.seed}-ambush-${Date.now()}`);
     const minDmg = Math.max(1, targetCreature.level);
-    const maxDmg = Math.max(2, targetCreature.level * 2 + 2);
+    const maxDmg = Math.max(2, Math.floor(targetCreature.level * 1.6) + 2);
     const baseDmg = minDmg + Math.floor(ambushRng.next() * (maxDmg - minDmg + 1));
-    const ambushDmg = Math.floor(baseDmg * 1.5);
+    let ambushDmg = Math.floor(baseDmg * 1.5);
 
+    // Absorb shields soak ambush damage too
+    const ambushShielded = absorbPlayerDamage(player, ambushDmg);
+    output.push(...ambushShielded.messages);
+    ambushDmg = ambushShielded.taken;
     player.currentHp -= ambushDmg;
 
     output.push({
@@ -2897,13 +3036,8 @@ function handleAttack(ctx: CommandContext): CommandResult {
       const tier = template?.tier ?? 'common';
 
       // Generate loot for trap kills
-      let lootItems: Item[] = [];
       const lootRng = createRng(`trap-loot-${Date.now()}`);
-      if (SEWER_LOOT_TABLES[targetCreature.templateId]) {
-        lootItems = generateSewerLoot(targetCreature.templateId, targetCreature.level, lootRng);
-      } else if (WILDERNESS_LOOT_TABLES[targetCreature.templateId]) {
-        lootItems = generateWildernessLoot(targetCreature.templateId, targetCreature.level, lootRng);
-      }
+      const lootItems = generateCreatureLoot(targetCreature.templateId, targetCreature.level, lootRng);
       const loot: string[] = [];
       for (const item of lootItems) {
         world.items[item.id] = item;
@@ -2913,7 +3047,7 @@ function handleAttack(ctx: CommandContext): CommandResult {
       handleCreatureDeath(world, targetCreature, 'player', tier, loot);
 
       // XP reward (with level difference penalty)
-      const xpGain = calculateXpGain(player.level, targetCreature.level);
+      const xpGain = calculateXpGain(player.level, targetCreature.level, tier, targetCreature.behavior);
       player.xp += xpGain;
       output.push({ text: `You gain ${xpGain} XP.`, style: 'success' });
 
@@ -2929,6 +3063,7 @@ function handleAttack(ctx: CommandContext): CommandResult {
           text: `★ LEVEL UP! You are now level ${player.level}!`,
           style: 'success',
         });
+        session.combatStats = computePlayerCombatStats(player, world.items);
       }
 
       output.push({
@@ -2960,7 +3095,7 @@ function handleAttack(ctx: CommandContext): CommandResult {
 
   // Level-based hit modifier (harder to hit higher level enemies)
   const levelHitMod = getLevelHitModifier(player.level, targetCreature.level);
-  const baseHitChance = 0.85 + (combatStats.hitChance / 100) * 0.15;
+  const baseHitChance = Math.min(0.99, 0.85 + combatStats.hitChance * 0.1);
   const hitChance = baseHitChance * levelHitMod;
   const playerHits = rng.next() < hitChance;
 
@@ -2973,7 +3108,7 @@ function handleAttack(ctx: CommandContext): CommandResult {
   } else {
     const baseDamage = weaponDamage.min + Math.floor(rng.next() * (weaponDamage.max - weaponDamage.min + 1));
     const attackBonus = Math.floor(combatStats.attackPower / 10);
-    const critChance = combatStats.critChance / 100;
+    const critChance = combatStats.critChance;
     const isCrit = rng.next() < critChance;
 
     // Level-based damage modifier (deal less damage to higher level enemies)
@@ -2993,6 +3128,12 @@ function handleAttack(ctx: CommandContext): CommandResult {
         text: `You hit the ${targetCreature.name} for ${damage} damage.`,
         style: 'combat',
       });
+    }
+
+    // Weapon proc effects (boss uniques etc.)
+    if (targetCreature.templateId !== 'training_dummy') {
+      const procs = applyOnHitEffects(player, world, targetCreature, damage, isCrit, () => rng.next());
+      output.push(...procs.output);
     }
 
     // Training dummy: reset HP, don't kill
@@ -3027,7 +3168,9 @@ function handleAttack(ctx: CommandContext): CommandResult {
 
   // --- First combat round: creature counter-attacks ---
   if (targetCreature.currentHp > 0 && targetCreature.behavior !== 'passive') {
-    const creatureHits = rng.next() < 0.75;
+    // Player dodge (DEX + buffs) reduces creature accuracy
+    const counterDodge = Math.min(0.5, combatStats.dodgeChance);
+    const creatureHits = rng.next() < 0.75 * (1 - counterDodge);
 
     if (!creatureHits) {
       output.push({
@@ -3036,11 +3179,18 @@ function handleAttack(ctx: CommandContext): CommandResult {
       });
     } else {
       const minDmg = Math.max(1, targetCreature.level);
-      const maxDmg = Math.max(2, targetCreature.level * 2 + 2);
-      let creatureDamage = minDmg + Math.floor(rng.next() * (maxDmg - minDmg + 1));
-      const defenseReduction = Math.floor(combatStats.defense / 20);
-      creatureDamage = Math.max(1, creatureDamage - defenseReduction);
+      const maxDmg = Math.max(2, Math.floor(targetCreature.level * 1.6) + 2);
+      const rawCreatureDamage = minDmg + Math.floor(rng.next() * (maxDmg - minDmg + 1));
 
+      // Same mitigation as the combat tick: percentage-based resistance
+      const counterTemplate = CREATURE_TEMPLATES[targetCreature.templateId];
+      const counterResist = getResistanceForDamageType(session.combatStats, counterTemplate?.damageType ?? 'physical');
+      let creatureDamage = applyResistance(rawCreatureDamage, counterResist);
+
+      // Absorb shields soak damage first
+      const shielded = absorbPlayerDamage(player, creatureDamage);
+      output.push(...shielded.messages);
+      creatureDamage = shielded.taken;
       player.currentHp -= creatureDamage;
 
       output.push({
@@ -3087,17 +3237,22 @@ function handleCreatureKill(
     text: `The ${creature.name} collapses and dies!`,
     style: 'success',
   });
+  output.push(...applyOnKillEffects(player, world, () => rng.next()));
+
+  // Boss kills become major gossip
+  if (creature.isBossAnchor) {
+    simulationEventBus.emit('boss_defeated', {
+      bossName: creature.name,
+      playerName: player.name,
+      locationId: creature.locationId,
+    });
+  }
 
   const template = CREATURE_TEMPLATES[creature.templateId];
   const tier = template?.tier ?? 'common';
 
   // Generate loot
-  let lootItems: Item[] = [];
-  if (SEWER_LOOT_TABLES[creature.templateId]) {
-    lootItems = generateSewerLoot(creature.templateId, creature.level, rng);
-  } else if (WILDERNESS_LOOT_TABLES[creature.templateId]) {
-    lootItems = generateWildernessLoot(creature.templateId, creature.level, rng);
-  }
+  const lootItems = generateCreatureLoot(creature.templateId, creature.level, rng);
   const loot: string[] = [];
   for (const item of lootItems) {
     world.items[item.id] = item;
@@ -3106,12 +3261,8 @@ function handleCreatureKill(
 
   handleCreatureDeath(world, creature, 'player', tier, loot);
 
-  // XP reward
-  const tierMultiplier = tier === 'apex' ? 3.0 : tier === 'dangerous' ? 2.0 : tier === 'common' ? 1.5 : 1.0;
-  const behaviorMultiplier = creature.behavior === 'aggressive' ? 1.2 :
-                              creature.behavior === 'territorial' ? 1.1 : 0.5;
-  const baseXp = creature.level * 10;
-  const xpReward = Math.floor(baseXp * tierMultiplier * behaviorMultiplier);
+  // XP reward (one formula: tier × behavior × gray-mob penalty)
+  const xpReward = calculateXpGain(player.level, creature.level, tier, creature.behavior);
 
   const copperReward = creature.behavior === 'passive' ? 0 : Math.floor(creature.level * (2 + rng.next() * 3));
 
@@ -3147,6 +3298,7 @@ function handleCreatureKill(
     output.push({ text: '║  Health & Mana fully restored!'.padEnd(40) + '║', style: 'normal' });
     output.push({ text: `║  Next level: ${player.xpToNextLevel} XP`.padEnd(40) + '║', style: 'normal' });
     output.push({ text: '╚═══════════════════════════════════════╝', style: 'success' });
+    session.combatStats = computePlayerCombatStats(player, world.items);
   }
 
   output.push({
@@ -3237,7 +3389,7 @@ function handleNpcAttack(ctx: CommandContext, npc: NPC): CommandResult {
   // Player attacks NPC
   const baseDamage = weaponDamage.min + Math.floor(rng.next() * (weaponDamage.max - weaponDamage.min + 1));
   const attackBonus = Math.floor(combatStats.attackPower / 10);
-  const critChance = combatStats.critChance / 100;
+  const critChance = combatStats.critChance;
   const isCrit = rng.next() < critChance;
   const damage = (baseDamage + attackBonus) * (isCrit ? 2 : 1);
 
@@ -3425,6 +3577,7 @@ function handleNpcDeath(
       text: `★ LEVEL UP! You are now level ${player.level}!`,
       style: 'success',
     });
+    session.combatStats = computePlayerCombatStats(player, world.items);
   }
 
   if (loot.length > 0) {
@@ -4140,10 +4293,16 @@ function handleCast(ctx: CommandContext): CommandResult {
       if (!targetCreature) break;
 
       // Calculate damage: baseValue + (spellPower * scaling)
-      const spellPower = player.baseStats.int * 2; // Simple spell power calculation
+      // spellPower comes from combat stats — includes level bonus + gear affixes
+      const spellPower = session.combatStats.spellPower;
       const damage = Math.floor(spell.baseValue + (spellPower * spell.spellPowerScaling));
 
       targetCreature.currentHp -= damage;
+
+      // DOT damage spells (Blizzard, Consecrate) keep ticking
+      if (DOT_SPELLS.has(spell.id) && targetCreature.currentHp > 0) {
+        attachDot(targetCreature, spell, player.id);
+      }
 
       output.push({
         text: `You cast ${spell.name} on ${targetCreature.name} for ${damage} ${spell.damageType ?? 'magic'} damage!`,
@@ -4156,13 +4315,8 @@ function handleCast(ctx: CommandContext): CommandResult {
         const tier = template?.tier ?? 'common';
 
         // Generate loot
-        let lootItems: Item[] = [];
         const rng = createRng(Date.now().toString());
-        if (SEWER_LOOT_TABLES[targetCreature.templateId]) {
-          lootItems = generateSewerLoot(targetCreature.templateId, targetCreature.level, rng);
-        } else if (WILDERNESS_LOOT_TABLES[targetCreature.templateId]) {
-          lootItems = generateWildernessLoot(targetCreature.templateId, targetCreature.level, rng);
-        }
+        const lootItems = generateCreatureLoot(targetCreature.templateId, targetCreature.level, rng);
 
         // Add items to world
         const loot: string[] = [];
@@ -4175,8 +4329,8 @@ function handleCast(ctx: CommandContext): CommandResult {
         output.push({ text: `${targetCreature.name} has been slain!`, style: 'success' });
 
         // Give XP (with level difference penalty)
-        const xpGain = calculateXpGain(player.level, targetCreature.level);
-        const xpResult = grantXp(player, xpGain);
+        const xpGain = calculateXpGain(player.level, targetCreature.level, tier, targetCreature.behavior);
+        const xpResult = grantXp(session, xpGain);
         output.push(...xpResult);
 
         // Note about looting
@@ -4201,35 +4355,50 @@ function handleCast(ctx: CommandContext): CommandResult {
     }
 
     case 'heal': {
-      const spellPower = player.baseStats.wis * 2;
-      const healing = Math.floor(spell.baseValue + (spellPower * spell.spellPowerScaling));
+      // Heals scale on effective WIS (level bonus + gear), not base stats
+      const spellPower = getEffectiveStats(player, world.items).wis * 2;
+      // Passive healing boost from equipped items (e.g. Totem of the Wild Spirit)
+      const healingBoost = getHealingBoost(player, world);
+      const healing = Math.floor((spell.baseValue + (spellPower * spell.spellPowerScaling)) * healingBoost);
       const oldHp = player.currentHp;
       player.currentHp = Math.min(player.maxHp, player.currentHp + healing);
       const actualHealing = player.currentHp - oldHp;
 
       output.push({
-        text: `You cast ${spell.name} and restore ${actualHealing} health!`,
+        text: `You cast ${spell.name} and restore ${actualHealing} health!${healingBoost > 1 ? ' Your totem hums with wild spirits.' : ''}`,
         style: 'success'
       });
       break;
     }
 
     case 'buff': {
-      // Create a status effect
+      // Absorb shields carry a damage pool; other buffs modify combat stats
+      const isShield = spell.id === 'ice_barrier' || spell.id === 'holy_shield';
+      const shieldPool = isShield
+        ? Math.floor(spell.baseValue + session.combatStats.spellPower * spell.spellPowerScaling)
+        : undefined;
+
       const effect: StatusEffect = {
         id: spell.id,
         name: spell.name,
         duration: spell.duration,
         stacks: 1,
         appliedAt: world.time.totalMinutes,
+        expiresAt: spell.duration > 0 ? Date.now() + spell.duration * 1000 : undefined,
+        magnitude: shieldPool,
       };
 
       // Remove existing effect of same type
       player.statusEffects = player.statusEffects.filter(e => e.id !== spell.id);
       player.statusEffects.push(effect);
 
+      // Buffs change combat stats immediately
+      session.combatStats = computePlayerCombatStats(player, world.items);
+
       output.push({
-        text: `You cast ${spell.name}. Effect active for ${spell.duration} seconds.`,
+        text: isShield
+          ? `You cast ${spell.name}. A ward absorbs the next ${shieldPool} damage (${spell.duration}s).`
+          : `You cast ${spell.name}. Effect active for ${spell.duration} seconds.`,
         style: 'success'
       });
       break;
@@ -4238,8 +4407,7 @@ function handleCast(ctx: CommandContext): CommandResult {
     case 'debuff': {
       if (!targetCreature) break;
 
-      // For now, debuffs just deal initial damage (DoTs would need tick processing)
-      const spellPower = player.baseStats.int * 2;
+      const spellPower = session.combatStats.spellPower;
       const damage = Math.floor(spell.baseValue + (spellPower * spell.spellPowerScaling));
 
       targetCreature.currentHp -= damage;
@@ -4249,18 +4417,22 @@ function handleCast(ctx: CommandContext): CommandResult {
         style: 'combat'
       });
 
+      // DOT spells keep ticking after the initial hit
+      if (DOT_SPELLS.has(spell.id) && targetCreature.currentHp > 0) {
+        attachDot(targetCreature, spell, player.id);
+        output.push({
+          text: `${spell.name} continues to sear the ${targetCreature.name} (${spell.baseValue} damage per tick for ${spell.duration}s).`,
+          style: 'system',
+        });
+      }
+
       if (targetCreature.currentHp <= 0) {
         const template = CREATURE_TEMPLATES[targetCreature.templateId];
         const tier = template?.tier ?? 'common';
 
         // Generate loot
-        let lootItems: Item[] = [];
         const rng = createRng(Date.now().toString());
-        if (SEWER_LOOT_TABLES[targetCreature.templateId]) {
-          lootItems = generateSewerLoot(targetCreature.templateId, targetCreature.level, rng);
-        } else if (WILDERNESS_LOOT_TABLES[targetCreature.templateId]) {
-          lootItems = generateWildernessLoot(targetCreature.templateId, targetCreature.level, rng);
-        }
+        const lootItems = generateCreatureLoot(targetCreature.templateId, targetCreature.level, rng);
 
         // Add items to world
         const loot: string[] = [];
@@ -4273,8 +4445,8 @@ function handleCast(ctx: CommandContext): CommandResult {
         output.push({ text: `${targetCreature.name} has been slain!`, style: 'success' });
 
         // Give XP (with level difference penalty)
-        const xpGain = calculateXpGain(player.level, targetCreature.level);
-        const xpResult = grantXp(player, xpGain);
+        const xpGain = calculateXpGain(player.level, targetCreature.level, tier, targetCreature.behavior);
+        const xpResult = grantXp(session, xpGain);
         output.push(...xpResult);
 
         // Note about looting
@@ -4388,7 +4560,8 @@ function handleCast(ctx: CommandContext): CommandResult {
 /**
  * Grant XP to player and handle level ups.
  */
-function grantXp(player: any, xp: number): OutputLine[] {
+function grantXp(session: GameSession, xp: number): OutputLine[] {
+  const { player, world } = session;
   const output: OutputLine[] = [];
   player.xp += xp;
   output.push({ text: `You gain ${xp} experience!`, style: 'success' });
@@ -4418,6 +4591,7 @@ function grantXp(player: any, xp: number): OutputLine[] {
     output.push({ text: '║  Health and Mana fully restored!'.padEnd(40) + '║', style: 'normal' });
     output.push({ text: `║  Next level: ${player.xpToNextLevel} XP`.padEnd(40) + '║', style: 'normal' });
     output.push({ text: '╚════════════════════════════════════════╝', style: 'system' });
+    session.combatStats = computePlayerCombatStats(player, world.items);
   }
 
   return output;
@@ -4510,9 +4684,12 @@ function handleLearn(ctx: CommandContext): CommandResult {
     };
   }
 
-  // Find the spell by name
+  // Find the spell by name (respecting this trainer's teachable list, if set)
   const spellName = parsed.target.toLowerCase();
-  const learnable = getLearnableSpells(player.class, player.level, player.spells.known);
+  let learnable = getLearnableSpells(player.class, player.level, player.spells.known);
+  if (npc.teachableSpells) {
+    learnable = learnable.filter(s => npc.teachableSpells!.includes(s.id));
+  }
   const spell = learnable.find(s =>
     s.id === spellName || s.name.toLowerCase().includes(spellName)
   );
@@ -4782,7 +4959,11 @@ function handleSay(ctx: CommandContext): CommandResult {
   if (topic.action === 'skills_list') {
     const trainableClass = npc.trainsClass;
     if (trainableClass && player.class === trainableClass) {
-      const allSpells = getClassSpells(player.class).sort((a, b) => a.levelRequired - b.levelRequired);
+      // Respect this trainer's teachable list, if set
+      let allSpells = getClassSpells(player.class).sort((a, b) => a.levelRequired - b.levelRequired);
+      if (npc.teachableSpells) {
+        allSpells = allSpells.filter(s => npc.teachableSpells!.includes(s.id));
+      }
       const knownSpellIds = player.spells.known;
 
       // Build numbered list of learnable spells
@@ -4947,6 +5128,7 @@ function handleList(ctx: CommandContext): CommandResult {
   }
 
   output.push({ text: '', style: 'normal' });
+  output.push({ text: `Merchant funds: ${formatPrice(merchant.shop.cash ?? 0)}`, style: 'system' });
   output.push({ text: `Your currency: ${formatCurrency(player.currency)}`, style: 'system' });
   output.push({ text: "Use 'buy <item>' to purchase.", style: 'system' });
 
@@ -5058,6 +5240,7 @@ function handleBuy(ctx: CommandContext): CommandResult {
       output: [{ text: 'Your inventory is full.', style: 'error' }],
     };
   }
+  recordMerchantPurchase(world, merchant.id, price);
 
   return {
     output: [{ text: `You buy ${newItem.name} for ${formatPrice(price)}.`, style: 'success' }],
@@ -5168,8 +5351,15 @@ function handleSell(ctx: CommandContext): CommandResult {
   const quantityToSell = sellAll ? slot.quantity : 1;
   const totalPrice = sellPrice * quantityToSell;
 
+  if (!canMerchantAfford(world, merchant.id, totalPrice)) {
+    return {
+      output: [{ text: `${merchant.name} cannot afford that purchase right now.`, style: 'normal' }],
+    };
+  }
+
   // Complete sale
   player.currency = addCopper(player.currency, totalPrice);
+  recordMerchantAcquisition(world, merchant.id, item.baseId, quantityToSell, totalPrice);
 
   if (quantityToSell >= slot.quantity) {
     // Remove entire slot
@@ -5243,6 +5433,7 @@ function handleStatus(ctx: CommandContext): CommandResult {
       style: 'success',
     });
     output.push({ text: '', style: 'normal' });
+    session.combatStats = computePlayerCombatStats(player, world.items);
   }
 
   // Header
@@ -5290,8 +5481,8 @@ function handleStatus(ctx: CommandContext): CommandResult {
   output.push({ text: `║    STR: ${strDisplay}  DEX: ${dexDisplay}  CON: ${conDisplay}`.padEnd(40) + '║', style: 'normal' });
   output.push({ text: `║    INT: ${intDisplay}  WIS: ${wisDisplay}`.padEnd(40) + '║', style: 'normal' });
 
-  // Combat Stats (derived from effective stats)
-  const combat = calculateCombatStats(effectiveStats);
+  // Combat Stats (effective stats + equipment defense/resistances)
+  const combat = computePlayerCombatStats(player, world.items);
   output.push({ text: '╠════════════════════════════════════════╣', style: 'system' });
   output.push({ text: '║  Combat Stats:'.padEnd(40) + '║', style: 'system' });
   output.push({ text: `║    Attack: ${combat.attackPower}  Spell Pwr: ${combat.spellPower}`.padEnd(40) + '║', style: 'normal' });
@@ -5780,6 +5971,10 @@ export function handlePropInteraction(ctx: CommandContext): CommandResult | null
   // If an item is specified, handle item+prop interaction
   if (item) {
     return handleItemPropInteraction(ctx, prop, verb, item);
+  }
+
+  if (prop.id === 'square_notice_board' && verb === 'read') {
+    return handleWorkOrders(ctx);
   }
 
   // Handle default interaction

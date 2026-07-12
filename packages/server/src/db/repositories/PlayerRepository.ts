@@ -16,8 +16,14 @@ export interface PlayerRecord {
 export function createPlayer(): PlayerRecord {
   const db = getDatabase();
   const id = generateId();
-  const playerCode = generatePlayerCode();
   const createdAt = Date.now();
+  let playerCode = generatePlayerCode();
+
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    const collision = db.prepare(`SELECT 1 FROM players WHERE player_code = ?`).get(playerCode);
+    if (!collision) break;
+    playerCode = generatePlayerCode();
+  }
 
   db.prepare(`
     INSERT INTO players (id, player_code, created_at)

@@ -57,11 +57,14 @@ describe('calculateCombatStats', () => {
       dex: 10,
       con: 10,
       int: 10,
-      wis: 14,
+      wis: 15,
     });
 
-    // Magic resist = WIS + 5
-    expect(stats.magicResist).toBe(19);
+    // Elemental resist = floor(WIS / 3) = 5
+    expect(stats.fireResist).toBe(5);
+    expect(stats.iceResist).toBe(5);
+    expect(stats.lightningResist).toBe(5);
+    expect(stats.poisonResist).toBe(5);
   });
 
   it('should calculate hit chance from DEX', () => {

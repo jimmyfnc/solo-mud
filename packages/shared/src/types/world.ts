@@ -15,8 +15,44 @@ export type EdgeType = 'open' | 'locked' | 'hidden' | 'hazard';
 
 /** Requirements to pass through an exit */
 export interface Requirement {
-  kind: 'item' | 'level' | 'quest';
+  kind: 'item' | 'level' | 'quest' | 'puzzle';
   value: string | number;
+}
+
+/** One interactable element of a sequence puzzle (a valve, rune, lever...) */
+export interface PuzzleElement {
+  /** Id used in the solution sequence */
+  id: string;
+  /** Player-visible name, matched against "use <target>" */
+  name: string;
+}
+
+/**
+ * A data-driven sequence puzzle: activate elements in the right order to
+ * open a gated exit. Puzzle progress is per-player (session state).
+ */
+export interface SequencePuzzle {
+  id: string;
+  /** Room where the puzzle elements are */
+  locationId: NodeId;
+  /** Word that identifies the puzzle in "use <target>" (e.g. 'valve', 'rune') */
+  keyword: string;
+  elements: PuzzleElement[];
+  /** Correct order of element ids */
+  solution: string[];
+  /** Shown when the player uses the keyword without a specific element */
+  prompt: string;
+  /** Inscription/clue shown with the prompt */
+  hint?: string;
+  /** Shown when an element is activated ({name} is replaced) */
+  activateText?: string;
+  solvedText: string;
+  failText: string;
+  alreadySolvedText: string;
+  /** Shown when trying the gated exit before solving */
+  gateLockedText: string;
+  /** If set, the puzzle resets when the player leaves rooms with this id prefix */
+  resetOnLeavePrefix?: string;
 }
 
 /** An exit connecting two locations */
@@ -57,11 +93,11 @@ export interface Location {
   /** Prose description of the location */
   description?: string;
   biome: BiomeWeights;
-  props?: string[]; // "altar", "campfire", "broken statue"
+  props: string[]; // "altar", "campfire", "broken statue"
   items: ItemId[];
-  enemies?: EnemyId[];
+  enemies: EnemyId[];
   creatures: CreatureId[]; // Creatures currently in this location
-  visitState?: VisitState;
+  visitState: VisitState;
   depth: number; // Distance from start (for difficulty scaling)
   /** If true, no combat allowed and no creature spawns */
   isSafeZone?: boolean;
@@ -87,6 +123,31 @@ export interface Affix {
 }
 
 /** A game item */
+/** When an item effect fires */
+export type ItemEffectTrigger = 'on_hit' | 'on_crit' | 'on_kill' | 'passive';
+
+/** What an item effect does */
+export type ItemEffectKind =
+  | 'heal_self'      // restore HP (amount = % of max HP)
+  | 'bonus_damage'   // extra damage on the hit (amount = % of hit damage)
+  | 'poison_burst'   // extra poison damage on the hit (amount = flat damage)
+  | 'root_target'    // roots the target in place (duration = seconds)
+  | 'healing_boost'; // passive: healing spells are stronger (amount = %)
+
+/** A special effect on an item (procs and passives) */
+export interface ItemEffect {
+  trigger: ItemEffectTrigger;
+  kind: ItemEffectKind;
+  /** Chance to fire, 0-1 (default 1) */
+  chance?: number;
+  /** Meaning depends on kind (percent or flat) */
+  amount?: number;
+  /** Seconds, for timed effects like roots */
+  duration?: number;
+  /** Shown to the player when the effect fires */
+  text?: string;
+}
+
 export interface Item {
   id: ItemId;
   baseId: string; // Template ID
@@ -96,6 +157,8 @@ export interface Item {
   affixes: Affix[];
   /** Base defense value for armor items (scaled by rarity) */
   baseDefense?: number;
+  /** Special proc/passive effects (boss uniques etc.) */
+  effects?: ItemEffect[];
 }
 
 // ============ Creature System ============
@@ -139,7 +202,7 @@ export interface Creature {
     expiresAt: number;
     /** Player ID who set the trap */
     trappedByPlayerId: string;
-    /** DOT damage per tick */
+    /** DOT damage per tick (0 = no DOT, e.g. weapon roots) */
     dotDamage: number;
     /** Next tick timestamp for DOT */
     nextDotTick: number;
@@ -147,7 +210,13 @@ export interface Creature {
     nextBreakAttempt: number;
     /** Ranger level (for break calculations) */
     rangerLevel: number;
+    /** What holds the creature: a ranger trap or an entangling root */
+    kind?: 'trap' | 'root';
   };
+  /** Hand-placed boss/lair guard — respawns slower, keeps its name and post */
+  isBossAnchor?: boolean;
+  /** Active damage-over-time effects (Rend, Serpent Sting...) */
+  dots?: CreatureDot[];
 
   // Prose description
   description: string; // e.g., "A grazing sheep pays you no mind."
@@ -208,12 +277,30 @@ export interface Container {
   lastOpened?: number; // Game time when last opened
 }
 
+/** A damage-over-time effect ticking on a creature */
+export interface CreatureDot {
+  spellId: string;
+  name: string;
+  /** Damage applied every combat tick */
+  damage: number;
+  /** Real timestamp (ms) when the effect ends */
+  expiresAt: number;
+  /** Player who applied it (gets kill credit and XP) */
+  sourcePlayerId: string;
+}
+
 /** Entry in the respawn queue */
 export interface RespawnEntry {
   templateId: string;
   spawnLocationId: NodeId;
   respawnAt: number;
   level: number; // Remember the creature's level
+  /** Display-name override (named bosses like 'Packleader') */
+  name?: string;
+  /** Mobility override (boss anchors stay put) */
+  mobility?: CreatureMobility;
+  /** Boss anchors respawn slowly and keep their flag */
+  isBossAnchor?: boolean;
 }
 
 /** Time of day for descriptions and NPC schedules */
@@ -251,6 +338,10 @@ export interface World {
   containers?: Record<string, Container>;
   respawnQueue: RespawnEntry[];
   npcs: Record<string, NPC>;
+  /** Data-driven sequence puzzles, keyed by puzzle id */
+  puzzles?: Record<string, SequencePuzzle>;
+  /** Shared merchant, work-order, and gathering state. */
+  economy?: import('./economy').EconomyState;
   time: GameTime;
   weather: WeatherState;
 }

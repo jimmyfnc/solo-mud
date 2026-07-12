@@ -1,4 +1,4 @@
-import type { Player, PropReward } from '@solo-mud/shared';
+import type { Item, Player, PropReward } from '@solo-mud/shared';
 
 /**
  * Check if a prop is on cooldown for a player
@@ -62,7 +62,7 @@ export function formatCooldownMessage(remainingMinutes: number): string {
 export function applyPropRewards(
   player: Player,
   rewards: PropReward | undefined,
-  world: { items: Record<string, any> }
+  world: { items: Record<string, Item> }
 ): string[] {
   if (!rewards) return [];
 

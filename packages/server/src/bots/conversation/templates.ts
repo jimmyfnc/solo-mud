@@ -262,7 +262,7 @@ export function generateSpeech(
 ): string {
   const styleTemplates = templates[style];
   const index = Math.floor(Math.random() * styleTemplates.length);
-  let text = styleTemplates[index];
+  let text = styleTemplates[index] ?? '';
 
   // Replace variables if provided
   if (variables) {

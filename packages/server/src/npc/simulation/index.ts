@@ -9,8 +9,12 @@ import { simulationEventBus, createHotTopic, SimulationEventBus } from './events
 export type ZoneType = 'social' | 'transitional' | 'quiet' | 'dungeon';
 
 export function getZoneType(locationId: string): ZoneType {
-  // Dungeon zones
-  if (locationId.startsWith('sewer_') || locationId.startsWith('loc_')) {
+  // Dungeon/wilderness zones (no ambient NPC simulation)
+  if (
+    locationId.startsWith('sewer_') ||
+    locationId.startsWith('loc_') ||
+    locationId.startsWith('wild_')
+  ) {
     return 'dungeon';
   }
 
@@ -70,6 +74,11 @@ export class SimulationEngine {
       const topic = createHotTopic('player_levelup', data);
       this.hotTopics.push(topic);
     });
+
+    this.eventBus.on('shop_shortage', (data) => {
+      const topic = createHotTopic('shop_shortage', data);
+      this.hotTopics.push(topic);
+    });
   }
 
   cleanupHotTopics(): void {
@@ -95,8 +104,8 @@ export class SimulationEngine {
     const messages: SimulationMessage[] = [];
     const npcsWithSim = npcsAtLocation.filter(npc => npc.simulation);
 
-    // 40% chance: Try NPC conversation
-    if (Math.random() < 0.4 && npcsWithSim.length >= 2) {
+    // 60% chance: Try NPC conversation (was 40%)
+    if (Math.random() < 0.6 && npcsWithSim.length >= 2) {
       const result = tryGenerateConversation(
         npcsWithSim,
         TOPICS,
@@ -112,8 +121,8 @@ export class SimulationEngine {
       }
     }
 
-    // 50% chance: Ambient action from random NPC
-    if (Math.random() < 0.5 && npcsWithSim.length > 0) {
+    // 75% chance: Ambient action from random NPC (was 50%)
+    if (Math.random() < 0.75 && npcsWithSim.length > 0) {
       const npc = npcsWithSim[Math.floor(Math.random() * npcsWithSim.length)];
 
       if (npc) {

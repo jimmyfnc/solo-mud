@@ -4,9 +4,9 @@
 
 import type { Player, World, CombatStats, ClassName } from '@solo-mud/shared';
 import { generateStarterGear } from '@solo-mud/shared';
-import { generateWorld } from '../world/generate';
-import { createPlayer, calculateCombatStats } from '../character';
-import { createIncursionState, type IncursionState } from './incursion';
+import { worldManager } from '../world/world-manager';
+import { createPlayer, computePlayerCombatStats } from '../character';
+import type { IncursionState } from './incursion';
 
 export interface GameSession {
   id: string;
@@ -32,6 +32,12 @@ export interface GameSession {
   puzzleSolution?: string[];
   /** Whether the sewer gate is currently open (resets when leaving area) */
   sewerGateOpen?: boolean;
+  /** Data-driven puzzle progress: puzzle id → activated element ids in order */
+  puzzleProgress?: Record<string, string[]>;
+  /** Data-driven puzzles this player has solved */
+  puzzlesSolved?: string[];
+  /** God mode — take no damage (admin toggle, session-only) */
+  invincible?: boolean;
 }
 
 /**
@@ -45,14 +51,9 @@ class SessionManager {
    * Returns the session and the world seed for persistence.
    */
   createSession(socketId: string, playerName: string, className: ClassName = 'warrior'): { session: GameSession; worldSeed: string } {
-    // Generate a new world for this player
-    const worldSeed = `${socketId}-${Date.now()}`;
-    const world = generateWorld({
-      seed: worldSeed,
-      nodeCount: 18,
-      extraEdges: 5,
-      lockedEdges: 2,
-    });
+    // All players share the one authoritative world
+    const world = worldManager.getWorld();
+    const worldSeed = world.seed;
 
     // Create initial player state using the player factory
     const player = createPlayer({
@@ -80,7 +81,7 @@ class SessionManager {
       player.equipment.feet = starterGear.equipmentIds.feet;
     }
 
-    const combatStats = calculateCombatStats(player.baseStats);
+    const combatStats = computePlayerCombatStats(player, world.items);
 
     const session: GameSession = {
       id: socketId,
@@ -91,7 +92,6 @@ class SessionManager {
       createdAt: Date.now(),
       lastActivity: Date.now(),
       worldSeed,
-      incursionState: createIncursionState(),
     };
 
     this.sessions.set(socketId, session);
@@ -141,6 +141,10 @@ class SessionManager {
    */
   getSessionCount(): number {
     return this.sessions.size;
+  }
+
+  hasActiveCharacter(characterId: string): boolean {
+    return this.getAllSessions().some(session => session.characterId === characterId);
   }
 }
 

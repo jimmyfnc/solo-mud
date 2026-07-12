@@ -10,8 +10,8 @@ export type SpellTarget = 'self' | 'enemy' | 'ally' | 'area';
 /** Effect type for spells */
 export type SpellEffect = 'damage' | 'heal' | 'buff' | 'debuff' | 'utility';
 
-/** Damage type for spells */
-export type DamageType = 'physical' | 'fire' | 'ice' | 'lightning' | 'holy' | 'shadow' | 'nature' | 'poison';
+/** Damage type for spells and creatures */
+export type DamageType = 'physical' | 'fire' | 'ice' | 'lightning' | 'holy' | 'shadow' | 'nature' | 'poison' | 'arcane';
 
 /** Spell definition */
 export interface Spell {

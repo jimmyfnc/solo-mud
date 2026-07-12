@@ -83,7 +83,7 @@ describe('createPlayer', () => {
 
     expect(player.level).toBe(1);
     expect(player.xp).toBe(0);
-    expect(player.xpToNextLevel).toBe(100);
+    expect(player.xpToNextLevel).toBe(250); // Updated XP curve: L2 requires 250 XP
   });
 
   it('should initialize empty inventory and equipment', () => {
@@ -96,7 +96,7 @@ describe('createPlayer', () => {
 
     expect(player.inventory).toEqual([]);
     expect(player.equipment).toEqual({});
-    expect(player.inventorySlots).toBe(20);
+    expect(player.inventorySlots).toBe(40);
   });
 
   it('should bind player to start location', () => {

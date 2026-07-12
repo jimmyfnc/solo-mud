@@ -3,7 +3,7 @@
  */
 
 import type { Creature, CreatureTier, World, NodeId, Corpse, ItemId, RespawnEntry } from '@solo-mud/shared';
-import { TIER_CONFIG, HUNT_LEVEL_THRESHOLD, CORPSE_DURATION } from '@solo-mud/shared';
+import { TIER_CONFIG, HUNT_LEVEL_THRESHOLD, CORPSE_DURATION, BOSS_RESPAWN_MS, BOSS_RESPAWN_JITTER } from '@solo-mud/shared';
 
 /**
  * Check if a creature is intimidated by a target's level.
@@ -243,11 +243,26 @@ export function shouldCorpseFade(corpse: Corpse): boolean {
 
 /**
  * Queue a creature for respawn.
+ * Boss anchors use the slow boss clock (with jitter) and remember their
+ * name, mobility, and boss flag so they come back as themselves.
  */
 export function queueRespawn(
   creature: Creature,
   tier: CreatureTier
 ): RespawnEntry {
+  if (creature.isBossAnchor) {
+    const jitter = 1 + (Math.random() * 2 - 1) * BOSS_RESPAWN_JITTER;
+    return {
+      templateId: creature.templateId,
+      spawnLocationId: creature.spawnLocationId,
+      respawnAt: Date.now() + Math.floor(BOSS_RESPAWN_MS * jitter),
+      level: creature.level,
+      name: creature.name,
+      mobility: creature.mobility,
+      isBossAnchor: true,
+    };
+  }
+
   return {
     templateId: creature.templateId,
     spawnLocationId: creature.spawnLocationId,

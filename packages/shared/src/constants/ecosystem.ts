@@ -12,6 +12,13 @@ export const TIER_CONFIG: Record<CreatureTier, { respawnMs: number; intimidation
   apex: { respawnMs: 900_000, intimidationGap: 12 },      // 15 minutes
 };
 
+/**
+ * Boss anchors respawn on their own, slower clock: 45 minutes ±25% jitter
+ * so kill windows can't be scheduled to the second.
+ */
+export const BOSS_RESPAWN_MS = 45 * 60_000;
+export const BOSS_RESPAWN_JITTER = 0.25;
+
 /** Corpse duration by cause of death */
 export const CORPSE_DURATION = {
   creature_kill: 60_000,   // 1 minute - predator fed

@@ -1,6 +1,11 @@
 -- Solo MUD Database Schema
 -- SQLite database for character persistence
 
+CREATE TABLE IF NOT EXISTS schema_migrations (
+  id            TEXT PRIMARY KEY,
+  applied_at    TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
 -- Players table (one per browser/device)
 CREATE TABLE IF NOT EXISTS players (
   id            TEXT PRIMARY KEY,
@@ -32,6 +37,7 @@ CREATE TABLE IF NOT EXISTS characters (
 
   equipment     TEXT DEFAULT '{}',
   inventory     TEXT DEFAULT '[]',
+  keyring       TEXT DEFAULT '[]',
   owned_items   TEXT DEFAULT '{}',
   known_spells  TEXT DEFAULT '[]',
 
@@ -99,3 +105,26 @@ CREATE INDEX IF NOT EXISTS idx_removed_items_character ON removed_items(characte
 CREATE INDEX IF NOT EXISTS idx_dropped_items_character ON dropped_items(character_id);
 CREATE INDEX IF NOT EXISTS idx_dropped_items_location ON dropped_items(location_id);
 CREATE INDEX IF NOT EXISTS idx_killed_creatures_character ON killed_creatures(character_id);
+
+-- Bank storage for items
+CREATE TABLE IF NOT EXISTS bank_storage (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  account_id TEXT NOT NULL,
+  character_id TEXT,
+  slot INTEGER NOT NULL,
+  item_data TEXT NOT NULL,
+  tab TEXT NOT NULL DEFAULT 'personal',
+  created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE(account_id, character_id, slot, tab)
+);
+
+CREATE INDEX IF NOT EXISTS idx_bank_account ON bank_storage(account_id);
+CREATE INDEX IF NOT EXISTS idx_bank_character ON bank_storage(character_id);
+
+-- Shared-world persistence (single JSON snapshot row)
+CREATE TABLE IF NOT EXISTS world_snapshot (
+  id INTEGER PRIMARY KEY CHECK (id = 1),
+  seed TEXT NOT NULL,
+  data TEXT NOT NULL,
+  saved_at TEXT DEFAULT CURRENT_TIMESTAMP
+);

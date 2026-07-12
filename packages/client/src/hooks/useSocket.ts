@@ -47,6 +47,8 @@ export function useSocket(): UseSocketReturn {
     setTime,
     setWeather,
     getStoredPlayerId,
+    getLastCharacterId,
+    setLastCharacterId,
     enterGame,
   } = useGameStore();
 
@@ -94,6 +96,20 @@ export function useSocket(): UseSocketReturn {
       setPlayerIdentity(message.playerId, message.playerCode);
       setSavedCharacters(message.characters, message.maxCharacters);
       setClassOptions(message.classes);
+
+      // Auto-resume: if last character exists in the list, auto-load it
+      const lastCharId = getLastCharacterId();
+      if (lastCharId && message.characters.some(c => c.id === lastCharId)) {
+        // Clear the stored id first — SYNC re-stores it on success. If the
+        // load fails, a refresh won't loop back into the same failing load.
+        useGameStore.getState().clearLastCharacterId();
+        socket.emit(CLIENT_EVENTS.LOAD_CHARACTER, {
+          type: 'load_character',
+          characterId: lastCharId,
+        });
+        return;
+      }
+
       setShowCharacterSelect(true);
     });
 
@@ -119,6 +135,13 @@ export function useSocket(): UseSocketReturn {
 
     socket.on(SERVER_EVENTS.ERROR, (message: ErrorMessage) => {
       addLines([{ text: `Error: ${message.message}`, style: 'error' }]);
+
+      // If we're not in the game yet (e.g. auto-resume load failed), fall
+      // back to character select instead of stranding the user.
+      const state = useGameStore.getState();
+      if (!state.player && !state.showCharacterSelect && !state.showCharacterCreation) {
+        state.setShowCharacterSelect(true);
+      }
     });
 
     socket.on(SERVER_EVENTS.SYNC, (message: SyncMessage) => {
@@ -126,6 +149,9 @@ export function useSocket(): UseSocketReturn {
       setRoom(message.room);
       setTime(message.time);
       setWeather(message.weather);
+      if (message.characterId) {
+        setLastCharacterId(message.characterId);
+      }
       enterGame(); // Hide character select, show game
     });
 
@@ -172,6 +198,8 @@ export function useSocket(): UseSocketReturn {
     setTime,
     setWeather,
     getStoredPlayerId,
+    getLastCharacterId,
+    setLastCharacterId,
     enterGame,
   ]);
 
@@ -181,6 +209,12 @@ export function useSocket(): UseSocketReturn {
     if (!socket?.connected) {
       addLines([{ text: 'Not connected to server.', style: 'error' }]);
       return;
+    }
+
+    // Clear auto-resume on explicit quit so WELCOME doesn't auto-load
+    const cmd = input.trim().toLowerCase();
+    if (cmd === 'quit' || cmd === 'logout' || cmd === 'exit') {
+      useGameStore.getState().clearLastCharacterId();
     }
 
     socket.emit(CLIENT_EVENTS.COMMAND, { type: 'command', input });

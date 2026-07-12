@@ -5,3 +5,4 @@ export * from './locations';
 export * from './creatures';
 export * from './items';
 export * from './sets';
+export * from './containers';

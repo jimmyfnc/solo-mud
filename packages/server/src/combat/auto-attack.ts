@@ -2,7 +2,8 @@
  * Auto-attack mechanics for combat.
  */
 
-import type { CombatStats, CombatEvent } from '@solo-mud/shared';
+import type { CombatStats, CombatEvent, DamageType } from '@solo-mud/shared';
+import { applyResistance, getResistanceForDamageType } from '@solo-mud/shared';
 import type { TickContext, TickHandlerResult } from './tick';
 
 /** A combat entity (player or enemy) */
@@ -57,30 +58,29 @@ export function rollAttack(attacker: CombatEntity, defender: CombatEntity): Atta
 }
 
 /**
- * Calculate damage for an attack.
+ * Calculate damage for an attack with a specific damage type.
+ * Uses percentage-based resistance reduction (capped at 75%).
  */
 export function calculateDamage(
   attacker: CombatEntity,
   defender: CombatEntity,
-  isCrit: boolean
+  isCrit: boolean,
+  damageType: DamageType = 'physical'
 ): number {
   const { attackPower, critDamage } = attacker.combatStats;
-  const { defense } = defender.combatStats;
 
   // Base damage with some variance (±20%)
   const variance = 0.8 + Math.random() * 0.4;
-  let damage = attackPower * variance;
+  let baseDamage = attackPower * variance;
 
-  // Reduce by defense (defense reduces damage by half its value)
-  damage = damage - defense / 2;
-
-  // Apply crit multiplier
+  // Apply crit multiplier before resistance
   if (isCrit) {
-    damage *= critDamage;
+    baseDamage *= critDamage;
   }
 
-  // Minimum damage of 1
-  return Math.max(1, Math.round(damage));
+  // Get appropriate resistance and apply percentage-based reduction
+  const resistance = getResistanceForDamageType(defender.combatStats, damageType);
+  return applyResistance(Math.round(baseDamage), resistance);
 }
 
 /**

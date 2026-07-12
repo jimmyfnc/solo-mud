@@ -16,9 +16,6 @@ import {
   type LinkPlayerCodeMessage,
   type OutputLine,
   type ClassName,
-  type Item,
-  type Player,
-  type World,
 } from '@solo-mud/shared';
 import { sessionManager, type GameSession } from './game/session';
 import { restoreSession } from './game/restore';
@@ -33,7 +30,6 @@ import {
   getCharactersByPlayerId,
   findCharacterById,
   deleteCharacter,
-  updateCharacter,
   MAX_CHARACTERS_PER_PLAYER,
 } from './db/repositories/CharacterRepository';
 import {
@@ -42,6 +38,11 @@ import {
   recordItemRemoved,
   recordItemDropped,
 } from './db/repositories/WorldStateRepository';
+import { MAX_COMMAND_LENGTH } from './config/runtime';
+import { FixedWindowRateLimiter } from './security/fixed-window-rate-limiter';
+import { getOwnedItems, saveCharacterState } from './game/character-persistence';
+
+const playerCodeLinkLimiter = new FixedWindowRateLimiter(5, 15 * 60 * 1000);
 
 export interface GameSocket extends Socket {
   playerId?: string;
@@ -51,37 +52,23 @@ export interface GameSocket extends Socket {
 }
 
 /**
- * Extract all items owned by a player (equipped + inventory) from the world.
- */
-function getOwnedItems(player: Player, world: World): Record<string, Item> {
-  const owned: Record<string, Item> = {};
-
-  // Collect equipped items
-  for (const itemId of Object.values(player.equipment)) {
-    const item = itemId ? world.items[itemId] : undefined;
-    if (item) {
-      owned[itemId] = item;
-    }
-  }
-
-  // Collect inventory items
-  for (const slot of player.inventory) {
-    const item = slot.itemId ? world.items[slot.itemId] : undefined;
-    if (item) {
-      owned[slot.itemId] = item;
-    }
-  }
-
-  return owned;
-}
-
-/**
  * Create and configure the Socket.io server.
  */
 export function createSocketServer(httpServer: HttpServer): SocketServer {
   const io = new SocketServer(httpServer, {
+    maxHttpBufferSize: 64 * 1024,
     cors: {
-      origin: process.env['CLIENT_ORIGIN'] ?? 'http://localhost:3000',
+      origin: (origin, callback) => {
+        const allowedOrigin = process.env['CLIENT_ORIGIN'] ?? 'http://localhost:3000';
+        const isDev = process.env['NODE_ENV'] !== 'production';
+
+        // Dev convenience: allow any localhost origin. Production: exact match only.
+        if (!origin || origin === allowedOrigin || (isDev && origin.startsWith('http://localhost:'))) {
+          callback(null, true);
+        } else {
+          callback(null, false);
+        }
+      },
       methods: ['GET', 'POST'],
     },
   });
@@ -127,7 +114,11 @@ export function createSocketServer(httpServer: HttpServer): SocketServer {
 
     // Handle client commands
     socket.on(CLIENT_EVENTS.COMMAND, (message: ClientMessage) => {
-      if (message.type === 'command') {
+      if (message?.type === 'command' && typeof message.input === 'string') {
+        if (message.input.length > MAX_COMMAND_LENGTH) {
+          sendError(socket, `Commands may not exceed ${MAX_COMMAND_LENGTH} characters.`);
+          return;
+        }
         if (socket.awaitingCharacterSelection) {
           sendError(socket, 'Please select or create a character first.');
           return;
@@ -183,6 +174,10 @@ export function createSocketServer(httpServer: HttpServer): SocketServer {
  * Handle player identification on connect.
  */
 function handleIdentifyPlayer(socket: GameSocket, message: IdentifyPlayerMessage): void {
+  if (message.playerId !== null && typeof message.playerId !== 'string') {
+    sendError(socket, 'Invalid player identity.');
+    return;
+  }
   // Get or create player record
   const playerRecord = getOrCreatePlayer(message.playerId);
   socket.playerRecord = playerRecord;
@@ -196,6 +191,15 @@ function handleIdentifyPlayer(socket: GameSocket, message: IdentifyPlayerMessage
  * Handle linking a player code from another device.
  */
 function handleLinkPlayerCode(socket: GameSocket, message: LinkPlayerCodeMessage): void {
+  const rateLimitKey = socket.handshake.address || socket.id;
+  if (!playerCodeLinkLimiter.consume(rateLimitKey)) {
+    sendError(socket, 'Too many linking attempts. Please try again later.');
+    return;
+  }
+  if (typeof message.code !== 'string' || message.code.length > 64) {
+    sendError(socket, 'Invalid player code.');
+    return;
+  }
   const existingPlayer = findPlayerByCode(message.code);
 
   if (!existingPlayer) {
@@ -206,6 +210,7 @@ function handleLinkPlayerCode(socket: GameSocket, message: LinkPlayerCodeMessage
   // Link to existing player
   socket.playerRecord = existingPlayer;
   socket.playerId = existingPlayer.id;
+  playerCodeLinkLimiter.clear(rateLimitKey);
 
   sendOutput(socket, [
     { text: `Linked to player code: ${existingPlayer.playerCode}`, style: 'success' },
@@ -360,6 +365,11 @@ function handleLoadCharacter(socket: GameSocket, message: LoadCharacterMessage):
   // Verify ownership
   if (character.playerId !== socket.playerRecord.id) {
     sendError(socket, 'Character not found.');
+    return;
+  }
+
+  if (sessionManager.hasActiveCharacter(character.id)) {
+    sendError(socket, 'That character is already active in another session.');
     return;
   }
 
@@ -522,7 +532,7 @@ function handleSyncRequest(socket: GameSocket): void {
     return;
   }
 
-  // Send full sync
+  // Send full sync (includes characterId for session resume on refresh)
   socket.emit(SERVER_EVENTS.SYNC, {
     type: 'sync',
     player: session.player,
@@ -530,6 +540,7 @@ function handleSyncRequest(socket: GameSocket): void {
     room: buildRoomMessage(session),
     time: session.world.time,
     weather: session.world.weather,
+    characterId: session.characterId,
   });
 }
 
@@ -542,29 +553,6 @@ function saveSessionState(socket: GameSocket): void {
 
   saveCharacterState(session);
   console.log(`Saved character ${session.characterId} for ${socket.id}`);
-}
-
-/**
- * Save character state to database.
- */
-export function saveCharacterState(session: GameSession): void {
-  if (!session.characterId) return;
-
-  updateCharacter(session.characterId, {
-    level: session.player.level,
-    xp: session.player.xp,
-    currency: session.player.currency,
-    currentHp: session.player.currentHp,
-    maxHp: session.player.maxHp,
-    currentMp: session.player.currentMp,
-    maxMp: session.player.maxMp,
-    locationId: session.player.locationId,
-    gameTime: session.world.time.totalMinutes,
-    equipment: session.player.equipment,
-    inventory: session.player.inventory,
-    ownedItems: getOwnedItems(session.player, session.world),
-    knownSpells: session.player.spells.known,
-  });
 }
 
 /**
